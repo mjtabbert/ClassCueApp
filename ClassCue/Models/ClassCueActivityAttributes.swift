@@ -14,7 +14,9 @@ struct ClassCueActivityAttributes: ActivityAttributes {
 
     public struct ContentState: Codable, Hashable {
         var className: String
+        var room: String
         var endTime: Date
+        var isHeld: Bool
     }
 
     var className: String

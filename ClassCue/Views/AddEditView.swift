@@ -20,7 +20,7 @@ struct AddEditView: View {
     @State private var name = ""
     @State private var room = ""
     @State private var grade = ""
-    @State private var type = AlarmItem.ScheduleType.classPeriod
+    @State private var type = AlarmItem.ScheduleType.other
 
     @State private var start = Date()
     @State private var end = Date().addingTimeInterval(60 * 30)

@@ -8,81 +8,78 @@
 import WidgetKit
 import SwiftUI
 
-struct Provider: AppIntentTimelineProvider {
-    func placeholder(in context: Context) -> SimpleEntry {
-        SimpleEntry(date: Date(), configuration: ConfigurationAppIntent())
+struct ClassCueHomeEntry: TimelineEntry {
+    let date: Date
+}
+
+struct ClassCueHomeProvider: TimelineProvider {
+    func placeholder(in context: Context) -> ClassCueHomeEntry {
+        ClassCueHomeEntry(date: .now)
     }
 
-    func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> SimpleEntry {
-        SimpleEntry(date: Date(), configuration: configuration)
+    func getSnapshot(in context: Context, completion: @escaping (ClassCueHomeEntry) -> Void) {
+        completion(ClassCueHomeEntry(date: .now))
     }
-    
-    func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<SimpleEntry> {
-        var entries: [SimpleEntry] = []
 
-        // Generate a timeline consisting of five entries an hour apart, starting from the current date.
+    func getTimeline(in context: Context, completion: @escaping (Timeline<ClassCueHomeEntry>) -> Void) {
         let currentDate = Date()
-        for hourOffset in 0 ..< 5 {
-            let entryDate = Calendar.current.date(byAdding: .hour, value: hourOffset, to: currentDate)!
-            let entry = SimpleEntry(date: entryDate, configuration: configuration)
-            entries.append(entry)
+        let entries = (0..<6).compactMap { minuteOffset in
+            Calendar.current.date(byAdding: .minute, value: minuteOffset * 30, to: currentDate)
+                .map { ClassCueHomeEntry(date: $0) }
         }
 
-        return Timeline(entries: entries, policy: .atEnd)
+        completion(Timeline(entries: entries, policy: .atEnd))
     }
-
-//    func relevances() async -> WidgetRelevances<ConfigurationAppIntent> {
-//        // Generate a list containing the contexts this widget is relevant in.
-//    }
 }
 
-struct SimpleEntry: TimelineEntry {
-    let date: Date
-    let configuration: ConfigurationAppIntent
-}
-
-struct Class_CueEntryView : View {
-    var entry: Provider.Entry
+struct ClassCueHomeEntryView: View {
+    let entry: ClassCueHomeEntry
 
     var body: some View {
-        VStack {
-            Text("Time:")
-            Text(entry.date, style: .time)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "clock.badge.checkmark.fill")
+                    .foregroundStyle(.orange)
 
-            Text("Favorite Emoji:")
-            Text(entry.configuration.favoriteEmoji)
+                Text("ClassCue")
+                    .font(.headline.weight(.bold))
+
+                Spacer()
+            }
+
+            Text("Teacher Day")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(entry.date, style: .time)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .monospacedDigit()
+
+            Text("Open the app for today's block, tasks, and commitments.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .containerBackground(.fill.tertiary, for: .widget)
     }
 }
 
 struct Class_Cue: Widget {
-    let kind: String = "Class_Cue"
+    let kind: String = "ClassCueHomeWidget"
 
     var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: kind, intent: ConfigurationAppIntent.self, provider: Provider()) { entry in
-            Class_CueEntryView(entry: entry)
-                .containerBackground(.fill.tertiary, for: .widget)
+        StaticConfiguration(kind: kind, provider: ClassCueHomeProvider()) { entry in
+            ClassCueHomeEntryView(entry: entry)
         }
-    }
-}
-
-extension ConfigurationAppIntent {
-    fileprivate static var smiley: ConfigurationAppIntent {
-        let intent = ConfigurationAppIntent()
-        intent.favoriteEmoji = "😀"
-        return intent
-    }
-    
-    fileprivate static var starEyes: ConfigurationAppIntent {
-        let intent = ConfigurationAppIntent()
-        intent.favoriteEmoji = "🤩"
-        return intent
+        .configurationDisplayName("ClassCue")
+        .description("Quick access to your teacher day dashboard.")
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
 
 #Preview(as: .systemSmall) {
     Class_Cue()
 } timeline: {
-    SimpleEntry(date: .now, configuration: .smiley)
-    SimpleEntry(date: .now, configuration: .starEyes)
+    ClassCueHomeEntry(date: .now)
 }

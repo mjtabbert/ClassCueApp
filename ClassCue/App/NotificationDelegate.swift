@@ -20,7 +20,7 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         BellFeedbackManager.shared.playSelectedBellFeedback()
-        return [.banner, .badge]
+        return [.banner, .list, .sound, .badge]
     }
 
     func userNotificationCenter(

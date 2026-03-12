@@ -1,12 +1,23 @@
 import SwiftUI
 
 struct NotesView: View {
+    @Binding var todos: [TodoItem]
+    let suggestedContexts: [String]
     @AppStorage("notes_v1") private var notesText: String = ""
 
     @State private var showingShareSheet = false
     @State private var exportText = ""
     @FocusState private var isEditorFocused: Bool
     @State private var showClearConfirm = false
+    @State private var showingQuickCapture = false
+
+    init(
+        todos: Binding<[TodoItem]>,
+        suggestedContexts: [String] = []
+    ) {
+        _todos = todos
+        self.suggestedContexts = suggestedContexts
+    }
 
     var body: some View {
         NavigationStack {
@@ -28,6 +39,12 @@ struct NotesView: View {
                 }
 
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button {
+                        showingQuickCapture = true
+                    } label: {
+                        Image(systemName: "bolt.badge.plus")
+                    }
+
                     Button("Export") {
                         exportText = classCueNotesExportText(notes: notesText)
                         showingShareSheet = true
@@ -61,6 +78,9 @@ struct NotesView: View {
             }
             .sheet(isPresented: $showingShareSheet) {
                 ShareSheet(activityItems: [exportText])
+            }
+            .sheet(isPresented: $showingQuickCapture) {
+                QuickCaptureView(todos: $todos, suggestedContexts: suggestedContexts)
             }
         }
     }

@@ -15,14 +15,20 @@ struct TypeBadge: View {
     var label: String {
         switch type {
 
-        case .classPeriod:
-            return "CLASS"
+        case .math:
+            return "MATH"
+
+        case .ela:
+            return "ELA"
+
+        case .science:
+            return "SCIENCE"
+
+        case .socialStudies:
+            return "SOCIAL"
 
         case .prep:
             return "PREP"
-
-        case .planning:
-            return "PLAN"
 
         case .recess:
             return "RECESS"
@@ -32,6 +38,23 @@ struct TypeBadge: View {
 
         case .transition:
             return "MOVE"
+
+        case .other:
+            return "OTHER"
+
+        case .blank:
+            return "BLANK"
+        }
+    }
+
+    var foregroundColor: Color {
+        switch type {
+        case .science, .blank:
+            return .primary
+        case .transition:
+            return .secondary
+        default:
+            return .white
         }
     }
 
@@ -42,7 +65,7 @@ struct TypeBadge: View {
             .fontWeight(.bold)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .foregroundColor(.white)
+            .foregroundColor(foregroundColor)
             .background(type.themeColor)
             .clipShape(Capsule())
     }

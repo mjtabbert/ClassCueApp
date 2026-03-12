@@ -17,6 +17,7 @@ struct DayOverridesView: View {
     
     @State private var selectedDate = Date()
     @State private var selectedProfileID: UUID?
+    @State private var selectedKind: DayOverride.OverrideKind = .custom
     @State private var overrideToDelete: DayOverride?
     
     var body: some View {
@@ -24,7 +25,13 @@ struct DayOverridesView: View {
             Form {
                 Section("Add Day Override") {
                     DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
-                    
+
+                    Picker("Override Type", selection: $selectedKind) {
+                        ForEach(DayOverride.OverrideKind.allCases, id: \.self) { kind in
+                            Text(kind.displayName).tag(kind)
+                        }
+                    }
+
                     Picker("Profile", selection: $selectedProfileID) {
                         Text("Select a Profile").tag(nil as UUID?)
                         ForEach(profiles) { profile in
@@ -47,15 +54,28 @@ struct DayOverridesView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(formattedDate(override.date))
                                     .font(.headline)
-                                
+
+                                Text(override.kind.displayName)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.blue)
+
                                 Text(profileName(for: override.profileID))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                
-                                Button("Delete", role: .destructive) {
-                                    overrideToDelete = override
+
+                                HStack {
+                                    Button("Use Today") {
+                                        selectedDate = Date()
+                                        selectedKind = override.kind
+                                        selectedProfileID = override.profileID
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    Button("Delete", role: .destructive) {
+                                        overrideToDelete = override
+                                    }
+                                    .buttonStyle(.bordered)
                                 }
-                                .buttonStyle(.bordered)
                             }
                             .padding(.vertical, 4)
                         }
@@ -97,11 +117,13 @@ struct DayOverridesView: View {
             Calendar.current.isDate($0.date, inSameDayAs: normalizedDate)
         }) {
             overrides[existingIndex].profileID = selectedProfileID
+            overrides[existingIndex].kind = selectedKind
         } else {
             overrides.append(
                 DayOverride(
                     date: normalizedDate,
-                    profileID: selectedProfileID
+                    profileID: selectedProfileID,
+                    kind: selectedKind
                 )
             )
         }

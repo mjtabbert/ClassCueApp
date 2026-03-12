@@ -16,45 +16,99 @@ struct AlarmItem: Identifiable, Codable, Hashable {
 
     enum ScheduleType: String, Codable, CaseIterable {
 
-        case classPeriod
+        case math
+        case ela
+        case science
+        case socialStudies
         case prep
-        case planning
         case recess
         case lunch
         case transition
+        case other
+        case blank
 
         // Used by TypeBadge
         var themeColor: Color {
             switch self {
-            case .classPeriod:
-                return .blue
-            case .prep:
-                return .purple
-            case .planning:
-                return .orange
-            case .recess:
-                return .green
-            case .lunch:
+            case .math:
                 return .red
+            case .ela:
+                return .orange
+            case .science:
+                return .yellow
+            case .socialStudies:
+                return .green
+            case .prep:
+                return .blue
+            case .recess:
+                return .indigo
+            case .lunch:
+                return .purple
             case .transition:
-                return .gray
+                return Color(.systemGray4)
+            case .other:
+                return Color(.systemGray)
+            case .blank:
+                return .clear
             }
         }
 
         var displayName: String {
             switch self {
-            case .classPeriod:
-                return "Class Period"
+            case .math:
+                return "Math"
+            case .ela:
+                return "ELA"
+            case .science:
+                return "Science"
+            case .socialStudies:
+                return "Social Studies"
             case .prep:
                 return "Prep"
-            case .planning:
-                return "Planning"
             case .recess:
                 return "Recess"
             case .lunch:
                 return "Lunch"
             case .transition:
                 return "Transition"
+            case .other:
+                return "Other"
+            case .blank:
+                return "Blank"
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let rawValue = try container.decode(String.self)
+
+            switch rawValue {
+            case "math":
+                self = .math
+            case "ela":
+                self = .ela
+            case "science":
+                self = .science
+            case "socialStudies":
+                self = .socialStudies
+            case "prep":
+                self = .prep
+            case "recess":
+                self = .recess
+            case "lunch":
+                self = .lunch
+            case "transition":
+                self = .transition
+            case "other":
+                self = .other
+            case "blank":
+                self = .blank
+            case "classPeriod":
+                self = .other
+            case "planning":
+                self = .other
+            default:
+                self = .other
             }
         }
     }
@@ -68,7 +122,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
     var end: Date
     var location: String
 
-    var scheduleType: ScheduleType = .classPeriod
+    var scheduleType: ScheduleType = .other
     var dayOfWeekValue: Int? = nil
     var gradeLevelValue: String = ""
 
@@ -78,7 +132,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         start: Date,
         end: Date,
         location: String,
-        scheduleType: ScheduleType = .classPeriod,
+        scheduleType: ScheduleType = .other,
         dayOfWeek: Int? = nil,
         gradeLevel: String = ""
     ) {
@@ -100,7 +154,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         gradeLevel: String = "",
         startTime: Date,
         endTime: Date,
-        type: ScheduleType = .classPeriod
+        type: ScheduleType = .other
     ) {
         self.init(
             id: id,

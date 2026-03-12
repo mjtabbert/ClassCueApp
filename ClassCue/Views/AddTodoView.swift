@@ -11,6 +11,7 @@ import SwiftUI
 struct AddTodoView: View {
     
     @Binding var todos: [TodoItem]
+    let suggestedContexts: [String]
     
     var existing: TodoItem? = nil
     
@@ -18,18 +19,55 @@ struct AddTodoView: View {
     
     @State private var task = ""
     @State private var priority = TodoItem.Priority.none
+    @State private var category = TodoItem.Category.prep
+    @State private var bucket = TodoItem.Bucket.today
+    @State private var linkedContext = ""
     @State private var hasDueDate = false
     @State private var dueDate = Date()
+
+    init(
+        todos: Binding<[TodoItem]>,
+        suggestedContexts: [String] = [],
+        existing: TodoItem? = nil
+    ) {
+        _todos = todos
+        self.suggestedContexts = suggestedContexts
+        self.existing = existing
+    }
     
     var body: some View {
         NavigationStack {
             Form {
                 Section("Task Details") {
                     TextField("Task Name", text: $task)
-                    
+
+                    Picker("Category", selection: $category) {
+                        ForEach(TodoItem.Category.allCases, id: \.self) { category in
+                            Label(category.displayName, systemImage: category.systemImage)
+                                .tag(category)
+                        }
+                    }
+
+                    Picker("When", selection: $bucket) {
+                        ForEach(TodoItem.Bucket.allCases, id: \.self) { bucket in
+                            Text(bucket.displayName).tag(bucket)
+                        }
+                    }
+
                     Picker("Priority", selection: $priority) {
                         ForEach(TodoItem.Priority.allCases, id: \.self) { level in
                             Text(level.rawValue).tag(level)
+                        }
+                    }
+
+                    TextField("Linked Class or Commitment (Optional)", text: $linkedContext)
+
+                    if !suggestedContexts.isEmpty {
+                        Picker("Suggested Link", selection: $linkedContext) {
+                            Text("None").tag("")
+                            ForEach(suggestedContexts, id: \.self) { context in
+                                Text(context).tag(context)
+                            }
                         }
                     }
                 }
@@ -65,7 +103,10 @@ struct AddTodoView: View {
                 if let existing {
                     task = existing.task
                     priority = existing.priority
-                    
+                    category = existing.category
+                    bucket = existing.bucket
+                    linkedContext = existing.linkedContext
+
                     if let existingDueDate = existing.dueDate {
                         hasDueDate = true
                         dueDate = existingDueDate
@@ -86,7 +127,10 @@ struct AddTodoView: View {
             task: trimmedTask,
             isCompleted: existing?.isCompleted ?? false,
             priority: priority,
-            dueDate: hasDueDate ? dueDate : nil
+            dueDate: hasDueDate ? dueDate : nil,
+            category: category,
+            bucket: bucket,
+            linkedContext: linkedContext.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         
         if let existing,
@@ -104,6 +148,7 @@ struct AddTodoView: View {
     AddTodoView(
         todos: .constant([
             TodoItem(task: "Sample Task", priority: .med, dueDate: nil)
-        ])
+        ]),
+        suggestedContexts: []
     )
 }

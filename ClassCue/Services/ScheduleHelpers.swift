@@ -9,6 +9,12 @@
 
 import Foundation
 
+struct ActiveDayOverride {
+    let date: Date
+    let displayName: String
+    let alarms: [AlarmItem]
+}
+
 // MARK: - Date Builders
 
 func startDateToday(hour: Int, minute: Int) -> Date {
@@ -103,4 +109,53 @@ func getDayScheduleWithTransitions() -> [AlarmItem] {
             location: "Room 212"
         )
     ]
+}
+
+func resolvedDayOverride(
+    for date: Date,
+    overrides: [DayOverride],
+    profiles: [ScheduleProfile]
+) -> ActiveDayOverride? {
+    let normalizedDate = Calendar.current.startOfDay(for: date)
+
+    guard let override = overrides.first(where: {
+        Calendar.current.isDate($0.date, inSameDayAs: normalizedDate)
+    }) else {
+        return nil
+    }
+
+    guard let profile = profiles.first(where: { $0.id == override.profileID }) else {
+        return nil
+    }
+
+    let weekday = Calendar.current.component(.weekday, from: normalizedDate)
+
+    return ActiveDayOverride(
+        date: normalizedDate,
+        displayName: override.displayLabel(profileName: profile.name),
+        alarms: overrideAlarms(from: profile, for: weekday)
+    )
+}
+
+func overrideAlarms(from profile: ScheduleProfile, for weekday: Int) -> [AlarmItem] {
+    let directMatches = profile.alarms
+        .filter { $0.dayOfWeek == weekday }
+        .sorted { $0.startTime < $1.startTime }
+
+    let source = directMatches.isEmpty
+        ? profile.alarms.sorted { $0.startTime < $1.startTime }
+        : directMatches
+
+    return source.map { item in
+        AlarmItem(
+            id: item.id,
+            dayOfWeek: weekday,
+            className: item.className,
+            location: item.location,
+            gradeLevel: item.gradeLevel,
+            startTime: item.startTime,
+            endTime: item.endTime,
+            type: item.type
+        )
+    }
 }

@@ -47,10 +47,13 @@ struct ExportView: View {
     private var csvText: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        
-        return alarms.map { item in
-            "\(item.dayOfWeek),\(item.className),\(item.gradeLevel),\(item.location),\(formatter.string(from: item.startTime)),\(formatter.string(from: item.endTime))"
+
+        let header = "dayOfWeek,className,gradeLevel,location,startTime,endTime,type"
+
+        let rows = alarms.map { item in
+            "\(item.dayOfWeek),\(item.className),\(item.gradeLevel),\(item.location),\(formatter.string(from: item.startTime)),\(formatter.string(from: item.endTime)),\(item.type.displayName)"
         }
-        .joined(separator: "\n")
+
+        return ([header] + rows).joined(separator: "\n")
     }
 }

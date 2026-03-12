@@ -13,23 +13,47 @@ struct NextUpSummaryCard: View {
 
     let item: AlarmItem
     let now: Date
+    var isCompact: Bool = false
 
     var body: some View {
 
-        VStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 14) {
 
-            Text("NEXT UP")
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundColor(.blue)
+            VStack(alignment: .leading, spacing: 8) {
 
-            Text(item.className)
-                .font(.headline)
+                HStack(spacing: 8) {
+                    Text("NEXT UP")
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(.blue)
+
+                    TypeBadge(type: item.type)
+                }
+
+                Text(item.className)
+                    .font(isCompact ? .subheadline : .headline)
+                    .fontWeight(.bold)
+                    .lineLimit(1)
+
+                Text(timeRangeText)
+                    .font((isCompact ? Font.footnote : .subheadline).weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
+                if !item.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(item.location)
+                        .font(isCompact ? .caption : .footnote)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
 
             Text(timeText)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
+                .font((isCompact ? Font.headline : .title3).weight(.bold))
+                .monospacedDigit()
+                .foregroundColor(.primary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
         .padding()
@@ -42,14 +66,46 @@ struct NextUpSummaryCard: View {
     // MARK: - Timing
 
     private var start: Date {
-        item.start
+        anchoredTime(for: item.startTime) ?? item.startTime
+    }
+
+    private var end: Date {
+        anchoredEndTime
     }
 
     private var timeText: String {
 
-        let seconds = Int(start.timeIntervalSince(now))
-        let minutes = seconds / 60
+        let totalSeconds = max(Int(start.timeIntervalSince(now)), 0)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
 
-        return "Starts in \(minutes)m"
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    private var timeRangeText: String {
+        "\(start.formatted(date: .omitted, time: .shortened)) - \(end.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var anchoredEndTime: Date {
+        guard let anchoredEnd = anchoredTime(for: item.endTime) else {
+            return item.endTime
+        }
+
+        if anchoredEnd >= start {
+            return anchoredEnd
+        }
+
+        return Calendar.current.date(byAdding: .day, value: 1, to: anchoredEnd) ?? anchoredEnd
+    }
+
+    private func anchoredTime(for date: Date) -> Date? {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: now
+        )
     }
 }

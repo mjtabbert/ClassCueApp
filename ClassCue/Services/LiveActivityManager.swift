@@ -14,9 +14,22 @@ class LiveActivityManager {
 
     static var currentActivity: Activity<ClassCueActivityAttributes>?
 
+    private static var resolvedActivity: Activity<ClassCueActivityAttributes>? {
+        if let currentActivity {
+            return currentActivity
+        }
+
+        let existing = Activity<ClassCueActivityAttributes>.activities.first
+        currentActivity = existing
+        return existing
+    }
+
     // MARK: - Start Activity
 
-    static func start(className: String, endTime: Date) {
+    static func start(className: String, room: String, endTime: Date, isHeld: Bool) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            return
+        }
 
         let attributes = ClassCueActivityAttributes(
             className: className
@@ -24,7 +37,9 @@ class LiveActivityManager {
 
         let state = ClassCueActivityAttributes.ContentState(
             className: className,
-            endTime: endTime
+            room: room,
+            endTime: endTime,
+            isHeld: isHeld
         )
 
         let content = ActivityContent(
@@ -32,24 +47,36 @@ class LiveActivityManager {
             staleDate: endTime
         )
 
-        currentActivity = try? Activity.request(
-            attributes: attributes,
-            content: content
-        )
+        if resolvedActivity != nil {
+            update(className: className, room: room, endTime: endTime, isHeld: isHeld)
+            return
+        }
+
+        do {
+            currentActivity = try Activity.request(
+                attributes: attributes,
+                content: content
+            )
+        } catch {
+            print("Live Activity start failed:", error.localizedDescription)
+        }
     }
 
     // MARK: - Update Activity
 
-    static func update(className: String, endTime: Date) {
+    static func update(className: String, room: String, endTime: Date, isHeld: Bool) {
 
         Task {
+            guard let activity = resolvedActivity else { return }
 
             let updatedState = ClassCueActivityAttributes.ContentState(
                 className: className,
-                endTime: endTime
+                room: room,
+                endTime: endTime,
+                isHeld: isHeld
             )
 
-            await currentActivity?.update(
+            await activity.update(
                 ActivityContent(
                     state: updatedState,
                     staleDate: endTime
@@ -58,16 +85,25 @@ class LiveActivityManager {
         }
     }
 
+    static func sync(className: String, room: String, endTime: Date, isHeld: Bool) {
+        if resolvedActivity == nil {
+            start(className: className, room: room, endTime: endTime, isHeld: isHeld)
+        } else {
+            update(className: className, room: room, endTime: endTime, isHeld: isHeld)
+        }
+    }
+
     // MARK: - Stop Activity
 
     static func stop() {
 
         Task {
-
-            await currentActivity?.end(
-                nil,
-                dismissalPolicy: .immediate
-            )
+            for activity in Activity<ClassCueActivityAttributes>.activities {
+                await activity.end(
+                    nil,
+                    dismissalPolicy: .immediate
+                )
+            }
 
             currentActivity = nil
         }

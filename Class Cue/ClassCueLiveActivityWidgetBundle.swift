@@ -10,8 +10,7 @@ import SwiftUI
 struct ClassCueLiveActivityWidgetBundle: WidgetBundle {
 
     var body: some Widget {
-
+        Class_Cue()
         ClassCueLiveActivityWidget()
-
     }
 }

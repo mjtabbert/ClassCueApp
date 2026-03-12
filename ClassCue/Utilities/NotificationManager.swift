@@ -19,6 +19,18 @@ final class NotificationManager {
 
     private let center = UNUserNotificationCenter.current()
 
+    private var schoolQuietHoursEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "school_quiet_hours_enabled")
+    }
+
+    private var schoolQuietHour: Int {
+        UserDefaults.standard.integer(forKey: "school_quiet_hour")
+    }
+
+    private var schoolQuietMinute: Int {
+        UserDefaults.standard.integer(forKey: "school_quiet_minute")
+    }
+
     // MARK: Authorization
 
     func requestAuthorization() {
@@ -34,10 +46,27 @@ final class NotificationManager {
 
     // MARK: Refresh Schedule Notifications
 
-    func refreshNotifications(for alarms: [AlarmItem]) {
+    func refreshNotifications(
+        for alarms: [AlarmItem],
+        activeOverrideSchedule: [AlarmItem]? = nil,
+        activeOverrideDate: Date? = nil
+    ) {
 
         removeClassCueNotifications {
-            self.scheduleNotifications(for: alarms)
+            let regularAlarms: [AlarmItem]
+
+            if let activeOverrideDate {
+                let overrideWeekday = Calendar.current.component(.weekday, from: activeOverrideDate)
+                regularAlarms = alarms.filter { $0.dayOfWeek != overrideWeekday }
+            } else {
+                regularAlarms = alarms
+            }
+
+            self.scheduleNotifications(for: regularAlarms)
+
+            if let activeOverrideSchedule, let activeOverrideDate {
+                self.scheduleOverrideNotifications(for: activeOverrideSchedule, on: activeOverrideDate)
+            }
         }
     }
 
@@ -61,19 +90,33 @@ final class NotificationManager {
 
         for alarm in alarms {
 
-            scheduleOneMinuteWarning(for: alarm)
+            scheduleWarning(for: alarm, minutesBefore: 5)
+            scheduleWarning(for: alarm, minutesBefore: 2)
+            scheduleWarning(for: alarm, minutesBefore: 1)
             scheduleStartNotification(for: alarm)
             scheduleEndNotification(for: alarm)
         }
     }
 
+    private func scheduleOverrideNotifications(for alarms: [AlarmItem], on date: Date) {
+        for alarm in alarms {
+            scheduleOneOffWarning(for: alarm, minutesBefore: 5, on: date)
+            scheduleOneOffWarning(for: alarm, minutesBefore: 2, on: date)
+            scheduleOneOffWarning(for: alarm, minutesBefore: 1, on: date)
+            scheduleOneOffStartNotification(for: alarm, on: date)
+            scheduleOneOffEndNotification(for: alarm, on: date)
+        }
+    }
+
     // MARK: Warning
 
-    private func scheduleOneMinuteWarning(for alarm: AlarmItem) {
+    private func scheduleWarning(for alarm: AlarmItem, minutesBefore: Int) {
 
         guard alarm.type != .transition else { return }
+        guard alarm.type != .blank else { return }
 
-        guard let date = Calendar.current.date(byAdding: .minute, value: -1, to: alarm.startTime) else { return }
+        guard let date = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: alarm.startTime) else { return }
+        guard !shouldSuppressForQuietHours(date) else { return }
 
         var components = Calendar.current.dateComponents([.hour,.minute], from: date)
 
@@ -81,16 +124,18 @@ final class NotificationManager {
 
         let content = UNMutableNotificationContent()
 
-        content.title = "🔔 ClassCue"
-        content.subtitle = "\(alarm.className) in 1 minute"
+        content.title = warningTitle(minutesBefore: minutesBefore)
+        content.subtitle = warningSubtitle(for: alarm, minutesBefore: minutesBefore)
 
-        content.body = formattedTimeRange(alarm)
+        content.body = warningBody(for: alarm, minutesBefore: minutesBefore)
 
         content.sound = UNNotificationSound(
             named: UNNotificationSoundName(SystemSounds.warning)
         )
 
         content.categoryIdentifier = "CLASSCUE_BELL"
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 1.0
 
         let trigger = UNCalendarNotificationTrigger(
             dateMatching: components,
@@ -98,7 +143,36 @@ final class NotificationManager {
         )
 
         let request = UNNotificationRequest(
-            identifier: "classcue.warning.\(alarm.id)",
+            identifier: "classcue.warning.\(minutesBefore).\(alarm.id)",
+            content: content,
+            trigger: trigger
+        )
+
+        center.add(request)
+    }
+
+    private func scheduleOneOffWarning(for alarm: AlarmItem, minutesBefore: Int, on date: Date) {
+        guard alarm.type != .transition else { return }
+        guard alarm.type != .blank else { return }
+        guard let warningDate = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: anchoredDate(alarm.startTime, on: date)) else {
+            return
+        }
+        guard warningDate > Date() else { return }
+        guard !shouldSuppressForQuietHours(warningDate) else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = warningTitle(minutesBefore: minutesBefore)
+        content.subtitle = warningSubtitle(for: alarm, minutesBefore: minutesBefore)
+        content.body = warningBody(for: alarm, minutesBefore: minutesBefore)
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(SystemSounds.warning))
+        content.categoryIdentifier = "CLASSCUE_BELL"
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 1.0
+
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: warningDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "classcue.override.warning.\(minutesBefore).\(alarm.id)",
             content: content,
             trigger: trigger
         )
@@ -109,6 +183,7 @@ final class NotificationManager {
     // MARK: Start
 
     private func scheduleStartNotification(for alarm: AlarmItem) {
+        guard !shouldSuppressForQuietHours(alarm.startTime) else { return }
 
         var components = Calendar.current.dateComponents([.hour,.minute], from: alarm.startTime)
 
@@ -124,6 +199,8 @@ final class NotificationManager {
         content.sound = selectedNotificationSound()
 
         content.categoryIdentifier = "CLASSCUE_BELL"
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 1.0
 
         let trigger = UNCalendarNotificationTrigger(
             dateMatching: components,
@@ -139,9 +216,35 @@ final class NotificationManager {
         center.add(request)
     }
 
+    private func scheduleOneOffStartNotification(for alarm: AlarmItem, on date: Date) {
+        let startDate = anchoredDate(alarm.startTime, on: date)
+        guard startDate > Date() else { return }
+        guard !shouldSuppressForQuietHours(startDate) else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "🔔 ClassCue"
+        content.subtitle = "\(alarm.className) Starting"
+        content.body = formattedTimeRange(alarm)
+        content.sound = selectedNotificationSound()
+        content.categoryIdentifier = "CLASSCUE_BELL"
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 1.0
+
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: startDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "classcue.override.start.\(alarm.id)",
+            content: content,
+            trigger: trigger
+        )
+
+        center.add(request)
+    }
+
     // MARK: End
 
     private func scheduleEndNotification(for alarm: AlarmItem) {
+        guard !shouldSuppressForQuietHours(alarm.endTime) else { return }
 
         var components = Calendar.current.dateComponents([.hour,.minute], from: alarm.endTime)
 
@@ -157,6 +260,8 @@ final class NotificationManager {
         content.sound = selectedNotificationSound()
 
         content.categoryIdentifier = "CLASSCUE_BELL"
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 0.9
 
         let trigger = UNCalendarNotificationTrigger(
             dateMatching: components,
@@ -165,6 +270,31 @@ final class NotificationManager {
 
         let request = UNNotificationRequest(
             identifier: "classcue.end.\(alarm.id)",
+            content: content,
+            trigger: trigger
+        )
+
+        center.add(request)
+    }
+
+    private func scheduleOneOffEndNotification(for alarm: AlarmItem, on date: Date) {
+        let endDate = anchoredDate(alarm.endTime, on: date)
+        guard endDate > Date() else { return }
+        guard !shouldSuppressForQuietHours(endDate) else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "🔔 ClassCue"
+        content.subtitle = "\(alarm.className) Ending"
+        content.body = "Next block starting"
+        content.sound = selectedNotificationSound()
+        content.categoryIdentifier = "CLASSCUE_BELL"
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 0.9
+
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: endDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "classcue.override.end.\(alarm.id)",
             content: content,
             trigger: trigger
         )
@@ -193,6 +323,29 @@ final class NotificationManager {
         return "\(start) – \(end)"
     }
 
+    private func warningTitle(minutesBefore: Int) -> String {
+        switch minutesBefore {
+        case 5:
+            return "🟡 5 Minute Warning"
+        case 2:
+            return "🟠 2 Minute Warning"
+        default:
+            return "🔴 1 Minute Warning"
+        }
+    }
+
+    private func warningSubtitle(for alarm: AlarmItem, minutesBefore: Int) -> String {
+        "\(alarm.className) starts in \(minutesBefore) minute\(minutesBefore == 1 ? "" : "s")"
+    }
+
+    private func warningBody(for alarm: AlarmItem, minutesBefore: Int) -> String {
+        let roomText = alarm.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? ""
+            : " • \(alarm.location)"
+
+        return "\(formattedTimeRange(alarm))\(roomText)"
+    }
+
     private func systemWeekday(from appDay: Int) -> Int {
 
         switch appDay {
@@ -207,5 +360,28 @@ final class NotificationManager {
 
         default: return 2
         }
+    }
+
+    private func anchoredDate(_ time: Date, on day: Date) -> Date {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: time)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: day
+        ) ?? day
+    }
+
+    private func shouldSuppressForQuietHours(_ date: Date) -> Bool {
+        guard schoolQuietHoursEnabled else { return false }
+
+        let quietStart = Calendar.current.date(
+            bySettingHour: schoolQuietHour,
+            minute: schoolQuietMinute,
+            second: 0,
+            of: date
+        ) ?? date
+
+        return date >= quietStart
     }
 }
