@@ -8,7 +8,10 @@
 //
 
 import SwiftUI
+import SwiftData
+#if canImport(WidgetKit)
 import WidgetKit
+#endif
 
 struct TodayView: View {
 
@@ -25,6 +28,7 @@ struct TodayView: View {
     let activeOverrideName: String?
     let overrideSchedule: [AlarmItem]?
     let ignoreDate: Date?
+    let onRefresh: @MainActor () -> Void
     let openScheduleTab: () -> Void
     let openTodoTab: () -> Void
     let openNotesTab: () -> Void
@@ -420,6 +424,9 @@ struct TodayView: View {
             }
             .padding(.bottom, 96)
         }
+        .refreshable {
+            onRefresh()
+        }
     }
 
     @ViewBuilder
@@ -484,6 +491,9 @@ struct TodayView: View {
                     .padding(.bottom, 24)
                 }
                 .frame(width: 320)
+                .refreshable {
+                    onRefresh()
+                }
             }
         }
         .padding(.horizontal, 20)
@@ -1131,6 +1141,10 @@ struct TodayView: View {
 
             Button("Settings", systemImage: "gearshape") {
                 openSettingsTab()
+            }
+
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                onRefresh()
             }
 
             Divider()
@@ -2095,8 +2109,12 @@ struct TodayView: View {
     }
 
     private func syncWidgetSnapshot(_ snapshot: ClassCueWidgetSnapshot) {
+#if canImport(WidgetKit)
         WidgetSnapshotStore.save(snapshot)
         WidgetCenter.shared.reloadTimelines(ofKind: "ClassCueHomeWidget")
+#else
+        WidgetSnapshotStore.save(snapshot)
+#endif
     }
 
     private func landscapeHeader(now: Date) -> some View {
@@ -2507,7 +2525,7 @@ private struct TodayClassSubPlanView: View {
     let attendanceRecords: [AttendanceRecord]
     @Binding var subPlans: [SubPlanItem]
 
-    @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
+    @Environment(\.modelContext) private var modelContext
 
     @Environment(\.dismiss) private var dismiss
     @State private var overview = ""
@@ -2537,7 +2555,7 @@ private struct TodayClassSubPlanView: View {
     }
 
     private var followUpNotes: [FollowUpNoteItem] {
-        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+        ClassCuePersistence.loadFollowUpNotes(from: modelContext)
     }
 
     private var relevantClassNotes: [FollowUpNoteItem] {
@@ -2959,7 +2977,7 @@ private struct TodayDailySubPlanView: View {
     @Binding var subPlans: [SubPlanItem]
     @Binding var dailySubPlans: [DailySubPlanItem]
 
-    @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
+    @Environment(\.modelContext) private var modelContext
 
     @Environment(\.dismiss) private var dismiss
     @State private var morningNotes = ""
@@ -2990,7 +3008,7 @@ private struct TodayDailySubPlanView: View {
     }
 
     private var followUpNotes: [FollowUpNoteItem] {
-        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+        ClassCuePersistence.loadFollowUpNotes(from: modelContext)
     }
 
     var body: some View {

@@ -23,7 +23,11 @@ enum AppTab: Hashable {
 
 struct RootTabView: View {
 
+    private static let cloudSyncRefreshInterval: Duration = .seconds(3)
+    private static let localMutationRefreshPauseSeconds: TimeInterval = 2
+
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .today
     @State private var selectedScheduleDay: WeekdayTab = .today
 
@@ -50,6 +54,8 @@ struct RootTabView: View {
     @State private var dailySubPlans: [DailySubPlanItem] = []
     @State private var profiles: [ScheduleProfile] = []
     @State private var overrides: [DayOverride] = []
+    @State private var lastLocalMutationAt = Date.distantPast
+    @State private var isRefreshingFromPersistence = false
 
     private var ignoreDate: Date? {
         ignoreUntil > 0 ? Date(timeIntervalSince1970: ignoreUntil) : nil
@@ -108,12 +114,18 @@ struct RootTabView: View {
                     handleSelectedTabChange(newTab)
                 }
                 .onChange(of: alarms) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     handleAlarmsChange(newValue)
                 }
                 .onChange(of: todos) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     saveTodos(newValue)
                 }
                 .onChange(of: commitments) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     saveCommitments(newValue)
                 }
         )
@@ -121,25 +133,33 @@ struct RootTabView: View {
         let syncView = AnyView(
             lifecycleView
                 .onChange(of: studentProfiles) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     saveStudentProfiles(newValue)
                 }
                 .onChange(of: classDefinitions) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     saveClassDefinitions(newValue)
                     reconcileClassDefinitionLinks()
                 }
                 .onChange(of: savedStudentProfiles) { _, _ in
+                    guard !isRefreshingFromPersistence else { return }
                     loadStudentProfiles()
                     reconcileClassDefinitionLinks()
                 }
                 .onChange(of: savedClassDefinitions) { _, _ in
+                    guard !isRefreshingFromPersistence else { return }
                     loadClassDefinitions()
                     reconcileClassDefinitionLinks()
                 }
                 .onChange(of: savedProfiles) { _, _ in
+                    guard !isRefreshingFromPersistence else { return }
                     loadProfiles()
                     refreshNotifications()
                 }
                 .onChange(of: savedOverrides) { _, _ in
+                    guard !isRefreshingFromPersistence else { return }
                     loadOverrides()
                     refreshNotifications()
                 }
@@ -147,12 +167,30 @@ struct RootTabView: View {
 
         return AnyView(
             syncView
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .active {
+                        refreshFromCloudBackedStore()
+                    }
+                }
+                .task(id: scenePhase) {
+                    guard scenePhase == .active else { return }
+                    await runCloudSyncRefreshLoop()
+                }
                 .onChange(of: attendanceRecords) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     if let encoded = try? JSONEncoder().encode(newValue) {
                         savedAttendance = encoded
                     }
+                    saveThirdPersistenceSlice(
+                        attendanceRecords: newValue,
+                        profiles: profiles,
+                        overrides: overrides
+                    )
                 }
                 .onChange(of: subPlans) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     if let encoded = try? JSONEncoder().encode(newValue) {
                         savedSubPlans = encoded
                     }
@@ -163,6 +201,8 @@ struct RootTabView: View {
                     )
                 }
                 .onChange(of: dailySubPlans) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
                     if let encoded = try? JSONEncoder().encode(newValue) {
                         savedDailySubPlans = encoded
                     }
@@ -196,6 +236,11 @@ struct RootTabView: View {
         refreshNotifications()
     }
 
+    @MainActor
+    private func manuallyRefreshSyncedData() {
+        refreshFromCloudBackedStore()
+    }
+
     private var todayTab: some View {
         TodayView(
             alarms: $alarms,
@@ -210,19 +255,22 @@ struct RootTabView: View {
             studentSupportsByName: studentSupportsByName,
             activeOverrideName: activeDayOverride?.displayName,
             overrideSchedule: activeDayOverride?.alarms,
-            ignoreDate: ignoreDate
-        ) {
+            ignoreDate: ignoreDate,
+            onRefresh: {
+                manuallyRefreshSyncedData()
+            },
+            openScheduleTab: {
             selectedTab = .schedule
-        } openTodoTab: {
+        }, openTodoTab: {
             selectedTab = .todo
-        } openNotesTab: {
+        }, openNotesTab: {
             selectedTab = .notes
-        } openSettingsTab: {
+        }, openSettingsTab: {
             selectedTab = .settings
-        }
+        })
         .toolbar(.hidden, for: .tabBar)
         .tabItem {
-            Label("Today", systemImage: "clock")
+            Label("Home", systemImage: "house")
         }
         .tag(AppTab.today)
     }
@@ -235,6 +283,9 @@ struct RootTabView: View {
             classDefinitions: $classDefinitions,
             activeOverrideName: activeDayOverride?.displayName,
             overrideSchedule: activeDayOverride?.alarms,
+            onRefresh: {
+                manuallyRefreshSyncedData()
+            },
             openTodayTab: { selectedTab = .today }
         )
         .tabItem {
@@ -251,6 +302,9 @@ struct RootTabView: View {
             suggestedContexts: suggestedTaskContexts,
             suggestedStudents: suggestedStudents,
             studentSupportsByName: studentSupportsByName,
+            onRefresh: {
+                manuallyRefreshSyncedData()
+            },
             openTodayTab: { selectedTab = .today }
         )
         .tabItem {
@@ -266,6 +320,9 @@ struct RootTabView: View {
             classDefinitions: $classDefinitions,
             suggestedContexts: suggestedTaskContexts,
             suggestedStudents: suggestedStudents,
+            onRefresh: {
+                manuallyRefreshSyncedData()
+            },
             openTodayTab: { selectedTab = .today }
         )
             .tabItem {
@@ -293,6 +350,9 @@ struct RootTabView: View {
         let legacyFollowUpNotes = decodeLegacyFollowUpNotes()
         let legacySubPlans = decodeLegacySubPlans()
         let legacyDailySubPlans = decodeLegacyDailySubPlans()
+        let legacyAttendanceRecords = decodeLegacyAttendanceRecords()
+        let legacyProfiles = decodeLegacyProfiles()
+        let legacyOverrides = decodeLegacyOverrides()
 
         ClassCuePersistence.importFirstSliceIfNeeded(
             legacyAlarms: legacyAlarms,
@@ -308,9 +368,45 @@ struct RootTabView: View {
             legacyDailySubPlans: legacyDailySubPlans,
             into: modelContext
         )
+        ClassCuePersistence.importThirdSliceIfNeeded(
+            legacyAttendanceRecords: legacyAttendanceRecords,
+            legacyProfiles: legacyProfiles,
+            legacyOverrides: legacyOverrides,
+            into: modelContext
+        )
 
+        refreshFromPersistence()
+    }
+
+    @MainActor
+    private func refreshFromCloudBackedStore() {
+        refreshFromPersistence()
+        refreshNotifications()
+    }
+
+    private func recordLocalMutation() {
+        lastLocalMutationAt = Date()
+    }
+
+    private func runCloudSyncRefreshLoop() async {
+        while !Task.isCancelled && scenePhase == .active {
+            try? await Task.sleep(for: Self.cloudSyncRefreshInterval)
+            guard !Task.isCancelled, scenePhase == .active else { return }
+            guard ClassCuePersistence.activeContainerMode == .cloudKit else { continue }
+            guard Date().timeIntervalSince(lastLocalMutationAt) >= Self.localMutationRefreshPauseSeconds else {
+                continue
+            }
+            await MainActor.run {
+                refreshFromCloudBackedStore()
+            }
+        }
+    }
+
+    private func refreshFromPersistence() {
+        isRefreshingFromPersistence = true
         let persistenceSnapshot = ClassCuePersistence.loadFirstSlice(from: modelContext)
         let secondSliceSnapshot = ClassCuePersistence.loadSecondSlice(from: modelContext)
+        let thirdSliceSnapshot = ClassCuePersistence.loadThirdSlice(from: modelContext)
         alarms = persistenceSnapshot.alarms.map {
             AlarmItem(
                 id: $0.id,
@@ -348,16 +444,20 @@ struct RootTabView: View {
             $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
         todos = secondSliceSnapshot.todos
+        savedFollowUpNotes = (try? JSONEncoder().encode(secondSliceSnapshot.followUpNotes)) ?? Data()
         reconcileClassDefinitionLinks()
-        if let decodedAttendance = try? JSONDecoder().decode([AttendanceRecord].self, from: savedAttendance) {
-            attendanceRecords = decodedAttendance
-        } else {
-            attendanceRecords = []
-        }
+        attendanceRecords = thirdSliceSnapshot.attendanceRecords
         subPlans = secondSliceSnapshot.subPlans
         dailySubPlans = secondSliceSnapshot.dailySubPlans
-        loadProfiles()
-        loadOverrides()
+        profiles = thirdSliceSnapshot.profiles
+        overrides = thirdSliceSnapshot.overrides
+        savedAttendance = (try? JSONEncoder().encode(thirdSliceSnapshot.attendanceRecords)) ?? Data()
+        savedProfiles = (try? JSONEncoder().encode(thirdSliceSnapshot.profiles)) ?? Data()
+        savedOverrides = (try? JSONEncoder().encode(thirdSliceSnapshot.overrides)) ?? Data()
+
+        Task { @MainActor in
+            isRefreshingFromPersistence = false
+        }
     }
 
     // MARK: - Save Alarms
@@ -455,7 +555,7 @@ struct RootTabView: View {
     ) {
         ClassCuePersistence.saveSecondSlice(
             todos: todos,
-            followUpNotes: decodeLegacyFollowUpNotes(),
+            followUpNotes: ClassCuePersistence.loadFollowUpNotes(from: modelContext),
             subPlans: subPlans,
             dailySubPlans: dailySubPlans,
             into: modelContext
@@ -555,19 +655,23 @@ struct RootTabView: View {
     }
 
     private func loadProfiles() {
-        if let decodedProfiles = try? JSONDecoder().decode([ScheduleProfile].self, from: savedProfiles) {
-            profiles = decodedProfiles
-        } else {
-            profiles = []
-        }
+        let decodedProfiles = decodeLegacyProfiles()
+        saveThirdPersistenceSlice(
+            attendanceRecords: attendanceRecords,
+            profiles: decodedProfiles,
+            overrides: overrides
+        )
+        profiles = decodedProfiles
     }
 
     private func loadOverrides() {
-        if let decodedOverrides = try? JSONDecoder().decode([DayOverride].self, from: savedOverrides) {
-            overrides = decodedOverrides
-        } else {
-            overrides = []
-        }
+        let decodedOverrides = decodeLegacyOverrides()
+        saveThirdPersistenceSlice(
+            attendanceRecords: attendanceRecords,
+            profiles: profiles,
+            overrides: decodedOverrides
+        )
+        overrides = decodedOverrides
     }
 
     private func refreshNotifications() {
@@ -578,5 +682,30 @@ struct RootTabView: View {
             overrides: overrides,
             profiles: profiles
         )
+    }
+
+    private func saveThirdPersistenceSlice(
+        attendanceRecords: [AttendanceRecord],
+        profiles: [ScheduleProfile],
+        overrides: [DayOverride]
+    ) {
+        ClassCuePersistence.saveThirdSlice(
+            attendanceRecords: attendanceRecords,
+            profiles: profiles,
+            overrides: overrides,
+            into: modelContext
+        )
+    }
+
+    private func decodeLegacyAttendanceRecords() -> [AttendanceRecord] {
+        (try? JSONDecoder().decode([AttendanceRecord].self, from: savedAttendance)) ?? []
+    }
+
+    private func decodeLegacyProfiles() -> [ScheduleProfile] {
+        (try? JSONDecoder().decode([ScheduleProfile].self, from: savedProfiles)) ?? []
+    }
+
+    private func decodeLegacyOverrides() -> [DayOverride] {
+        (try? JSONDecoder().decode([DayOverride].self, from: savedOverrides)) ?? []
     }
 }

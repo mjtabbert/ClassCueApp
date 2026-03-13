@@ -7,8 +7,11 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct QuickCaptureView: View {
+    @Environment(\.modelContext) private var modelContext
+
 
     enum CaptureTarget: String, CaseIterable {
         case task
@@ -356,10 +359,11 @@ struct QuickCaptureView: View {
     }
 
     private func decodeFollowUpNotes() -> [FollowUpNoteItem] {
-        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+        ClassCuePersistence.loadFollowUpNotes(from: modelContext)
     }
 
     private func saveFollowUpNotes(_ notes: [FollowUpNoteItem]) {
+        ClassCuePersistence.saveFollowUpNotes(notes, into: modelContext)
         savedFollowUpNotes = (try? JSONEncoder().encode(notes)) ?? Data()
     }
 

@@ -1,6 +1,9 @@
 import SwiftUI
+import SwiftData
 
 struct NotesView: View {
+    @Environment(\.modelContext) private var modelContext
+
     enum NotesMode: String, CaseIterable {
         case general
         case personal
@@ -26,6 +29,7 @@ struct NotesView: View {
     @Binding var classDefinitions: [ClassDefinitionItem]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
+    let onRefresh: @MainActor () -> Void
     let openTodayTab: () -> Void
     @AppStorage("notes_v1") private var notesText: String = ""
     @AppStorage("personal_notes_v1") private var personalNotesText: String = ""
@@ -49,6 +53,7 @@ struct NotesView: View {
         classDefinitions: Binding<[ClassDefinitionItem]>,
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
+        onRefresh: @escaping @MainActor () -> Void,
         openTodayTab: @escaping () -> Void
     ) {
         _todos = todos
@@ -56,6 +61,7 @@ struct NotesView: View {
         _classDefinitions = classDefinitions
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
+        self.onRefresh = onRefresh
         self.openTodayTab = openTodayTab
     }
 
@@ -107,6 +113,10 @@ struct NotesView: View {
 
                         Button("Students", systemImage: "person.3") {
                             showingStudentDirectory = true
+                        }
+
+                        Button("Refresh", systemImage: "arrow.clockwise") {
+                            onRefresh()
                         }
 
                         Button("Daily Sub Plan", systemImage: "doc.text") {
@@ -401,7 +411,7 @@ struct NotesView: View {
     }
 
     private var followUpNotes: [FollowUpNoteItem] {
-        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+        ClassCuePersistence.loadFollowUpNotes(from: modelContext)
     }
 
     private var studentNoteGroups: [(student: String, context: String?, notes: [FollowUpNoteItem])] {
@@ -424,7 +434,7 @@ struct NotesView: View {
         Binding(
             get: { followUpNotes },
             set: { newValue in
-                savedFollowUpNotes = (try? JSONEncoder().encode(newValue)) ?? Data()
+                persistFollowUpNotes(newValue)
             }
         )
     }
@@ -455,7 +465,12 @@ struct NotesView: View {
         let ids = offsets.map { groupNotes[$0].id }
         var updated = followUpNotes
         updated.removeAll { ids.contains($0.id) }
-        savedFollowUpNotes = (try? JSONEncoder().encode(updated)) ?? Data()
+        persistFollowUpNotes(updated)
+    }
+
+    private func persistFollowUpNotes(_ notes: [FollowUpNoteItem]) {
+        ClassCuePersistence.saveFollowUpNotes(notes, into: modelContext)
+        savedFollowUpNotes = (try? JSONEncoder().encode(notes)) ?? Data()
     }
 
     private func studentProfile(named name: String) -> StudentSupportProfile? {

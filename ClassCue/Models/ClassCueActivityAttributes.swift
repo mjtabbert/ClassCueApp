@@ -7,8 +7,10 @@
 //  Build: ClassCue Dev Build 23
 //
 
-import ActivityKit
 import Foundation
+
+#if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
+import ActivityKit
 
 struct ClassCueActivityAttributes: ActivityAttributes {
 
@@ -24,3 +26,19 @@ struct ClassCueActivityAttributes: ActivityAttributes {
 
     var className: String
 }
+#else
+struct ClassCueActivityAttributes {
+
+    public struct ContentState: Codable, Hashable {
+        var className: String
+        var room: String
+        var endTime: Date
+        var isHeld: Bool
+        var iconName: String
+        var nextClassName: String
+        var nextIconName: String
+    }
+
+    var className: String
+}
+#endif

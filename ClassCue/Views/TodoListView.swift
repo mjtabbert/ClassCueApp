@@ -16,6 +16,7 @@ struct TodoListView: View {
     let suggestedContexts: [String]
     let suggestedStudents: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
+    let onRefresh: @MainActor () -> Void
     let openTodayTab: () -> Void
 
     enum CategoryFilter: String, CaseIterable {
@@ -98,6 +99,7 @@ struct TodoListView: View {
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
         studentSupportsByName: [String: StudentSupportProfile] = [:],
+        onRefresh: @escaping @MainActor () -> Void,
         openTodayTab: @escaping () -> Void
     ) {
         _todos = todos
@@ -106,6 +108,7 @@ struct TodoListView: View {
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
         self.studentSupportsByName = studentSupportsByName
+        self.onRefresh = onRefresh
         self.openTodayTab = openTodayTab
     }
 
@@ -160,12 +163,15 @@ struct TodoListView: View {
                     }
                 }
             }
+            .refreshable {
+                onRefresh()
+            }
             .navigationTitle("To Do")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if todos.contains(where: { $0.isCompleted }) {
                         Button("Clear Done") {
-                            todos.removeAll { $0.isCompleted }
+                            todos = todos.filter { !$0.isCompleted }
                         }
                         .foregroundColor(.red)
                     }
@@ -180,6 +186,10 @@ struct TodoListView: View {
 
                             Button("Students", systemImage: "person.3") {
                                 showingStudentDirectory = true
+                            }
+
+                            Button("Refresh", systemImage: "arrow.clockwise") {
+                                onRefresh()
                             }
 
                             Button("Daily Sub Plan", systemImage: "doc.text") {
@@ -345,12 +355,15 @@ struct TodoListView: View {
         let matchedStudent = studentProfile(named: studentName)
 
         return HStack(spacing: 12) {
-            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                .foregroundColor(item.isCompleted ? .green : item.priority.color)
-                .font(.title3)
-                .onTapGesture {
-                    toggleCompletion(for: item)
-                }
+            Button {
+                toggleCompletion(for: item)
+            } label: {
+                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(item.isCompleted ? .green : item.priority.color)
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.task)
@@ -438,14 +451,15 @@ struct TodoListView: View {
     }
 
     private func toggleCompletion(for item: TodoItem) {
-        if let index = todos.firstIndex(where: { $0.id == item.id }) {
-            todos[index].isCompleted.toggle()
-        }
+        guard let index = todos.firstIndex(where: { $0.id == item.id }) else { return }
+        var updatedTodos = todos
+        updatedTodos[index].isCompleted.toggle()
+        todos = updatedTodos
     }
 
     private func deleteTodo(at offsets: IndexSet, in bucketItems: [TodoItem]) {
         let idsToDelete = offsets.map { bucketItems[$0].id }
-        todos.removeAll { idsToDelete.contains($0.id) }
+        todos = todos.filter { !idsToDelete.contains($0.id) }
     }
 
     private func dueDateText(for item: TodoItem) -> String {
@@ -532,6 +546,7 @@ struct TodoListView: View {
         suggestedContexts: [],
         suggestedStudents: [],
         studentSupportsByName: [:],
+        onRefresh: {},
         openTodayTab: {}
     )
 }

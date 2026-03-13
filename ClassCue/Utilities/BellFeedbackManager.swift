@@ -40,6 +40,9 @@ final class BellFeedbackManager {
     }
 
     private func configureAudioSession() {
+#if targetEnvironment(macCatalyst)
+        return
+#else
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, options: [.duckOthers])
@@ -47,6 +50,7 @@ final class BellFeedbackManager {
         } catch {
             print("Audio session configuration failed: \(error.localizedDescription)")
         }
+#endif
     }
 
     private func playSound(_ bellSound: BellSound) {
@@ -84,33 +88,51 @@ final class BellFeedbackManager {
     private func playHaptic(_ haptic: HapticPattern) {
         switch haptic {
         case .doubleThump:
+#if !targetEnvironment(macCatalyst)
             notificationGenerator.prepare()
             notificationGenerator.notificationOccurred(.success)
+#endif
 
         case .triplePulse:
+#if !targetEnvironment(macCatalyst)
             notificationGenerator.prepare()
             notificationGenerator.notificationOccurred(.error)
+#endif
 
         case .sharpClick:
-            AudioServicesPlaySystemSound(1519)
+            playSystemHaptic(1519)
 
         case .heavyImpact:
+#if !targetEnvironment(macCatalyst)
             impactGenerator.prepare()
             impactGenerator.impactOccurred()
+#endif
 
         case .lightTap:
+#if !targetEnvironment(macCatalyst)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+#endif
 
         case .rigidTap:
+#if !targetEnvironment(macCatalyst)
             if #available(iOS 13.0, *) {
                 UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
             } else {
                 impactGenerator.prepare()
                 impactGenerator.impactOccurred()
             }
+#endif
 
         case .none:
             break
         }
+    }
+
+    private func playSystemHaptic(_ id: SystemSoundID) {
+#if targetEnvironment(macCatalyst)
+        return
+#else
+        AudioServicesPlaySystemSound(id)
+#endif
     }
 }

@@ -12,7 +12,20 @@
 		<key>ClassCue.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>0</integer>
+			<integer>1</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>27335DB42F5B700800889F92</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>27EC66D62F61EB3D00D0870D</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>

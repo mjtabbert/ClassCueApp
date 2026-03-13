@@ -292,18 +292,18 @@ struct AddEditView: View {
 
         if let existing,
            let index = alarms.firstIndex(where: { $0.id == existing.id }) {
-            alarms[index] = newItem
+            var updatedAlarms = alarms
+            updatedAlarms[index] = newItem
+            alarms = sortedAlarms(updatedAlarms)
         } else {
-            alarms.append(newItem)
+            alarms = sortedAlarms(alarms + [newItem])
         }
-
-        sortAlarms()
         dismiss()
     }
 
     private func deleteCurrentBlock() {
         guard let existing else { return }
-        alarms.removeAll { $0.id == existing.id }
+        alarms = alarms.filter { $0.id != existing.id }
         dismiss()
     }
 
@@ -327,13 +327,12 @@ struct AddEditView: View {
             linkedStudentIDs: existing.linkedStudentIDs
         )
 
-        alarms.append(duplicated)
-        sortAlarms()
+        alarms = sortedAlarms(alarms + [duplicated])
         dismiss()
     }
 
-    private func sortAlarms() {
-        alarms.sort { lhs, rhs in
+    private func sortedAlarms(_ items: [AlarmItem]) -> [AlarmItem] {
+        items.sorted { lhs, rhs in
             if lhs.dayOfWeek == rhs.dayOfWeek {
                 return lhs.startTime < rhs.startTime
             }

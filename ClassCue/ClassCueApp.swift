@@ -5,6 +5,8 @@ import UserNotifications
 @main
 struct ClassCueApp: App {
     init() {
+        ClassCuePersistence.initializeCloudKitDevelopmentSchemaIfNeeded()
+
         let center = UNUserNotificationCenter.current()
         center.delegate = NotificationDelegate.shared
 

@@ -8,8 +8,10 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct ScheduleView: View {
+    @Environment(\.modelContext) private var modelContext
 
     @Binding var selectedDay: WeekdayTab
     @Binding var alarms: [AlarmItem]
@@ -17,6 +19,7 @@ struct ScheduleView: View {
     @Binding var classDefinitions: [ClassDefinitionItem]
     var activeOverrideName: String? = nil
     var overrideSchedule: [AlarmItem]? = nil
+    let onRefresh: @MainActor () -> Void
     let openTodayTab: () -> Void
 
     @AppStorage("profiles_v1_data") private var savedProfiles: Data = Data()
@@ -89,6 +92,9 @@ struct ScheduleView: View {
                     }
                     .padding()
                 }
+                .refreshable {
+                    onRefresh()
+                }
                 .background(scheduleBackground)
             }
             .navigationTitle("Schedule")
@@ -98,6 +104,10 @@ struct ScheduleView: View {
                         Menu {
                             Button("Students", systemImage: "person.3") {
                                 showingStudentDirectory = true
+                            }
+
+                            Button("Refresh", systemImage: "arrow.clockwise") {
+                                onRefresh()
                             }
 
                             Button("Daily Sub Plan", systemImage: "doc.text") {
@@ -334,6 +344,18 @@ struct ScheduleView: View {
         let currentAndUpcoming = filteredSchedule.filter { !isPast($0, now: now) }
 
         return VStack(alignment: .leading, spacing: 14) {
+            if !currentAndUpcoming.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Schedule for Today")
+                        .font(.headline)
+
+                    Text("Current and upcoming blocks stay at the top.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 4)
+            }
+
             if currentAndUpcoming.isEmpty {
                 Text("No more blocks remain today.")
                     .font(.subheadline)
@@ -345,6 +367,7 @@ struct ScheduleView: View {
                         scheduleRow(for: item)
                     }
                 }
+                .padding(.bottom, pastItems.isEmpty ? 0 : 6)
             }
 
             if !pastItems.isEmpty {
@@ -536,28 +559,34 @@ struct ScheduleView: View {
     }
 
     private func loadProfiles() {
-        if let decodedProfiles = try? JSONDecoder().decode([ScheduleProfile].self, from: savedProfiles) {
-            profiles = decodedProfiles
-        } else {
-            profiles = []
-        }
+        profiles = ClassCuePersistence.loadThirdSlice(from: modelContext).profiles
     }
 
     private func loadOverrides() {
-        if let decodedOverrides = try? JSONDecoder().decode([DayOverride].self, from: savedOverrides) {
-            overrides = decodedOverrides
-        } else {
-            overrides = []
-        }
+        overrides = ClassCuePersistence.loadThirdSlice(from: modelContext).overrides
     }
 
     private func saveProfiles() {
+        let snapshot = ClassCuePersistence.loadThirdSlice(from: modelContext)
+        ClassCuePersistence.saveThirdSlice(
+            attendanceRecords: snapshot.attendanceRecords,
+            profiles: profiles,
+            overrides: overrides,
+            into: modelContext
+        )
         if let encoded = try? JSONEncoder().encode(profiles) {
             savedProfiles = encoded
         }
     }
 
     private func saveOverrides(_ overrides: [DayOverride]) {
+        let snapshot = ClassCuePersistence.loadThirdSlice(from: modelContext)
+        ClassCuePersistence.saveThirdSlice(
+            attendanceRecords: snapshot.attendanceRecords,
+            profiles: profiles,
+            overrides: overrides,
+            into: modelContext
+        )
         if let encoded = try? JSONEncoder().encode(overrides) {
             savedOverrides = encoded
         }

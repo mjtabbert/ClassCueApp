@@ -9,7 +9,6 @@
 
 import Foundation
 import UserNotifications
-import ActivityKit
 
 final class NotificationManager {
 

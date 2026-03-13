@@ -36,11 +36,12 @@ final class BellCountdownEngine {
     }
 
     private func playBell() {
-
         AudioServicesPlaySystemSound(1005)
 
+#if !targetEnvironment(macCatalyst)
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+#endif
     }
 
     func reset() {

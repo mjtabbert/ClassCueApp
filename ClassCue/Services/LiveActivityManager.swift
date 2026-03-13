@@ -8,6 +8,7 @@
 //
 
 import Foundation
+#if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
 import ActivityKit
 
 class LiveActivityManager {
@@ -182,3 +183,56 @@ class LiveActivityManager {
         }
     }
 }
+#else
+final class LiveActivityManager {
+    @MainActor static var lastStatusMessage: String = "Live Activities unavailable on Mac."
+
+    static func start(
+        className: String,
+        room: String,
+        endTime: Date,
+        isHeld: Bool,
+        iconName: String,
+        nextClassName: String,
+        nextIconName: String
+    ) {
+        Task { @MainActor in
+            lastStatusMessage = "Live Activities unavailable on this platform."
+        }
+    }
+
+    static func update(
+        className: String,
+        room: String,
+        endTime: Date,
+        isHeld: Bool,
+        iconName: String,
+        nextClassName: String,
+        nextIconName: String
+    ) {
+        Task { @MainActor in
+            lastStatusMessage = "Live Activities unavailable on this platform."
+        }
+    }
+
+    static func sync(
+        className: String,
+        room: String,
+        endTime: Date,
+        isHeld: Bool,
+        iconName: String,
+        nextClassName: String,
+        nextIconName: String
+    ) {
+        Task { @MainActor in
+            lastStatusMessage = "Live Activities unavailable on this platform."
+        }
+    }
+
+    static func stop() {
+        Task { @MainActor in
+            lastStatusMessage = "Live Activities unavailable on this platform."
+        }
+    }
+}
+#endif

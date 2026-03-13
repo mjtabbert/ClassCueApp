@@ -1,20 +1,29 @@
 import Foundation
+import CoreData
 import SwiftData
 
+protocol PersistedUUIDModel: PersistentModel {
+    var id: UUID { get set }
+}
+
 @Model
-final class PersistedAlarmItem {
-    var id: UUID
-    var name: String
-    var start: Date
-    var end: Date
-    var location: String
-    var scheduleTypeRawValue: String
+final class PersistedAlarmItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var name: String = ""
+    var start: Date = Date.distantPast
+    var end: Date = Date.distantPast
+    var location: String = ""
+    var scheduleTypeRawValue: String = AlarmItem.ScheduleType.other.rawValue
     var dayOfWeekValue: Int?
-    var gradeLevelValue: String
+    var gradeLevelValue: String = ""
     var classDefinitionID: UUID?
-    var linkedStudentIDs: [UUID]
+    var linkedStudentIDsRawValue: String = ""
 
     init(from item: AlarmItem) {
+        update(from: item)
+    }
+
+    func update(from item: AlarmItem) {
         self.id = item.id
         self.name = item.className
         self.start = item.startTime
@@ -24,7 +33,9 @@ final class PersistedAlarmItem {
         self.dayOfWeekValue = item.dayOfWeekValue
         self.gradeLevelValue = item.gradeLevel
         self.classDefinitionID = item.classDefinitionID
-        self.linkedStudentIDs = item.linkedStudentIDs
+        self.linkedStudentIDsRawValue = item.linkedStudentIDs
+            .map(\.uuidString)
+            .joined(separator: ",")
     }
 
     func asAlarmItem() -> AlarmItem {
@@ -38,27 +49,33 @@ final class PersistedAlarmItem {
             dayOfWeek: dayOfWeekValue,
             gradeLevel: gradeLevelValue,
             classDefinitionID: classDefinitionID,
-            linkedStudentIDs: linkedStudentIDs
+            linkedStudentIDs: linkedStudentIDsRawValue
+                .split(separator: ",")
+                .compactMap { UUID(uuidString: String($0)) }
         )
     }
 }
 
 @Model
-final class PersistedStudentSupportProfile {
-    var id: UUID
-    var name: String
-    var className: String
-    var gradeLevel: String
+final class PersistedStudentSupportProfile: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var name: String = ""
+    var className: String = ""
+    var gradeLevel: String = ""
     var classDefinitionID: UUID?
-    var graduationYear: String
-    var parentNames: String
-    var parentPhoneNumbers: String
-    var parentEmails: String
-    var studentEmail: String
-    var accommodations: String
-    var prompts: String
+    var graduationYear: String = ""
+    var parentNames: String = ""
+    var parentPhoneNumbers: String = ""
+    var parentEmails: String = ""
+    var studentEmail: String = ""
+    var accommodations: String = ""
+    var prompts: String = ""
 
     init(from item: StudentSupportProfile) {
+        update(from: item)
+    }
+
+    func update(from item: StudentSupportProfile) {
         self.id = item.id
         self.name = item.name
         self.className = item.className
@@ -92,14 +109,18 @@ final class PersistedStudentSupportProfile {
 }
 
 @Model
-final class PersistedClassDefinitionItem {
-    var id: UUID
-    var name: String
-    var scheduleKindRawValue: String
-    var gradeLevel: String
-    var defaultLocation: String
+final class PersistedClassDefinitionItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var name: String = ""
+    var scheduleKindRawValue: String = ClassDefinitionItem.ScheduleKind.other.rawValue
+    var gradeLevel: String = ""
+    var defaultLocation: String = ""
 
     init(from item: ClassDefinitionItem) {
+        update(from: item)
+    }
+
+    func update(from item: ClassDefinitionItem) {
         self.id = item.id
         self.name = item.name
         self.scheduleKindRawValue = item.scheduleKind.rawValue
@@ -119,17 +140,21 @@ final class PersistedClassDefinitionItem {
 }
 
 @Model
-final class PersistedCommitmentItem {
-    var id: UUID
-    var title: String
-    var kindRawValue: String
-    var dayOfWeek: Int
-    var startTime: Date
-    var endTime: Date
-    var location: String
-    var notes: String
+final class PersistedCommitmentItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var title: String = ""
+    var kindRawValue: String = CommitmentItem.Kind.other.rawValue
+    var dayOfWeek: Int = 1
+    var startTime: Date = Date.distantPast
+    var endTime: Date = Date.distantPast
+    var location: String = ""
+    var notes: String = ""
 
     init(from item: CommitmentItem) {
+        update(from: item)
+    }
+
+    func update(from item: CommitmentItem) {
         self.id = item.id
         self.title = item.title
         self.kindRawValue = item.kind.rawValue
@@ -155,21 +180,25 @@ final class PersistedCommitmentItem {
 }
 
 @Model
-final class PersistedTodoItem {
-    var id: UUID
-    var task: String
-    var isCompleted: Bool
-    var priorityRawValue: String
+final class PersistedTodoItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var task: String = ""
+    var isCompleted: Bool = false
+    var priorityRawValue: String = TodoItem.Priority.none.rawValue
     var dueDate: Date?
-    var categoryRawValue: String
-    var bucketRawValue: String
-    var workspaceRawValue: String
-    var linkedContext: String
-    var studentOrGroup: String
-    var followUpNote: String
-    var reminderRawValue: String
+    var categoryRawValue: String = TodoItem.Category.prep.rawValue
+    var bucketRawValue: String = TodoItem.Bucket.today.rawValue
+    var workspaceRawValue: String = TodoItem.Workspace.school.rawValue
+    var linkedContext: String = ""
+    var studentOrGroup: String = ""
+    var followUpNote: String = ""
+    var reminderRawValue: String = TodoItem.Reminder.none.rawValue
 
     init(from item: TodoItem) {
+        update(from: item)
+    }
+
+    func update(from item: TodoItem) {
         self.id = item.id
         self.task = item.task
         self.isCompleted = item.isCompleted
@@ -203,15 +232,19 @@ final class PersistedTodoItem {
 }
 
 @Model
-final class PersistedFollowUpNoteItem {
-    var id: UUID
-    var kindRawValue: String
-    var context: String
-    var studentOrGroup: String
-    var note: String
-    var createdAt: Date
+final class PersistedFollowUpNoteItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var kindRawValue: String = FollowUpNoteItem.Kind.classNote.rawValue
+    var context: String = ""
+    var studentOrGroup: String = ""
+    var note: String = ""
+    var createdAt: Date = Date.distantPast
 
     init(from item: FollowUpNoteItem) {
+        update(from: item)
+    }
+
+    func update(from item: FollowUpNoteItem) {
         self.id = item.id
         self.kindRawValue = item.kind.rawValue
         self.context = item.context
@@ -233,26 +266,30 @@ final class PersistedFollowUpNoteItem {
 }
 
 @Model
-final class PersistedSubPlanItem {
-    var id: UUID
-    var dateKey: String
+final class PersistedSubPlanItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var dateKey: String = ""
     var linkedAlarmID: UUID?
-    var className: String
-    var gradeLevel: String
-    var location: String
-    var overview: String
-    var lessonPlan: String
-    var materials: String
-    var subNotes: String
-    var includeRoster: Bool
-    var includeSupports: Bool
-    var includeAttendance: Bool
-    var includeCommitments: Bool
-    var includeDaySchedule: Bool
-    var createdAt: Date
-    var updatedAt: Date
+    var className: String = ""
+    var gradeLevel: String = ""
+    var location: String = ""
+    var overview: String = ""
+    var lessonPlan: String = ""
+    var materials: String = ""
+    var subNotes: String = ""
+    var includeRoster: Bool = true
+    var includeSupports: Bool = true
+    var includeAttendance: Bool = true
+    var includeCommitments: Bool = true
+    var includeDaySchedule: Bool = true
+    var createdAt: Date = Date.distantPast
+    var updatedAt: Date = Date.distantPast
 
     init(from item: SubPlanItem) {
+        update(from: item)
+    }
+
+    func update(from item: SubPlanItem) {
         self.id = item.id
         self.dateKey = item.dateKey
         self.linkedAlarmID = item.linkedAlarmID
@@ -296,21 +333,25 @@ final class PersistedSubPlanItem {
 }
 
 @Model
-final class PersistedDailySubPlanItem {
-    var id: UUID
-    var dateKey: String
-    var morningNotes: String
-    var sharedMaterials: String
-    var dismissalNotes: String
-    var emergencyNotes: String
-    var includeAttendance: Bool
-    var includeRoster: Bool
-    var includeSupports: Bool
-    var includeCommitments: Bool
-    var createdAt: Date
-    var updatedAt: Date
+final class PersistedDailySubPlanItem: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var dateKey: String = ""
+    var morningNotes: String = ""
+    var sharedMaterials: String = ""
+    var dismissalNotes: String = ""
+    var emergencyNotes: String = ""
+    var includeAttendance: Bool = true
+    var includeRoster: Bool = true
+    var includeSupports: Bool = true
+    var includeCommitments: Bool = true
+    var createdAt: Date = Date.distantPast
+    var updatedAt: Date = Date.distantPast
 
     init(from item: DailySubPlanItem) {
+        update(from: item)
+    }
+
+    func update(from item: DailySubPlanItem) {
         self.id = item.id
         self.dateKey = item.dateKey
         self.morningNotes = item.morningNotes
@@ -343,6 +384,101 @@ final class PersistedDailySubPlanItem {
     }
 }
 
+@Model
+final class PersistedAttendanceRecord: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var dateKey: String = ""
+    var className: String = ""
+    var gradeLevel: String = ""
+    var studentName: String = ""
+    var statusRawValue: String = AttendanceRecord.Status.present.rawValue
+
+    init(from item: AttendanceRecord) {
+        update(from: item)
+    }
+
+    func update(from item: AttendanceRecord) {
+        self.id = item.id
+        self.dateKey = item.dateKey
+        self.className = item.className
+        self.gradeLevel = item.gradeLevel
+        self.studentName = item.studentName
+        self.statusRawValue = item.status.rawValue
+    }
+
+    func asAttendanceRecord() -> AttendanceRecord {
+        AttendanceRecord(
+            id: id,
+            dateKey: dateKey,
+            className: className,
+            gradeLevel: gradeLevel,
+            studentName: studentName,
+            status: AttendanceRecord.Status(rawValue: statusRawValue) ?? .present
+        )
+    }
+}
+
+@Model
+final class PersistedScheduleProfile: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var name: String = ""
+    var alarmsJSONString: String = "[]"
+
+    init(from item: ScheduleProfile) {
+        update(from: item)
+    }
+
+    func update(from item: ScheduleProfile) {
+        self.id = item.id
+        self.name = item.name
+        if
+            let data = try? JSONEncoder().encode(item.alarms),
+            let json = String(data: data, encoding: .utf8)
+        {
+            self.alarmsJSONString = json
+        } else {
+            self.alarmsJSONString = "[]"
+        }
+    }
+
+    func asScheduleProfile() -> ScheduleProfile {
+        let alarmsData = alarmsJSONString.data(using: .utf8) ?? Data("[]".utf8)
+        return ScheduleProfile(
+            id: id,
+            name: name,
+            alarms: (try? JSONDecoder().decode([AlarmItem].self, from: alarmsData)) ?? []
+        )
+    }
+}
+
+@Model
+final class PersistedDayOverride: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var date: Date = Date.distantPast
+    var profileID: UUID = UUID()
+    var kindRawValue: String = DayOverride.OverrideKind.custom.rawValue
+
+    init(from item: DayOverride) {
+        update(from: item)
+    }
+
+    func update(from item: DayOverride) {
+        self.id = item.id
+        self.date = item.date
+        self.profileID = item.profileID
+        self.kindRawValue = item.kind.rawValue
+    }
+
+    func asDayOverride() -> DayOverride {
+        DayOverride(
+            id: id,
+            date: date,
+            profileID: profileID,
+            kind: DayOverride.OverrideKind(rawValue: kindRawValue) ?? .custom
+        )
+    }
+}
+
 struct FirstPersistenceSliceSnapshot {
     var alarms: [AlarmItem]
     var studentProfiles: [StudentSupportProfile]
@@ -357,27 +493,176 @@ struct SecondPersistenceSliceSnapshot {
     var dailySubPlans: [DailySubPlanItem]
 }
 
+struct ThirdPersistenceSliceSnapshot {
+    var attendanceRecords: [AttendanceRecord]
+    var profiles: [ScheduleProfile]
+    var overrides: [DayOverride]
+}
+
 enum ClassCuePersistence {
+    enum ContainerMode: String {
+        case cloudKit = "CloudKit"
+        case localFallback = "Local Fallback"
+    }
+
     static let firstSliceMigrationKey = "swiftdata_first_slice_migration_v1"
     static let secondSliceMigrationKey = "swiftdata_second_slice_migration_v1"
+    static let thirdSliceMigrationKey = "swiftdata_third_slice_migration_v1"
+    static let cloudKitContainerIdentifier = "iCloud.com.mrmike.classcue"
+    static let cloudKitSchemaInitializationKey = "swiftdata_cloudkit_schema_initialized_v1"
+    static private(set) var activeContainerMode: ContainerMode = .localFallback
+    static private(set) var lastContainerStatusMessage = "Container not initialized yet."
+    static private(set) var lastSchemaInitializationMessage = "Schema initializer not run yet."
+
+    static let persistedEntityTypes: [any PersistentModel.Type] = [
+        PersistedAlarmItem.self,
+        PersistedStudentSupportProfile.self,
+        PersistedClassDefinitionItem.self,
+        PersistedCommitmentItem.self,
+        PersistedTodoItem.self,
+        PersistedFollowUpNoteItem.self,
+        PersistedSubPlanItem.self,
+        PersistedDailySubPlanItem.self,
+        PersistedAttendanceRecord.self,
+        PersistedScheduleProfile.self,
+        PersistedDayOverride.self
+    ]
+
+    static func describe(error: Error) -> String {
+        let nsError = error as NSError
+        var details = "\(nsError.domain) (\(nsError.code)): \(nsError.localizedDescription)"
+
+        if let failureReason = nsError.localizedFailureReason, !failureReason.isEmpty {
+            details += " Failure reason: \(failureReason)"
+        }
+
+        if let recoverySuggestion = nsError.localizedRecoverySuggestion, !recoverySuggestion.isEmpty {
+            details += " Recovery: \(recoverySuggestion)"
+        }
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            details += " Underlying: \(underlying.domain) (\(underlying.code)): \(underlying.localizedDescription)"
+        }
+
+        return details
+    }
 
     static let sharedModelContainer: ModelContainer = {
         do {
-            return try ModelContainer(
-                for:
-                    PersistedAlarmItem.self,
-                    PersistedStudentSupportProfile.self,
-                    PersistedClassDefinitionItem.self,
-                    PersistedCommitmentItem.self,
-                    PersistedTodoItem.self,
-                    PersistedFollowUpNoteItem.self,
-                    PersistedSubPlanItem.self,
-                    PersistedDailySubPlanItem.self
+            let cloudConfiguration = ModelConfiguration(
+                "ClassCue",
+                cloudKitDatabase: .private(cloudKitContainerIdentifier)
             )
+            do {
+                let container = try ModelContainer(
+                    for:
+                        PersistedAlarmItem.self,
+                        PersistedStudentSupportProfile.self,
+                        PersistedClassDefinitionItem.self,
+                        PersistedCommitmentItem.self,
+                        PersistedTodoItem.self,
+                        PersistedFollowUpNoteItem.self,
+                        PersistedSubPlanItem.self,
+                        PersistedDailySubPlanItem.self,
+                        PersistedAttendanceRecord.self,
+                        PersistedScheduleProfile.self,
+                        PersistedDayOverride.self,
+                    configurations: cloudConfiguration
+                )
+                activeContainerMode = .cloudKit
+                lastContainerStatusMessage = "Using CloudKit container \(cloudKitContainerIdentifier)."
+                return container
+            } catch {
+                let message = "CloudKit-backed SwiftData container unavailable. Falling back to local store: \(describe(error: error))"
+                NSLog("%@", message)
+
+                let localConfiguration = ModelConfiguration(
+                    "ClassCue",
+                    cloudKitDatabase: .none
+                )
+                let container = try ModelContainer(
+                    for:
+                        PersistedAlarmItem.self,
+                        PersistedStudentSupportProfile.self,
+                        PersistedClassDefinitionItem.self,
+                        PersistedCommitmentItem.self,
+                        PersistedTodoItem.self,
+                        PersistedFollowUpNoteItem.self,
+                        PersistedSubPlanItem.self,
+                        PersistedDailySubPlanItem.self,
+                        PersistedAttendanceRecord.self,
+                        PersistedScheduleProfile.self,
+                        PersistedDayOverride.self,
+                    configurations: localConfiguration
+                )
+                activeContainerMode = .localFallback
+                lastContainerStatusMessage = message
+                return container
+            }
         } catch {
             fatalError("Unable to create SwiftData container: \(error)")
         }
     }()
+
+    static func initializeCloudKitDevelopmentSchemaIfNeeded() {
+#if DEBUG
+        if UserDefaults.standard.bool(forKey: cloudKitSchemaInitializationKey) {
+            lastSchemaInitializationMessage = "CloudKit development schema was already initialized."
+            return
+        }
+
+        let configuration = ModelConfiguration(
+            "ClassCue",
+            cloudKitDatabase: .private(cloudKitContainerIdentifier)
+        )
+
+        do {
+            try autoreleasepool {
+                let description = NSPersistentStoreDescription(url: configuration.url)
+                description.shouldAddStoreAsynchronously = false
+                description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+                    containerIdentifier: cloudKitContainerIdentifier
+                )
+
+                guard let model = NSManagedObjectModel.makeManagedObjectModel(for: persistedEntityTypes) else {
+                    throw NSError(
+                        domain: "ClassCuePersistence",
+                        code: 1001,
+                        userInfo: [NSLocalizedDescriptionKey: "Unable to create managed object model for CloudKit schema initialization."]
+                    )
+                }
+
+                let container = NSPersistentCloudKitContainer(
+                    name: "ClassCue",
+                    managedObjectModel: model
+                )
+                container.persistentStoreDescriptions = [description]
+
+                var loadError: Error?
+                container.loadPersistentStores { _, error in
+                    loadError = error
+                }
+
+                if let loadError {
+                    throw loadError
+                }
+
+                try container.initializeCloudKitSchema()
+
+                if let store = container.persistentStoreCoordinator.persistentStores.first {
+                    try container.persistentStoreCoordinator.remove(store)
+                }
+            }
+
+            UserDefaults.standard.set(true, forKey: cloudKitSchemaInitializationKey)
+            lastSchemaInitializationMessage = "CloudKit development schema initialized successfully."
+        } catch {
+            let message = "CloudKit schema initialization failed: \(describe(error: error))"
+            NSLog("%@", message)
+            lastSchemaInitializationMessage = message
+        }
+#endif
+    }
 
     @MainActor
     static func importFirstSliceIfNeeded(
@@ -401,18 +686,18 @@ enum ClassCuePersistence {
 
     @MainActor
     static func loadFirstSlice(from context: ModelContext) -> FirstPersistenceSliceSnapshot {
-        let classes = (try? context.fetch(FetchDescriptor<PersistedClassDefinitionItem>(
+        let classes = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedClassDefinitionItem>(
             sortBy: [SortDescriptor(\.name), SortDescriptor(\.gradeLevel)]
-        ))) ?? []
-        let students = (try? context.fetch(FetchDescriptor<PersistedStudentSupportProfile>(
+        ))) ?? [], in: context)
+        let students = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedStudentSupportProfile>(
             sortBy: [SortDescriptor(\.name)]
-        ))) ?? []
-        let alarms = (try? context.fetch(FetchDescriptor<PersistedAlarmItem>(
+        ))) ?? [], in: context)
+        let alarms = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedAlarmItem>(
             sortBy: [SortDescriptor(\.dayOfWeekValue), SortDescriptor(\.start)]
-        ))) ?? []
-        let commitments = (try? context.fetch(FetchDescriptor<PersistedCommitmentItem>(
+        ))) ?? [], in: context)
+        let commitments = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedCommitmentItem>(
             sortBy: [SortDescriptor(\.dayOfWeek), SortDescriptor(\.startTime)]
-        ))) ?? []
+        ))) ?? [], in: context)
 
         return FirstPersistenceSliceSnapshot(
             alarms: alarms.map { $0.asAlarmItem() },
@@ -430,10 +715,10 @@ enum ClassCuePersistence {
         commitments: [CommitmentItem],
         into context: ModelContext
     ) {
-        replaceAll(PersistedClassDefinitionItem.self, in: context, with: classDefinitions.map(PersistedClassDefinitionItem.init))
-        replaceAll(PersistedStudentSupportProfile.self, in: context, with: studentProfiles.map(PersistedStudentSupportProfile.init))
-        replaceAll(PersistedAlarmItem.self, in: context, with: alarms.map(PersistedAlarmItem.init))
-        replaceAll(PersistedCommitmentItem.self, in: context, with: commitments.map(PersistedCommitmentItem.init))
+        syncModels(PersistedClassDefinitionItem.self, values: classDefinitions, in: context, create: PersistedClassDefinitionItem.init, update: { $0.update(from: $1) })
+        syncModels(PersistedStudentSupportProfile.self, values: studentProfiles, in: context, create: PersistedStudentSupportProfile.init, update: { $0.update(from: $1) })
+        syncModels(PersistedAlarmItem.self, values: alarms, in: context, create: PersistedAlarmItem.init, update: { $0.update(from: $1) })
+        syncModels(PersistedCommitmentItem.self, values: commitments, in: context, create: PersistedCommitmentItem.init, update: { $0.update(from: $1) })
         save(context)
         UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
     }
@@ -460,18 +745,18 @@ enum ClassCuePersistence {
 
     @MainActor
     static func loadSecondSlice(from context: ModelContext) -> SecondPersistenceSliceSnapshot {
-        let todos = (try? context.fetch(FetchDescriptor<PersistedTodoItem>(
+        let todos = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedTodoItem>(
             sortBy: [SortDescriptor(\.task)]
-        ))) ?? []
-        let followUpNotes = (try? context.fetch(FetchDescriptor<PersistedFollowUpNoteItem>(
+        ))) ?? [], in: context)
+        let followUpNotes = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedFollowUpNoteItem>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        ))) ?? []
-        let subPlans = (try? context.fetch(FetchDescriptor<PersistedSubPlanItem>(
+        ))) ?? [], in: context)
+        let subPlans = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedSubPlanItem>(
             sortBy: [SortDescriptor(\.dateKey), SortDescriptor(\.updatedAt, order: .reverse)]
-        ))) ?? []
-        let dailySubPlans = (try? context.fetch(FetchDescriptor<PersistedDailySubPlanItem>(
+        ))) ?? [], in: context)
+        let dailySubPlans = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedDailySubPlanItem>(
             sortBy: [SortDescriptor(\.dateKey), SortDescriptor(\.updatedAt, order: .reverse)]
-        ))) ?? []
+        ))) ?? [], in: context)
 
         return SecondPersistenceSliceSnapshot(
             todos: todos.map { $0.asTodoItem() },
@@ -489,27 +774,78 @@ enum ClassCuePersistence {
         dailySubPlans: [DailySubPlanItem],
         into context: ModelContext
     ) {
-        replaceAll(PersistedTodoItem.self, in: context, with: todos.map(PersistedTodoItem.init))
-        replaceAll(PersistedFollowUpNoteItem.self, in: context, with: followUpNotes.map(PersistedFollowUpNoteItem.init))
-        replaceAll(PersistedSubPlanItem.self, in: context, with: subPlans.map(PersistedSubPlanItem.init))
-        replaceAll(PersistedDailySubPlanItem.self, in: context, with: dailySubPlans.map(PersistedDailySubPlanItem.init))
+        syncModels(PersistedTodoItem.self, values: todos, in: context, create: PersistedTodoItem.init, update: { $0.update(from: $1) })
+        syncModels(PersistedFollowUpNoteItem.self, values: followUpNotes, in: context, create: PersistedFollowUpNoteItem.init, update: { $0.update(from: $1) })
+        syncModels(PersistedSubPlanItem.self, values: subPlans, in: context, create: PersistedSubPlanItem.init, update: { $0.update(from: $1) })
+        syncModels(PersistedDailySubPlanItem.self, values: dailySubPlans, in: context, create: PersistedDailySubPlanItem.init, update: { $0.update(from: $1) })
         save(context)
         UserDefaults.standard.set(true, forKey: secondSliceMigrationKey)
     }
 
     @MainActor
     static func loadFollowUpNotes(from context: ModelContext) -> [FollowUpNoteItem] {
-        let notes = (try? context.fetch(FetchDescriptor<PersistedFollowUpNoteItem>(
+        let notes = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedFollowUpNoteItem>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        ))) ?? []
+        ))) ?? [], in: context)
         return notes.map { $0.asFollowUpNoteItem() }
     }
 
     @MainActor
     static func saveFollowUpNotes(_ notes: [FollowUpNoteItem], into context: ModelContext) {
-        replaceAll(PersistedFollowUpNoteItem.self, in: context, with: notes.map(PersistedFollowUpNoteItem.init))
+        syncModels(PersistedFollowUpNoteItem.self, values: notes, in: context, create: PersistedFollowUpNoteItem.init, update: { $0.update(from: $1) })
         save(context)
         UserDefaults.standard.set(true, forKey: secondSliceMigrationKey)
+    }
+
+    @MainActor
+    static func importThirdSliceIfNeeded(
+        legacyAttendanceRecords: [AttendanceRecord],
+        legacyProfiles: [ScheduleProfile],
+        legacyOverrides: [DayOverride],
+        into context: ModelContext
+    ) {
+        let hasImported = UserDefaults.standard.bool(forKey: thirdSliceMigrationKey)
+        if hasImported { return }
+
+        replaceAll(PersistedAttendanceRecord.self, in: context, with: legacyAttendanceRecords.map(PersistedAttendanceRecord.init))
+        replaceAll(PersistedScheduleProfile.self, in: context, with: legacyProfiles.map(PersistedScheduleProfile.init))
+        replaceAll(PersistedDayOverride.self, in: context, with: legacyOverrides.map(PersistedDayOverride.init))
+        save(context)
+
+        UserDefaults.standard.set(true, forKey: thirdSliceMigrationKey)
+    }
+
+    @MainActor
+    static func loadThirdSlice(from context: ModelContext) -> ThirdPersistenceSliceSnapshot {
+        let attendanceRecords = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedAttendanceRecord>(
+            sortBy: [SortDescriptor(\.dateKey, order: .reverse), SortDescriptor(\.className), SortDescriptor(\.studentName)]
+        ))) ?? [], in: context)
+        let profiles = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedScheduleProfile>(
+            sortBy: [SortDescriptor(\.name)]
+        ))) ?? [], in: context)
+        let overrides = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedDayOverride>(
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
+        ))) ?? [], in: context)
+
+        return ThirdPersistenceSliceSnapshot(
+            attendanceRecords: attendanceRecords.map { $0.asAttendanceRecord() },
+            profiles: profiles.map { $0.asScheduleProfile() },
+            overrides: overrides.map { $0.asDayOverride() }
+        )
+    }
+
+    @MainActor
+    static func saveThirdSlice(
+        attendanceRecords: [AttendanceRecord],
+        profiles: [ScheduleProfile],
+        overrides: [DayOverride],
+        into context: ModelContext
+    ) {
+        syncModels(PersistedAttendanceRecord.self, values: attendanceRecords, in: context, create: PersistedAttendanceRecord.init, update: { $0.update(from: $1) })
+        syncModels(PersistedScheduleProfile.self, values: profiles, in: context, create: PersistedScheduleProfile.init, update: { $0.update(from: $1) })
+        syncModels(PersistedDayOverride.self, values: overrides, in: context, create: PersistedDayOverride.init, update: { $0.update(from: $1) })
+        save(context)
+        UserDefaults.standard.set(true, forKey: thirdSliceMigrationKey)
     }
 
     @MainActor
@@ -530,6 +866,56 @@ enum ClassCuePersistence {
             try context.save()
         } catch {
             assertionFailure("Failed to save SwiftData migration slice: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func deduplicatedModels<T: PersistedUUIDModel>(_ models: [T], in context: ModelContext) -> [T] {
+        var seen = Set<UUID>()
+        var unique: [T] = []
+
+        for model in models {
+            if seen.insert(model.id).inserted {
+                unique.append(model)
+            } else {
+                context.delete(model)
+            }
+        }
+
+        if unique.count != models.count {
+            save(context)
+        }
+
+        return unique
+    }
+
+    @MainActor
+    private static func syncModels<T: PersistedUUIDModel, Value>(
+        _ type: T.Type,
+        values: [Value],
+        in context: ModelContext,
+        create: (Value) -> T,
+        update: (T, Value) -> Void,
+        identifier: (Value) -> UUID = { value in
+            (value as! any Identifiable).id as! UUID
+        }
+    ) {
+        let descriptor = FetchDescriptor<T>()
+        let existing = deduplicatedModels((try? context.fetch(descriptor)) ?? [], in: context)
+        var existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+        let incomingIDs = Set(values.map(identifier))
+
+        for model in existing where !incomingIDs.contains(model.id) {
+            context.delete(model)
+        }
+
+        for value in values {
+            let id = identifier(value)
+            if let persisted = existingByID[id] {
+                update(persisted, value)
+            } else {
+                context.insert(create(value))
+            }
         }
     }
 }

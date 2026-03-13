@@ -22,62 +22,81 @@ final class TimerEngine: ObservableObject {
     private let impactGenerator = UIImpactFeedbackGenerator(style: .heavy)
     
     init() {
-        
         cancellable = Timer
             .publish(every: 1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] date in
                 self?.now = date
             }
-        
+
+#if !targetEnvironment(macCatalyst)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appReturned),
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+#endif
     }
-    
+
+#if !targetEnvironment(macCatalyst)
     @objc private func appReturned() {
         now = Date()
     }
-    
+#endif
+
     func triggerAlert(haptic: HapticPattern, sound: SoundPattern) {
-        
         if sound != .none {
             AudioServicesPlaySystemSound(sound.systemID)
         }
-        
+
         switch haptic {
-            
         case .doubleThump:
+#if !targetEnvironment(macCatalyst)
             notificationGenerator.prepare()
             notificationGenerator.notificationOccurred(.success)
+#endif
             
         case .triplePulse:
+#if !targetEnvironment(macCatalyst)
             notificationGenerator.prepare()
             notificationGenerator.notificationOccurred(.error)
+#endif
             
         case .sharpClick:
-            AudioServicesPlaySystemSound(1519)
+            playSystemHaptic(1519)
             
         case .heavyImpact:
+#if !targetEnvironment(macCatalyst)
             impactGenerator.prepare()
             impactGenerator.impactOccurred()
+#endif
 
         case .lightTap:
+#if !targetEnvironment(macCatalyst)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+#endif
 
         case .rigidTap:
+#if !targetEnvironment(macCatalyst)
             if #available(iOS 13.0, *) {
                 UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
             } else {
                 impactGenerator.prepare()
                 impactGenerator.impactOccurred()
             }
+#endif
             
         case .none:
             break
         }
+    }
+
+    private func playSystemHaptic(_ id: SystemSoundID) {
+#if targetEnvironment(macCatalyst)
+        return
+#else
+        AudioServicesPlaySystemSound(id)
+#endif
     }
 }

@@ -8,9 +8,13 @@
 //
 
 import SwiftUI
+#if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
 import ActivityKit
+#endif
+import SwiftData
 
 struct SettingsView: View {
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("pref_haptic") private var selectedHapticRawValue: String = HapticPattern.doubleThump.rawValue
     @AppStorage("pref_sound") private var selectedSoundRawValue: String = SoundPattern.classicAlarm.rawValue
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
@@ -52,6 +56,7 @@ struct SettingsView: View {
             Form {
                 alertsSection
                 liveActivityStatusSection
+                cloudSyncStatusSection
                 holidaySection
                 schoolBoundariesSection
                 integrationsSection
@@ -183,8 +188,51 @@ struct SettingsView: View {
         }
     }
 
+    private var cloudSyncStatusSection: some View {
+        Section("Cloud Sync Status") {
+            LabeledContent("Persistence Mode") {
+                Text(ClassCuePersistence.activeContainerMode.rawValue)
+                    .foregroundColor(
+                        ClassCuePersistence.activeContainerMode == .cloudKit ? .green : .orange
+                    )
+            }
+
+            LabeledContent("CloudKit Container") {
+                Text(ClassCuePersistence.cloudKitContainerIdentifier)
+                    .font(.footnote)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(.secondary)
+            }
+
+            LabeledContent("Last Container Event") {
+                Text(ClassCuePersistence.lastContainerStatusMessage)
+                    .font(.footnote)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(.secondary)
+            }
+
+            LabeledContent("Schema Init Status") {
+                Text(ClassCuePersistence.lastSchemaInitializationMessage)
+                    .font(.footnote)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(.secondary)
+            }
+
+            if ClassCuePersistence.activeContainerMode == .cloudKit {
+                Text("SwiftData initialized with the CloudKit-backed store. If data still does not appear on another device, the remaining issue is sync propagation or schema deployment rather than local fallback.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("The app is currently using the local fallback store. Cross-device sync will not happen until the CloudKit-backed container initializes successfully on this device.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
     private var liveActivityStatusSection: some View {
         Section("Live Activity Status") {
+#if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
             LabeledContent("iPhone Allows Live Activities") {
                 Text(liveActivitiesEnabled ? "On" : "Off")
                     .foregroundColor(liveActivitiesEnabled ? .green : .red)
@@ -211,6 +259,11 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
+#else
+            Text("Live Activities are unavailable on this platform. ClassCue sync, schedule editing, students, tasks, notes, and sub plans remain available.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+#endif
         }
     }
 
@@ -369,11 +422,7 @@ struct SettingsView: View {
             todos = []
         }
 
-        if let decodedProfiles = try? JSONDecoder().decode([ScheduleProfile].self, from: savedProfiles) {
-            profiles = decodedProfiles
-        } else {
-            profiles = []
-        }
+        profiles = ClassCuePersistence.loadThirdSlice(from: modelContext).profiles
 
         if let decodedProfiles = try? JSONDecoder().decode([StudentSupportProfile].self, from: savedStudentProfiles) {
             studentProfiles = decodedProfiles.sorted {
@@ -391,11 +440,7 @@ struct SettingsView: View {
             classDefinitions = []
         }
 
-        if let decodedOverrides = try? JSONDecoder().decode([DayOverride].self, from: savedOverrides) {
-            overrides = decodedOverrides
-        } else {
-            overrides = []
-        }
+        overrides = ClassCuePersistence.loadThirdSlice(from: modelContext).overrides
     }
 
     private func saveAlarms(_ alarms: [AlarmItem]) {
@@ -405,12 +450,26 @@ struct SettingsView: View {
     }
 
     private func saveProfiles(_ profiles: [ScheduleProfile]) {
+        let snapshot = ClassCuePersistence.loadThirdSlice(from: modelContext)
+        ClassCuePersistence.saveThirdSlice(
+            attendanceRecords: snapshot.attendanceRecords,
+            profiles: profiles,
+            overrides: overrides,
+            into: modelContext
+        )
         if let encoded = try? JSONEncoder().encode(profiles) {
             savedProfiles = encoded
         }
     }
 
     private func saveOverrides(_ overrides: [DayOverride]) {
+        let snapshot = ClassCuePersistence.loadThirdSlice(from: modelContext)
+        ClassCuePersistence.saveThirdSlice(
+            attendanceRecords: snapshot.attendanceRecords,
+            profiles: profiles,
+            overrides: overrides,
+            into: modelContext
+        )
         if let encoded = try? JSONEncoder().encode(overrides) {
             savedOverrides = encoded
         }
@@ -478,11 +537,19 @@ struct SettingsView: View {
     }
 
     private var liveActivitiesEnabled: Bool {
+#if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
         ActivityAuthorizationInfo().areActivitiesEnabled
+#else
+        false
+#endif
     }
 
     private var activeLiveActivityCount: Int {
+#if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
         Activity<ClassCueActivityAttributes>.activities.count
+#else
+        0
+#endif
     }
 
     private var todayScheduleForExport: [AlarmItem] {
