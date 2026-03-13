@@ -19,12 +19,21 @@ struct NextUpSummaryCard: View {
 
         HStack(alignment: .top, spacing: 14) {
 
-            VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(item.type.themeColor.opacity(0.16))
+                    .frame(width: isCompact ? 42 : 50, height: isCompact ? 42 : 50)
 
+                Image(systemName: item.type.symbolName)
+                    .font(.system(size: isCompact ? 16 : 18, weight: .bold))
+                    .foregroundStyle(item.type == .blank ? .secondary : item.type.themeColor)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text("NEXT UP")
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(.blue)
+                        .font(.caption.weight(.black))
+                        .foregroundColor(item.type == .blank ? .blue : item.type.themeColor)
 
                     TypeBadge(type: item.type)
                 }
@@ -49,17 +58,41 @@ struct NextUpSummaryCard: View {
 
             Spacer(minLength: 12)
 
-            Text(timeText)
-                .font((isCompact ? Font.headline : .title3).weight(.bold))
-                .monospacedDigit()
-                .foregroundColor(.primary)
-                .lineLimit(1)
+            VStack(alignment: .trailing, spacing: 8) {
+                Text(timeText)
+                    .font((isCompact ? Font.headline : .title3).weight(.bold))
+                    .monospacedDigit()
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                Capsule(style: .continuous)
+                    .fill(item.type.themeColor.opacity(0.22))
+                    .frame(width: isCompact ? 56 : 76, height: 6)
+                    .overlay(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(item.type.themeColor == .clear ? Color.blue : item.type.themeColor)
+                            .frame(width: progressWidth)
+                    }
+            }
         }
         .frame(maxWidth: .infinity)
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.systemGray6))
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            item.type.themeColor.opacity(0.10),
+                            Color(.systemGray6)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
         )
     }
 
@@ -85,6 +118,14 @@ struct NextUpSummaryCard: View {
 
     private var timeRangeText: String {
         "\(start.formatted(date: .omitted, time: .shortened)) - \(end.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var progressWidth: CGFloat {
+        let total = max(end.timeIntervalSince(start), 1)
+        let remaining = max(start.timeIntervalSince(now), 0)
+        let progress = CGFloat(1 - (remaining / total))
+        let base = isCompact ? 56.0 : 76.0
+        return max(12, base * progress)
     }
 
     private var anchoredEndTime: Date {

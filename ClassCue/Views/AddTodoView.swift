@@ -23,12 +23,17 @@ struct AddTodoView: View {
     @State private var priority = TodoItem.Priority.none
     @State private var category = TodoItem.Category.prep
     @State private var bucket = TodoItem.Bucket.today
+    @State private var workspace = TodoItem.Workspace.school
     @State private var linkedContext = ""
     @State private var studentOrGroup = ""
     @State private var followUpNote = ""
     @State private var reminder = TodoItem.Reminder.none
     @State private var hasDueDate = false
     @State private var dueDate = Date()
+    @AppStorage("school_quiet_hours_enabled") private var schoolQuietHoursEnabled = false
+    @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
+    @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
+    @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
 
     init(
         todos: Binding<[TodoItem]>,
@@ -42,6 +47,14 @@ struct AddTodoView: View {
         self.suggestedStudents = suggestedStudents
         self.studentSupportsByName = studentSupportsByName
         self.existing = existing
+        let usePersonalDefault = AddTodoView.shouldDefaultToPersonalCapture(
+            schoolQuietHoursEnabled: UserDefaults.standard.bool(forKey: "school_quiet_hours_enabled"),
+            schoolQuietHour: UserDefaults.standard.object(forKey: "school_quiet_hour") as? Int ?? 16,
+            schoolQuietMinute: UserDefaults.standard.object(forKey: "school_quiet_minute") as? Int ?? 0,
+            defaultPersonalCaptureAfterHours: UserDefaults.standard.object(forKey: "school_default_personal_capture_after_hours") as? Bool ?? true,
+            now: Date()
+        )
+        _workspace = State(initialValue: existing?.workspace ?? (usePersonalDefault ? .personal : .school))
     }
     
     var body: some View {
@@ -60,6 +73,13 @@ struct AddTodoView: View {
                     Picker("When", selection: $bucket) {
                         ForEach(TodoItem.Bucket.allCases, id: \.self) { bucket in
                             Text(bucket.displayName).tag(bucket)
+                        }
+                    }
+
+                    Picker("Workspace", selection: $workspace) {
+                        ForEach(TodoItem.Workspace.allCases, id: \.self) { workspace in
+                            Label(workspace.displayName, systemImage: workspace.systemImage)
+                                .tag(workspace)
                         }
                     }
 
@@ -145,6 +165,7 @@ struct AddTodoView: View {
                     priority = existing.priority
                     category = existing.category
                     bucket = existing.bucket
+                    workspace = existing.workspace
                     linkedContext = existing.linkedContext
                     studentOrGroup = existing.studentOrGroup
                     followUpNote = existing.followUpNote
@@ -211,6 +232,7 @@ struct AddTodoView: View {
             dueDate: hasDueDate ? dueDate : nil,
             category: category,
             bucket: bucket,
+            workspace: workspace,
             linkedContext: linkedContext.trimmingCharacters(in: .whitespacesAndNewlines),
             studentOrGroup: studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines),
             followUpNote: followUpNote.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -225,6 +247,24 @@ struct AddTodoView: View {
         }
         
         dismiss()
+    }
+
+    private static func shouldDefaultToPersonalCapture(
+        schoolQuietHoursEnabled: Bool,
+        schoolQuietHour: Int,
+        schoolQuietMinute: Int,
+        defaultPersonalCaptureAfterHours: Bool,
+        now: Date
+    ) -> Bool {
+        guard schoolQuietHoursEnabled, defaultPersonalCaptureAfterHours else { return false }
+        let calendar = Calendar.current
+        let start = calendar.date(
+            bySettingHour: schoolQuietHour,
+            minute: schoolQuietMinute,
+            second: 0,
+            of: now
+        ) ?? now
+        return now >= start
     }
 }
 

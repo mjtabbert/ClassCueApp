@@ -12,6 +12,7 @@ import SwiftUI
 struct AddEditView: View {
     @Binding var alarms: [AlarmItem]
     let studentProfiles: [StudentSupportProfile]
+    let classDefinitions: [ClassDefinitionItem]
 
     let day: Int
     var existing: AlarmItem? = nil
@@ -22,6 +23,7 @@ struct AddEditView: View {
     @State private var room = ""
     @State private var grade = ""
     @State private var type = AlarmItem.ScheduleType.other
+    @State private var selectedClassDefinitionID: UUID?
 
     @State private var start = Date()
     @State private var end = Date().addingTimeInterval(60 * 30)
@@ -65,6 +67,7 @@ struct AddEditView: View {
             startTime: start,
             endTime: end,
             type: type,
+            classDefinitionID: selectedClassDefinitionID,
             linkedStudentIDs: Array(linkedStudentIDs)
         )
     }
@@ -77,6 +80,13 @@ struct AddEditView: View {
                 }
 
                 Section("Class Details") {
+                    Picker("Saved Class", selection: $selectedClassDefinitionID) {
+                        Text("None").tag(Optional<UUID>.none)
+                        ForEach(classDefinitions) { definition in
+                            Text(definition.displayName).tag(Optional(definition.id))
+                        }
+                    }
+
                     TextField("Class Name", text: $name)
 
                     Picker("Type", selection: $type) {
@@ -100,6 +110,15 @@ struct AddEditView: View {
                     }
 
                     TextField("Room / Location", text: $room)
+
+                    if selectedClassDefinitionID == nil, !candidateClassDefinitions.isEmpty {
+                        Picker("Suggested Match", selection: $selectedClassDefinitionID) {
+                            Text("No Match").tag(Optional<UUID>.none)
+                            ForEach(candidateClassDefinitions) { definition in
+                                Text(definition.displayName).tag(Optional(definition.id))
+                            }
+                        }
+                    }
                 }
 
                 Section("Timing") {
@@ -191,6 +210,9 @@ struct AddEditView: View {
             .onAppear {
                 configureInitialValues()
             }
+            .onChange(of: selectedClassDefinitionID) { _, newValue in
+                applySelectedClassDefinition(newValue)
+            }
             .alert("Unable to Save", isPresented: $showValidationAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -221,6 +243,11 @@ struct AddEditView: View {
             room = existing.location
             grade = GradeLevelOption.normalized(existing.gradeLevel)
             type = existing.type
+            selectedClassDefinitionID = existing.classDefinitionID ?? exactClassDefinitionMatch(
+                name: existing.className,
+                gradeLevel: existing.gradeLevel,
+                in: classDefinitions
+            )?.id
             start = existing.startTime
             end = existing.endTime
             linkedStudentIDs = Set(existing.linkedStudentIDs)
@@ -259,6 +286,7 @@ struct AddEditView: View {
             startTime: start,
             endTime: end,
             type: type,
+            classDefinitionID: resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade),
             linkedStudentIDs: Array(linkedStudentIDs)
         )
 
@@ -295,6 +323,7 @@ struct AddEditView: View {
             startTime: newStart,
             endTime: newEnd,
             type: existing.type,
+            classDefinitionID: existing.classDefinitionID,
             linkedStudentIDs: existing.linkedStudentIDs
         )
 
@@ -334,11 +363,25 @@ struct AddEditView: View {
         studentProfiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    private var selectedClassDefinition: ClassDefinitionItem? {
+        guard let selectedClassDefinitionID else { return nil }
+        return classDefinitions.first { $0.id == selectedClassDefinitionID }
+    }
+
+    private var candidateClassDefinitions: [ClassDefinitionItem] {
+        guard selectedClassDefinitionID == nil else { return [] }
+        return classDefinitionCandidates(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            gradeLevel: grade,
+            in: classDefinitions
+        )
+    }
+
     private var suggestedStudents: [StudentSupportProfile] {
         let normalizedGrade = GradeLevelOption.normalized(grade)
-        let typeName = type.displayName
+        let typeName = selectedClassDefinition?.name ?? type.displayName
         return sortedStudentProfiles.filter { profile in
-            classNamesMatch(scheduleClassName: typeName, profileClassName: profile.className) &&
+            matchesCurrentClassDefinition(profile: profile, fallbackClassName: typeName) &&
             (
                 normalizedGrade.isEmpty ||
                 profile.gradeLevel.isEmpty ||
@@ -368,10 +411,10 @@ struct AddEditView: View {
 
     private var suggestedRosterGroups: [StudentRosterGroup] {
         let normalizedGrade = normalizedStudentKey(GradeLevelOption.normalized(grade))
-        let typeName = type.displayName
+        let typeName = selectedClassDefinition?.name ?? type.displayName
 
         return allRosterGroups.filter { group in
-            classNamesMatch(scheduleClassName: typeName, profileClassName: group.className) &&
+            matchesCurrentGroup(group, fallbackClassName: typeName) &&
             (
                 normalizedGrade.isEmpty ||
                 group.gradeLevel.isEmpty ||
@@ -453,6 +496,44 @@ struct AddEditView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func applySelectedClassDefinition(_ id: UUID?) {
+        guard let id, let definition = classDefinitions.first(where: { $0.id == id }) else { return }
+        name = definition.name
+        type = AlarmItem.ScheduleType(rawValue: definition.scheduleKind.rawValue) ?? .other
+        grade = GradeLevelOption.normalized(definition.gradeLevel)
+        if room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            room = definition.defaultLocation
+        }
+    }
+
+    private func resolvedClassDefinitionID(trimmedName: String, trimmedGrade: String) -> UUID? {
+        if let selectedClassDefinitionID {
+            return selectedClassDefinitionID
+        }
+
+        return exactClassDefinitionMatch(
+            name: trimmedName,
+            gradeLevel: trimmedGrade,
+            in: classDefinitions
+        )?.id
+    }
+
+    private func matchesCurrentClassDefinition(profile: StudentSupportProfile, fallbackClassName: String) -> Bool {
+        if let selectedClassDefinitionID {
+            return profile.classDefinitionID == selectedClassDefinitionID
+        }
+
+        return classNamesMatch(scheduleClassName: fallbackClassName, profileClassName: profile.className)
+    }
+
+    private func matchesCurrentGroup(_ group: StudentRosterGroup, fallbackClassName: String) -> Bool {
+        if let selectedClassDefinitionID {
+            return group.students.contains { $0.classDefinitionID == selectedClassDefinitionID }
+        }
+
+        return classNamesMatch(scheduleClassName: fallbackClassName, profileClassName: group.className)
     }
 }
 

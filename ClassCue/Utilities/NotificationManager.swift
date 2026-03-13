@@ -49,7 +49,9 @@ final class NotificationManager {
     func refreshNotifications(
         for alarms: [AlarmItem],
         activeOverrideSchedule: [AlarmItem]? = nil,
-        activeOverrideDate: Date? = nil
+        activeOverrideDate: Date? = nil,
+        overrides: [DayOverride] = [],
+        profiles: [ScheduleProfile] = []
     ) {
 
         removeClassCueNotifications {
@@ -67,6 +69,8 @@ final class NotificationManager {
             if let activeOverrideSchedule, let activeOverrideDate {
                 self.scheduleOverrideNotifications(for: activeOverrideSchedule, on: activeOverrideDate)
             }
+
+            self.scheduleUpcomingOverrideNotifications(overrides: overrides, profiles: profiles)
         }
     }
 
@@ -105,6 +109,25 @@ final class NotificationManager {
             scheduleOneOffWarning(for: alarm, minutesBefore: 1, on: date)
             scheduleOneOffStartNotification(for: alarm, on: date)
             scheduleOneOffEndNotification(for: alarm, on: date)
+        }
+    }
+
+    private func scheduleUpcomingOverrideNotifications(
+        overrides: [DayOverride],
+        profiles: [ScheduleProfile]
+    ) {
+        let today = Calendar.current.startOfDay(for: Date())
+        let horizon = Calendar.current.date(byAdding: .day, value: 21, to: today) ?? today
+
+        let upcomingOverrides = overrides
+            .filter { $0.date > today && $0.date <= horizon }
+            .sorted { $0.date < $1.date }
+
+        for override in upcomingOverrides {
+            guard let profile = profiles.first(where: { $0.id == override.profileID }) else { continue }
+            let weekday = Calendar.current.component(.weekday, from: override.date)
+            let alarms = overrideAlarms(from: profile, for: weekday)
+            scheduleOverrideNotifications(for: alarms, on: override.date)
         }
     }
 

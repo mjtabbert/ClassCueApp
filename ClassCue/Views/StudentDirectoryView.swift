@@ -11,6 +11,7 @@ import UIKit
 
 struct StudentDirectoryView: View {
     @Binding var profiles: [StudentSupportProfile]
+    @Binding var classDefinitions: [ClassDefinitionItem]
 
     private enum GroupingMode: String, CaseIterable, Identifiable {
         case none = "All"
@@ -46,6 +47,7 @@ struct StudentDirectoryView: View {
                 Text("Add students or groups here, then save their class, grade, accommodations, and instructional reminders. You can also import them from a Google Sheet as CSV.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
+                    .listRowBackground(sectionCardBackground(accent: .blue))
             }
 
             if !duplicateGroups.isEmpty {
@@ -66,6 +68,7 @@ struct StudentDirectoryView: View {
                             .controlSize(.small)
                         }
                         .padding(.vertical, 4)
+                        .listRowBackground(sectionCardBackground(accent: .orange))
                     }
                 }
             }
@@ -77,12 +80,14 @@ struct StudentDirectoryView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .listRowBackground(sectionCardBackground(accent: .indigo))
             }
 
             if filteredProfiles.isEmpty {
                 Section("Saved Supports") {
                     Text("No student supports saved yet.")
                         .foregroundColor(.secondary)
+                        .listRowBackground(sectionCardBackground(accent: .secondary))
                 }
             } else {
                 ForEach(groupedProfiles, id: \.title) { section in
@@ -97,6 +102,8 @@ struct StudentDirectoryView: View {
         .navigationTitle("Student Directory")
         .environment(\.editMode, .constant(selection.isEmpty ? .inactive : .active))
         .searchable(text: $searchText, prompt: "Search students, class, grade, or contact")
+        .scrollContentBackground(.hidden)
+        .background(directoryBackground)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Menu {
@@ -131,10 +138,10 @@ struct StudentDirectoryView: View {
             }
         }
         .sheet(isPresented: $showingAdd) {
-            EditStudentSupportView(profiles: $profiles, existing: nil)
+            EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: nil)
         }
         .sheet(item: $editingProfile) { profile in
-            EditStudentSupportView(profiles: $profiles, existing: profile)
+            EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: profile)
         }
         .sheet(isPresented: $showingTemplateShareSheet) {
             StudentDirectoryShareSheet(activityItems: [makeTemplateFileURL()])
@@ -224,8 +231,12 @@ struct StudentDirectoryView: View {
             editingProfile = profile
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                Text(profile.name)
-                    .fontWeight(.semibold)
+                HStack(spacing: 8) {
+                    Text(profile.name)
+                        .fontWeight(.semibold)
+
+                    gradePill(profile.gradeLevel)
+                }
 
                 let summary = profileSummary(profile)
                 if !summary.isEmpty {
@@ -251,7 +262,10 @@ struct StudentDirectoryView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(sectionCardBackground(accent: accent(for: profile)))
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
@@ -270,6 +284,72 @@ struct StudentDirectoryView: View {
                 deleteProfile(profile)
             }
         }
+    }
+
+    private var directoryBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(.systemBackground),
+                Color.blue.opacity(0.05),
+                Color.pink.opacity(0.03),
+                Color(.systemGroupedBackground)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    private func accent(for profile: StudentSupportProfile) -> Color {
+        let grade = normalizedStudentKey(profile.gradeLevel)
+        if grade.contains("prek") || grade == "k" {
+            return .pink
+        }
+        if grade.contains("1") || grade.contains("2") || grade.contains("3") {
+            return .orange
+        }
+        if grade.contains("4") || grade.contains("5") {
+            return .green
+        }
+        if grade.contains("6") || grade.contains("7") || grade.contains("8") {
+            return .blue
+        }
+        return .indigo
+    }
+
+    private func sectionCardBackground(accent: Color) -> some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        accent.opacity(0.10),
+                        Color(.secondarySystemBackground).opacity(0.94)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(accent.opacity(0.12), lineWidth: 1)
+            )
+    }
+
+    @ViewBuilder
+    private func gradePill(_ gradeLevel: String) -> some View {
+        let color = GradeLevelOption.color(for: gradeLevel)
+        let label = GradeLevelOption.pillLabel(for: gradeLevel)
+
+        Text(label)
+            .font(.caption2.weight(.black))
+            .foregroundStyle(color == .yellow ? Color.black.opacity(0.8) : .white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+            )
     }
 
     private var pasteImportView: some View {
@@ -407,6 +487,11 @@ struct StudentDirectoryView: View {
                     name: parts[0],
                     className: parts.count >= 2 ? parts[1] : "",
                     gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
+                    classDefinitionID: exactClassDefinitionMatch(
+                        name: parts.count >= 2 ? parts[1] : "",
+                        gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
+                        in: classDefinitions
+                    )?.id,
                     graduationYear: parts.count >= 6 ? parts[5] : "",
                     parentNames: parts.count >= 7 ? parts[6] : "",
                     parentPhoneNumbers: parts.count >= 8 ? parts[7] : "",

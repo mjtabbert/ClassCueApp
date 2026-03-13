@@ -21,21 +21,27 @@ struct TimelineRow: View {
         let isCurrent = now >= start && now < end
         let isTransition = item.type == .transition
         let countdownText = timeUntilStartText()
-        
+
         HStack(alignment: .top, spacing: 12) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(item.type.themeColor)
-                .frame(width: 4, height: isCurrent ? 54 : 42)
-                .padding(.top, 4)
-            
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(item.type.themeColor.opacity(item.type == .blank ? 0.12 : 0.18))
+                    .frame(width: 34, height: 56)
+
+                Image(systemName: item.type.symbolName)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(item.type == .blank ? .secondary : item.type.themeColor)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(item.className)
                         .font(isHero ? .headline : .subheadline)
                         .fontWeight(isCurrent ? .black : .bold)
                         .italic(isTransition)
                         .foregroundColor(.primary)
-                    
+                        .lineLimit(1)
+
                     if isCurrent {
                         Text("NOW")
                             .font(.caption2)
@@ -43,36 +49,42 @@ struct TimelineRow: View {
                             .foregroundColor(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(item.type.themeColor)
-                            .clipShape(Capsule())
+                            .background(item.type.themeColor, in: Capsule())
                     }
-                    
-                    Spacer()
-                    
+
+                    Spacer(minLength: 6)
+
                     TypeBadge(type: item.type)
                 }
-                
-                Text(timeRangeText(start: start, end: end))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                if !item.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(item.location)
-                        .font(.caption2)
+
+                HStack(spacing: 10) {
+                    Text(timeRangeText(start: start, end: end))
+                        .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
+
+                    if !item.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(item.location)
+                            .font(.caption2.weight(.medium))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                 }
-                
+
                 if isHero, let countdownText {
                     Text(countdownText)
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(.blue)
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(item.type == .blank ? .blue : item.type.themeColor)
                         .padding(.top, 1)
                 }
             }
         }
-        .padding(.vertical, 4)
-        .listRowBackground(backgroundColor(isHero: isHero, isCurrent: isCurrent))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(cardBackground(isHero: isHero, isCurrent: isCurrent))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(borderColor(isCurrent: isCurrent), lineWidth: isCurrent ? 1.2 : 1)
+        )
         .opacity(isPast ? 0.38 : 1.0)
     }
     
@@ -120,13 +132,24 @@ struct TimelineRow: View {
         ) ?? now
     }
     
-    private func backgroundColor(isHero: Bool, isCurrent: Bool) -> Color {
+    private func cardBackground(isHero: Bool, isCurrent: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        item.type.themeColor.opacity(isCurrent ? 0.18 : isHero ? 0.12 : 0.08),
+                        Color(.secondarySystemBackground).opacity(isCurrent ? 0.92 : 0.98)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+    }
+
+    private func borderColor(isCurrent: Bool) -> Color {
         if isCurrent {
-            return item.type.themeColor.opacity(0.12)
-        } else if isHero {
-            return Color.blue.opacity(0.08)
-        } else {
-            return Color(.secondarySystemGroupedBackground)
+            return item.type.themeColor.opacity(0.42)
         }
+        return Color.white.opacity(0.08)
     }
 }

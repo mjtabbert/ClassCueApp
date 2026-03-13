@@ -86,6 +86,45 @@ func classNamesMatch(scheduleClassName: String, profileClassName: String) -> Boo
     }
 }
 
+func exactClassDefinitionMatch(
+    name: String,
+    gradeLevel: String,
+    in definitions: [ClassDefinitionItem]
+) -> ClassDefinitionItem? {
+    let normalizedName = normalizedClassKey(name)
+    let normalizedGrade = normalizedStudentKey(GradeLevelOption.normalized(gradeLevel))
+
+    return definitions.first {
+        normalizedClassKey($0.name) == normalizedName &&
+        normalizedStudentKey(GradeLevelOption.normalized($0.gradeLevel)) == normalizedGrade
+    }
+}
+
+func classDefinitionCandidates(
+    name: String,
+    gradeLevel: String,
+    in definitions: [ClassDefinitionItem]
+) -> [ClassDefinitionItem] {
+    let normalizedName = normalizedClassKey(name)
+    let normalizedGrade = normalizedStudentKey(GradeLevelOption.normalized(gradeLevel))
+
+    return definitions.filter { definition in
+        let definitionName = normalizedClassKey(definition.name)
+        let definitionGrade = normalizedStudentKey(GradeLevelOption.normalized(definition.gradeLevel))
+
+        if !normalizedName.isEmpty && definitionName == normalizedName {
+            return true
+        }
+
+        if !normalizedGrade.isEmpty && !definitionGrade.isEmpty && definitionGrade == normalizedGrade {
+            return true
+        }
+
+        return false
+    }
+    .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+}
+
 func duplicateStudentProfileGroups(in profiles: [StudentSupportProfile]) -> [[StudentSupportProfile]] {
     let grouped = Dictionary(grouping: profiles) { profile in
         normalizedStudentKey(profile.name)
@@ -113,6 +152,7 @@ func mergedStudentProfile(from profiles: [StudentSupportProfile]) -> StudentSupp
         name: first.name.trimmingCharacters(in: .whitespacesAndNewlines),
         className: mergedValue(\.className),
         gradeLevel: mergedValue(\.gradeLevel),
+        classDefinitionID: profiles.compactMap(\.classDefinitionID).first,
         graduationYear: mergedValue(\.graduationYear),
         parentNames: mergedValue(\.parentNames),
         parentPhoneNumbers: mergedValue(\.parentPhoneNumbers),
@@ -135,6 +175,7 @@ func mergedStudentProfile(existing: StudentSupportProfile, incoming: StudentSupp
         name: preferred(existing.name, incoming.name),
         className: preferred(existing.className, incoming.className),
         gradeLevel: preferred(existing.gradeLevel, incoming.gradeLevel),
+        classDefinitionID: incoming.classDefinitionID ?? existing.classDefinitionID,
         graduationYear: preferred(existing.graduationYear, incoming.graduationYear),
         parentNames: preferred(existing.parentNames, incoming.parentNames),
         parentPhoneNumbers: preferred(existing.parentPhoneNumbers, incoming.parentPhoneNumbers),

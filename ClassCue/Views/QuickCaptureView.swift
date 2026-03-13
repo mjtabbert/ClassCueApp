@@ -24,6 +24,7 @@ struct QuickCaptureView: View {
 
     enum NoteDestination: String, CaseIterable {
         case general
+        case personal
         case classFollowUp
         case studentFollowUp
         case parentContact
@@ -31,6 +32,7 @@ struct QuickCaptureView: View {
         var title: String {
             switch self {
             case .general: return "General Note"
+            case .personal: return "Personal Note"
             case .classFollowUp: return "Class Follow-Up"
             case .studentFollowUp: return "Student Follow-Up"
             case .parentContact: return "Parent Contact"
@@ -45,13 +47,19 @@ struct QuickCaptureView: View {
     let preferredContext: String?
     let preferredCategory: TodoItem.Category?
     @AppStorage("notes_v1") private var notesText: String = ""
+    @AppStorage("personal_notes_v1") private var personalNotesText: String = ""
     @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
+    @AppStorage("school_quiet_hours_enabled") private var schoolQuietHoursEnabled = false
+    @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
+    @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
+    @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var target: CaptureTarget = .task
     @State private var text = ""
     @State private var category: TodoItem.Category = .prep
+    @State private var workspace: TodoItem.Workspace = .school
     @State private var linkedContext = ""
     @State private var studentOrGroup = ""
     @State private var followUpNote = ""
@@ -74,6 +82,15 @@ struct QuickCaptureView: View {
         self.preferredCategory = preferredCategory
         _category = State(initialValue: preferredCategory ?? .prep)
         _linkedContext = State(initialValue: preferredContext ?? "")
+        let usePersonalDefault = QuickCaptureView.shouldDefaultToPersonalCapture(
+            schoolQuietHoursEnabled: UserDefaults.standard.bool(forKey: "school_quiet_hours_enabled"),
+            schoolQuietHour: UserDefaults.standard.object(forKey: "school_quiet_hour") as? Int ?? 16,
+            schoolQuietMinute: UserDefaults.standard.object(forKey: "school_quiet_minute") as? Int ?? 0,
+            defaultPersonalCaptureAfterHours: UserDefaults.standard.object(forKey: "school_default_personal_capture_after_hours") as? Bool ?? true,
+            now: Date()
+        )
+        _workspace = State(initialValue: usePersonalDefault ? .personal : .school)
+        _noteDestination = State(initialValue: usePersonalDefault ? .personal : .general)
     }
 
     var body: some View {
@@ -99,6 +116,13 @@ struct QuickCaptureView: View {
 
                 if target == .task {
                     Section("Teacher Context") {
+                        Picker("Workspace", selection: $workspace) {
+                            ForEach(TodoItem.Workspace.allCases, id: \.self) { workspace in
+                                Label(workspace.displayName, systemImage: workspace.systemImage)
+                                    .tag(workspace)
+                            }
+                        }
+
                         Picker("Category", selection: $category) {
                             ForEach(TodoItem.Category.allCases, id: \.self) { category in
                                 Label(category.displayName, systemImage: category.systemImage)
@@ -231,6 +255,7 @@ struct QuickCaptureView: View {
                 priority: .med,
                 category: category,
                 bucket: bucket,
+                workspace: workspace,
                 linkedContext: linkedContext.trimmingCharacters(in: .whitespacesAndNewlines),
                 studentOrGroup: studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines),
                 followUpNote: followUpNote.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -249,10 +274,18 @@ struct QuickCaptureView: View {
         let route = noteRoutePrefix()
         let noteLine = route.isEmpty ? trimmed : "\(route): \(trimmed)"
 
-        if notesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            notesText = noteLine
+        if noteDestination == .personal {
+            if personalNotesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                personalNotesText = noteLine
+            } else {
+                personalNotesText = "\(noteLine)\n\n\(personalNotesText)"
+            }
         } else {
-            notesText = "\(noteLine)\n\n\(notesText)"
+            if notesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                notesText = noteLine
+            } else {
+                notesText = "\(noteLine)\n\n\(notesText)"
+            }
         }
 
         if let kind = structuredKindForDestination() {
@@ -293,6 +326,8 @@ struct QuickCaptureView: View {
         switch noteDestination {
         case .general:
             return nil
+        case .personal:
+            return nil
         case .classFollowUp:
             return .classNote
         case .studentFollowUp:
@@ -300,6 +335,24 @@ struct QuickCaptureView: View {
         case .parentContact:
             return .parentContact
         }
+    }
+
+    private static func shouldDefaultToPersonalCapture(
+        schoolQuietHoursEnabled: Bool,
+        schoolQuietHour: Int,
+        schoolQuietMinute: Int,
+        defaultPersonalCaptureAfterHours: Bool,
+        now: Date
+    ) -> Bool {
+        guard schoolQuietHoursEnabled, defaultPersonalCaptureAfterHours else { return false }
+        let calendar = Calendar.current
+        let start = calendar.date(
+            bySettingHour: schoolQuietHour,
+            minute: schoolQuietMinute,
+            second: 0,
+            of: now
+        ) ?? now
+        return now >= start
     }
 
     private func decodeFollowUpNotes() -> [FollowUpNoteItem] {

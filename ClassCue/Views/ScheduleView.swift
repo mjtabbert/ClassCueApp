@@ -14,6 +14,7 @@ struct ScheduleView: View {
     @Binding var selectedDay: WeekdayTab
     @Binding var alarms: [AlarmItem]
     @Binding var studentProfiles: [StudentSupportProfile]
+    @Binding var classDefinitions: [ClassDefinitionItem]
     var activeOverrideName: String? = nil
     var overrideSchedule: [AlarmItem]? = nil
     let openTodayTab: () -> Void
@@ -88,6 +89,7 @@ struct ScheduleView: View {
                     }
                     .padding()
                 }
+                .background(scheduleBackground)
             }
             .navigationTitle("Schedule")
             .toolbar {
@@ -160,6 +162,7 @@ struct ScheduleView: View {
                 AddEditView(
                     alarms: $alarms,
                     studentProfiles: studentProfiles,
+                    classDefinitions: classDefinitions,
                     day: selectedDay.rawValue
                 )
             }
@@ -167,6 +170,7 @@ struct ScheduleView: View {
                 AddEditView(
                     alarms: $alarms,
                     studentProfiles: studentProfiles,
+                    classDefinitions: classDefinitions,
                     day: item.dayOfWeek,
                     existing: item
                 )
@@ -189,7 +193,7 @@ struct ScheduleView: View {
             }
             .sheet(isPresented: $showingStudentDirectory) {
                 NavigationStack {
-                    StudentDirectoryView(profiles: $studentProfiles)
+                    StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
                 }
             }
             .onChange(of: overrides) { _, newValue in
@@ -266,6 +270,19 @@ struct ScheduleView: View {
         }
     }
 
+    private var scheduleBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(.systemBackground),
+                selectedDay == .today ? Color.blue.opacity(0.05) : Color.pink.opacity(0.03),
+                Color(.systemGroupedBackground)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
     private var emptyState: some View {
 
         VStack(alignment: .leading, spacing: 10) {
@@ -287,7 +304,20 @@ struct ScheduleView: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.secondarySystemBackground))
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.blue.opacity(0.08),
+                            Color(.secondarySystemBackground)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
     }
 
@@ -343,7 +373,16 @@ struct ScheduleView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 18)
-                        .fill(Color(.tertiarySystemBackground))
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.indigo.opacity(0.06),
+                                    Color(.tertiarySystemBackground)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                 )
             }
         }
@@ -462,6 +501,7 @@ struct ScheduleView: View {
                 startTime: item.startTime,
                 endTime: item.endTime,
                 type: item.type,
+                classDefinitionID: item.classDefinitionID,
                 linkedStudentIDs: item.linkedStudentIDs
             )
         }

@@ -17,6 +17,7 @@ struct TodoItem: Identifiable, Codable, Equatable {
     var dueDate: Date? = nil
     var category: Category = .prep
     var bucket: Bucket = .today
+    var workspace: Workspace = .school
     var linkedContext: String = ""
     var studentOrGroup: String = ""
     var followUpNote: String = ""
@@ -105,6 +106,32 @@ struct TodoItem: Identifiable, Codable, Equatable {
         }
     }
 
+    enum Workspace: String, Codable, CaseIterable {
+        case school
+        case personal
+
+        var displayName: String {
+            switch self {
+            case .school: return "School"
+            case .personal: return "Personal"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .school: return "building.2.fill"
+            case .personal: return "house.fill"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .school: return .blue
+            case .personal: return .green
+            }
+        }
+    }
+
     enum Reminder: String, Codable, CaseIterable {
         case none
         case afterSchool
@@ -143,6 +170,7 @@ struct TodoItem: Identifiable, Codable, Equatable {
         dueDate: Date? = nil,
         category: Category = .prep,
         bucket: Bucket = .today,
+        workspace: Workspace = .school,
         linkedContext: String = "",
         studentOrGroup: String = "",
         followUpNote: String = "",
@@ -155,6 +183,7 @@ struct TodoItem: Identifiable, Codable, Equatable {
         self.dueDate = dueDate
         self.category = category
         self.bucket = bucket
+        self.workspace = workspace
         self.linkedContext = linkedContext
         self.studentOrGroup = studentOrGroup
         self.followUpNote = followUpNote
@@ -170,6 +199,7 @@ struct TodoItem: Identifiable, Codable, Equatable {
         dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
         category = try container.decodeIfPresent(Category.self, forKey: .category) ?? .prep
         bucket = try container.decodeIfPresent(Bucket.self, forKey: .bucket) ?? .today
+        workspace = try container.decodeIfPresent(Workspace.self, forKey: .workspace) ?? .school
         linkedContext = try container.decodeIfPresent(String.self, forKey: .linkedContext) ?? ""
         studentOrGroup = try container.decodeIfPresent(String.self, forKey: .studentOrGroup) ?? ""
         followUpNote = try container.decodeIfPresent(String.self, forKey: .followUpNote) ?? ""

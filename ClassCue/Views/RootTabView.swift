@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 // MARK: - App Tabs
 
@@ -22,6 +23,7 @@ enum AppTab: Hashable {
 
 struct RootTabView: View {
 
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: AppTab = .today
     @State private var selectedScheduleDay: WeekdayTab = .today
 
@@ -29,9 +31,11 @@ struct RootTabView: View {
     @AppStorage("todo_v6_data") private var savedTodos: Data = Data()
     @AppStorage("commitments_v1_data") private var savedCommitments: Data = Data()
     @AppStorage("student_support_profiles_v1_data") private var savedStudentProfiles: Data = Data()
+    @AppStorage("class_definitions_v1_data") private var savedClassDefinitions: Data = Data()
     @AppStorage("attendance_v1_data") private var savedAttendance: Data = Data()
     @AppStorage("sub_plans_v1_data") private var savedSubPlans: Data = Data()
     @AppStorage("daily_sub_plans_v1_data") private var savedDailySubPlans: Data = Data()
+    @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
     @AppStorage("profiles_v1_data") private var savedProfiles: Data = Data()
     @AppStorage("day_overrides_v1_data") private var savedOverrides: Data = Data()
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
@@ -40,6 +44,7 @@ struct RootTabView: View {
     @State private var todos: [TodoItem] = []
     @State private var commitments: [CommitmentItem] = []
     @State private var studentProfiles: [StudentSupportProfile] = []
+    @State private var classDefinitions: [ClassDefinitionItem] = []
     @State private var attendanceRecords: [AttendanceRecord] = []
     @State private var subPlans: [SubPlanItem] = []
     @State private var dailySubPlans: [DailySubPlanItem] = []
@@ -85,7 +90,7 @@ struct RootTabView: View {
         Dictionary(uniqueKeysWithValues: studentProfiles.map { ($0.name, $0) })
     }
 
-    var body: some View {
+    private var baseTabView: some View {
         TabView(selection: $selectedTab) {
             todayTab
             scheduleTab
@@ -93,58 +98,102 @@ struct RootTabView: View {
             notesTab
             settingsTab
         }
-        .onAppear {
+    }
 
-            loadSavedData()
+    private func makeObservedTabView() -> AnyView {
+        let lifecycleView = AnyView(
+            baseTabView
+                .onAppear { handleOnAppear() }
+                .onChange(of: selectedTab) { _, newTab in
+                    handleSelectedTabChange(newTab)
+                }
+                .onChange(of: alarms) { _, newValue in
+                    handleAlarmsChange(newValue)
+                }
+                .onChange(of: todos) { _, newValue in
+                    saveTodos(newValue)
+                }
+                .onChange(of: commitments) { _, newValue in
+                    saveCommitments(newValue)
+                }
+        )
 
+        let syncView = AnyView(
+            lifecycleView
+                .onChange(of: studentProfiles) { _, newValue in
+                    saveStudentProfiles(newValue)
+                }
+                .onChange(of: classDefinitions) { _, newValue in
+                    saveClassDefinitions(newValue)
+                    reconcileClassDefinitionLinks()
+                }
+                .onChange(of: savedStudentProfiles) { _, _ in
+                    loadStudentProfiles()
+                    reconcileClassDefinitionLinks()
+                }
+                .onChange(of: savedClassDefinitions) { _, _ in
+                    loadClassDefinitions()
+                    reconcileClassDefinitionLinks()
+                }
+                .onChange(of: savedProfiles) { _, _ in
+                    loadProfiles()
+                    refreshNotifications()
+                }
+                .onChange(of: savedOverrides) { _, _ in
+                    loadOverrides()
+                    refreshNotifications()
+                }
+        )
+
+        return AnyView(
+            syncView
+                .onChange(of: attendanceRecords) { _, newValue in
+                    if let encoded = try? JSONEncoder().encode(newValue) {
+                        savedAttendance = encoded
+                    }
+                }
+                .onChange(of: subPlans) { _, newValue in
+                    if let encoded = try? JSONEncoder().encode(newValue) {
+                        savedSubPlans = encoded
+                    }
+                    saveSecondPersistenceSlice(
+                        todos: todos,
+                        subPlans: newValue,
+                        dailySubPlans: dailySubPlans
+                    )
+                }
+                .onChange(of: dailySubPlans) { _, newValue in
+                    if let encoded = try? JSONEncoder().encode(newValue) {
+                        savedDailySubPlans = encoded
+                    }
+                    saveSecondPersistenceSlice(
+                        todos: todos,
+                        subPlans: subPlans,
+                        dailySubPlans: newValue
+                    )
+                }
+        )
+    }
+
+    var body: some View {
+        makeObservedTabView()
+    }
+
+    private func handleOnAppear() {
+        loadSavedData()
+        selectedScheduleDay = .today
+        refreshNotifications()
+    }
+
+    private func handleSelectedTabChange(_ newTab: AppTab) {
+        if newTab == .schedule {
             selectedScheduleDay = .today
+        }
+    }
 
-            refreshNotifications()
-        }
-        .onChange(of: selectedTab) { _, newTab in
-
-            if newTab == .schedule {
-                selectedScheduleDay = .today
-            }
-        }
-        .onChange(of: alarms) { _, newValue in
-
-            saveAlarms(newValue)
-
-            refreshNotifications()
-        }
-        .onChange(of: todos) { _, newValue in
-            saveTodos(newValue)
-        }
-        .onChange(of: commitments) { _, newValue in
-            saveCommitments(newValue)
-        }
-        .onChange(of: savedStudentProfiles) { _, _ in
-            loadStudentProfiles()
-        }
-        .onChange(of: savedProfiles) { _, _ in
-            loadProfiles()
-            refreshNotifications()
-        }
-        .onChange(of: savedOverrides) { _, _ in
-            loadOverrides()
-            refreshNotifications()
-        }
-        .onChange(of: attendanceRecords) { _, newValue in
-            if let encoded = try? JSONEncoder().encode(newValue) {
-                savedAttendance = encoded
-            }
-        }
-        .onChange(of: subPlans) { _, newValue in
-            if let encoded = try? JSONEncoder().encode(newValue) {
-                savedSubPlans = encoded
-            }
-        }
-        .onChange(of: dailySubPlans) { _, newValue in
-            if let encoded = try? JSONEncoder().encode(newValue) {
-                savedDailySubPlans = encoded
-            }
-        }
+    private func handleAlarmsChange(_ newValue: [AlarmItem]) {
+        saveAlarms(newValue)
+        refreshNotifications()
     }
 
     private var todayTab: some View {
@@ -153,6 +202,7 @@ struct RootTabView: View {
             todos: $todos,
             commitments: $commitments,
             studentSupportProfiles: $studentProfiles,
+            classDefinitions: $classDefinitions,
             attendanceRecords: $attendanceRecords,
             subPlans: $subPlans,
             dailySubPlans: $dailySubPlans,
@@ -182,6 +232,7 @@ struct RootTabView: View {
             selectedDay: $selectedScheduleDay,
             alarms: $alarms,
             studentProfiles: $studentProfiles,
+            classDefinitions: $classDefinitions,
             activeOverrideName: activeDayOverride?.displayName,
             overrideSchedule: activeDayOverride?.alarms,
             openTodayTab: { selectedTab = .today }
@@ -196,6 +247,7 @@ struct RootTabView: View {
         TodoListView(
             todos: $todos,
             studentProfiles: $studentProfiles,
+            classDefinitions: $classDefinitions,
             suggestedContexts: suggestedTaskContexts,
             suggestedStudents: suggestedStudents,
             studentSupportsByName: studentSupportsByName,
@@ -211,6 +263,7 @@ struct RootTabView: View {
         NotesView(
             todos: $todos,
             studentProfiles: $studentProfiles,
+            classDefinitions: $classDefinitions,
             suggestedContexts: suggestedTaskContexts,
             suggestedStudents: suggestedStudents,
             openTodayTab: { selectedTab = .today }
@@ -232,47 +285,77 @@ struct RootTabView: View {
     // MARK: - Data Loading
 
     private func loadSavedData() {
+        let legacyAlarms = decodeLegacyAlarms()
+        let legacyCommitments = decodeLegacyCommitments()
+        let legacyStudentProfiles = decodeLegacyStudentProfiles()
+        let legacyClassDefinitions = decodeLegacyClassDefinitions()
+        let legacyTodos = decodeLegacyTodos()
+        let legacyFollowUpNotes = decodeLegacyFollowUpNotes()
+        let legacySubPlans = decodeLegacySubPlans()
+        let legacyDailySubPlans = decodeLegacyDailySubPlans()
 
-        if let decodedAlarms = try? JSONDecoder().decode([AlarmItem].self, from: savedAlarms) {
-            alarms = decodedAlarms.map {
-                AlarmItem(
+        ClassCuePersistence.importFirstSliceIfNeeded(
+            legacyAlarms: legacyAlarms,
+            legacyStudentProfiles: legacyStudentProfiles,
+            legacyClassDefinitions: legacyClassDefinitions,
+            legacyCommitments: legacyCommitments,
+            into: modelContext
+        )
+        ClassCuePersistence.importSecondSliceIfNeeded(
+            legacyTodos: legacyTodos,
+            legacyFollowUpNotes: legacyFollowUpNotes,
+            legacySubPlans: legacySubPlans,
+            legacyDailySubPlans: legacyDailySubPlans,
+            into: modelContext
+        )
+
+        let persistenceSnapshot = ClassCuePersistence.loadFirstSlice(from: modelContext)
+        let secondSliceSnapshot = ClassCuePersistence.loadSecondSlice(from: modelContext)
+        alarms = persistenceSnapshot.alarms.map {
+            AlarmItem(
+                id: $0.id,
+                dayOfWeek: $0.dayOfWeek,
+                className: $0.className,
+                location: $0.location,
+                gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
+                startTime: $0.startTime,
+                endTime: $0.endTime,
+                type: $0.type,
+                classDefinitionID: $0.classDefinitionID,
+                linkedStudentIDs: $0.linkedStudentIDs
+            )
+        }
+        commitments = persistenceSnapshot.commitments
+        studentProfiles = persistenceSnapshot.studentProfiles
+            .map {
+                StudentSupportProfile(
                     id: $0.id,
-                    dayOfWeek: $0.dayOfWeek,
+                    name: $0.name,
                     className: $0.className,
-                    location: $0.location,
                     gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
-                    startTime: $0.startTime,
-                    endTime: $0.endTime,
-                    type: $0.type,
-                    linkedStudentIDs: $0.linkedStudentIDs
+                    classDefinitionID: $0.classDefinitionID,
+                    graduationYear: $0.graduationYear,
+                    parentNames: $0.parentNames,
+                    parentPhoneNumbers: $0.parentPhoneNumbers,
+                    parentEmails: $0.parentEmails,
+                    studentEmail: $0.studentEmail,
+                    accommodations: $0.accommodations,
+                    prompts: $0.prompts
                 )
             }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        classDefinitions = persistenceSnapshot.classDefinitions.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
-
-        if let decodedTodos = try? JSONDecoder().decode([TodoItem].self, from: savedTodos) {
-            todos = decodedTodos
-        }
-
-        if let decodedCommitments = try? JSONDecoder().decode([CommitmentItem].self, from: savedCommitments) {
-            commitments = decodedCommitments
-        }
-
-        loadStudentProfiles()
+        todos = secondSliceSnapshot.todos
+        reconcileClassDefinitionLinks()
         if let decodedAttendance = try? JSONDecoder().decode([AttendanceRecord].self, from: savedAttendance) {
             attendanceRecords = decodedAttendance
         } else {
             attendanceRecords = []
         }
-        if let decodedSubPlans = try? JSONDecoder().decode([SubPlanItem].self, from: savedSubPlans) {
-            subPlans = decodedSubPlans
-        } else {
-            subPlans = []
-        }
-        if let decodedDailySubPlans = try? JSONDecoder().decode([DailySubPlanItem].self, from: savedDailySubPlans) {
-            dailySubPlans = decodedDailySubPlans
-        } else {
-            dailySubPlans = []
-        }
+        subPlans = secondSliceSnapshot.subPlans
+        dailySubPlans = secondSliceSnapshot.dailySubPlans
         loadProfiles()
         loadOverrides()
     }
@@ -280,7 +363,7 @@ struct RootTabView: View {
     // MARK: - Save Alarms
 
     private func saveAlarms(_ alarms: [AlarmItem]) {
-
+        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: studentProfiles, classDefinitions: classDefinitions, commitments: commitments)
         if let encoded = try? JSONEncoder().encode(alarms) {
             savedAlarms = encoded
         }
@@ -289,6 +372,11 @@ struct RootTabView: View {
     // MARK: - Save Todos
 
     private func saveTodos(_ todos: [TodoItem]) {
+        saveSecondPersistenceSlice(
+            todos: todos,
+            subPlans: subPlans,
+            dailySubPlans: dailySubPlans
+        )
 
         if let encoded = try? JSONEncoder().encode(todos) {
             savedTodos = encoded
@@ -296,33 +384,173 @@ struct RootTabView: View {
     }
 
     private func saveCommitments(_ commitments: [CommitmentItem]) {
-
+        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: studentProfiles, classDefinitions: classDefinitions, commitments: commitments)
         if let encoded = try? JSONEncoder().encode(commitments) {
             savedCommitments = encoded
         }
     }
 
     private func loadStudentProfiles() {
-        if let decoded = try? JSONDecoder().decode([StudentSupportProfile].self, from: savedStudentProfiles) {
-            studentProfiles = decoded
-                .map {
-                    StudentSupportProfile(
-                        id: $0.id,
-                        name: $0.name,
-                        className: $0.className,
-                        gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
-                        graduationYear: $0.graduationYear,
-                        parentNames: $0.parentNames,
-                        parentPhoneNumbers: $0.parentPhoneNumbers,
-                        parentEmails: $0.parentEmails,
-                        studentEmail: $0.studentEmail,
-                        accommodations: $0.accommodations,
-                        prompts: $0.prompts
-                    )
-                }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        } else {
-            studentProfiles = []
+        let snapshot = ClassCuePersistence.loadFirstSlice(from: modelContext)
+        studentProfiles = snapshot.studentProfiles
+            .map {
+                StudentSupportProfile(
+                    id: $0.id,
+                    name: $0.name,
+                    className: $0.className,
+                    gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
+                    classDefinitionID: $0.classDefinitionID,
+                    graduationYear: $0.graduationYear,
+                    parentNames: $0.parentNames,
+                    parentPhoneNumbers: $0.parentPhoneNumbers,
+                    parentEmails: $0.parentEmails,
+                    studentEmail: $0.studentEmail,
+                    accommodations: $0.accommodations,
+                    prompts: $0.prompts
+                )
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func loadClassDefinitions() {
+        let snapshot = ClassCuePersistence.loadFirstSlice(from: modelContext)
+        classDefinitions = snapshot.classDefinitions.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private func saveStudentProfiles(_ profiles: [StudentSupportProfile]) {
+        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: profiles, classDefinitions: classDefinitions, commitments: commitments)
+        savedStudentProfiles = (try? JSONEncoder().encode(profiles.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        })) ?? Data()
+    }
+
+    private func saveClassDefinitions(_ definitions: [ClassDefinitionItem]) {
+        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: studentProfiles, classDefinitions: definitions, commitments: commitments)
+        savedClassDefinitions = (try? JSONEncoder().encode(definitions.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        })) ?? Data()
+    }
+
+    private func saveFirstPersistenceSlice(
+        alarms: [AlarmItem],
+        studentProfiles: [StudentSupportProfile],
+        classDefinitions: [ClassDefinitionItem],
+        commitments: [CommitmentItem]
+    ) {
+        ClassCuePersistence.saveFirstSlice(
+            alarms: alarms,
+            studentProfiles: studentProfiles,
+            classDefinitions: classDefinitions,
+            commitments: commitments,
+            into: modelContext
+        )
+    }
+
+    private func saveSecondPersistenceSlice(
+        todos: [TodoItem],
+        subPlans: [SubPlanItem],
+        dailySubPlans: [DailySubPlanItem]
+    ) {
+        ClassCuePersistence.saveSecondSlice(
+            todos: todos,
+            followUpNotes: decodeLegacyFollowUpNotes(),
+            subPlans: subPlans,
+            dailySubPlans: dailySubPlans,
+            into: modelContext
+        )
+    }
+
+    private func decodeLegacyAlarms() -> [AlarmItem] {
+        guard let decodedAlarms = try? JSONDecoder().decode([AlarmItem].self, from: savedAlarms) else {
+            return []
+        }
+        return decodedAlarms.map {
+            AlarmItem(
+                id: $0.id,
+                dayOfWeek: $0.dayOfWeek,
+                className: $0.className,
+                location: $0.location,
+                gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
+                startTime: $0.startTime,
+                endTime: $0.endTime,
+                type: $0.type,
+                classDefinitionID: $0.classDefinitionID,
+                linkedStudentIDs: $0.linkedStudentIDs
+            )
+        }
+    }
+
+    private func decodeLegacyCommitments() -> [CommitmentItem] {
+        (try? JSONDecoder().decode([CommitmentItem].self, from: savedCommitments)) ?? []
+    }
+
+    private func decodeLegacyStudentProfiles() -> [StudentSupportProfile] {
+        guard let decoded = try? JSONDecoder().decode([StudentSupportProfile].self, from: savedStudentProfiles) else {
+            return []
+        }
+        return decoded.map {
+            StudentSupportProfile(
+                id: $0.id,
+                name: $0.name,
+                className: $0.className,
+                gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
+                classDefinitionID: $0.classDefinitionID,
+                graduationYear: $0.graduationYear,
+                parentNames: $0.parentNames,
+                parentPhoneNumbers: $0.parentPhoneNumbers,
+                parentEmails: $0.parentEmails,
+                studentEmail: $0.studentEmail,
+                accommodations: $0.accommodations,
+                prompts: $0.prompts
+            )
+        }
+    }
+
+    private func decodeLegacyClassDefinitions() -> [ClassDefinitionItem] {
+        (try? JSONDecoder().decode([ClassDefinitionItem].self, from: savedClassDefinitions)) ?? []
+    }
+
+    private func decodeLegacyTodos() -> [TodoItem] {
+        (try? JSONDecoder().decode([TodoItem].self, from: savedTodos)) ?? []
+    }
+
+    private func decodeLegacyFollowUpNotes() -> [FollowUpNoteItem] {
+        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+    }
+
+    private func decodeLegacySubPlans() -> [SubPlanItem] {
+        (try? JSONDecoder().decode([SubPlanItem].self, from: savedSubPlans)) ?? []
+    }
+
+    private func decodeLegacyDailySubPlans() -> [DailySubPlanItem] {
+        (try? JSONDecoder().decode([DailySubPlanItem].self, from: savedDailySubPlans)) ?? []
+    }
+
+    private func reconcileClassDefinitionLinks() {
+        alarms = alarms.map { alarm in
+            var updated = alarm
+            if updated.classDefinitionID == nil {
+                updated.classDefinitionID = exactClassDefinitionMatch(
+                    name: updated.className,
+                    gradeLevel: updated.gradeLevel,
+                    in: classDefinitions
+                )?.id
+            }
+            return updated
+        }
+
+        studentProfiles = studentProfiles.map { profile in
+            var updated = profile
+            if updated.classDefinitionID == nil {
+                updated.classDefinitionID = exactClassDefinitionMatch(
+                    name: updated.className,
+                    gradeLevel: updated.gradeLevel,
+                    in: classDefinitions
+                )?.id
+            }
+            return updated
         }
     }
 
@@ -346,7 +574,9 @@ struct RootTabView: View {
         NotificationManager.shared.refreshNotifications(
             for: alarms,
             activeOverrideSchedule: activeDayOverride?.alarms,
-            activeOverrideDate: activeDayOverride?.date
+            activeOverrideDate: activeDayOverride?.date,
+            overrides: overrides,
+            profiles: profiles
         )
     }
 }

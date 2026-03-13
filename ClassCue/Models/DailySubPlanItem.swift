@@ -17,6 +17,7 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
     var includeAttendance: Bool = true
     var includeRoster: Bool = true
     var includeSupports: Bool = true
+    var includeCommitments: Bool = true
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -30,6 +31,7 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
         includeAttendance: Bool = true,
         includeRoster: Bool = true,
         includeSupports: Bool = true,
+        includeCommitments: Bool = true,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -42,6 +44,7 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
         self.includeAttendance = includeAttendance
         self.includeRoster = includeRoster
         self.includeSupports = includeSupports
+        self.includeCommitments = includeCommitments
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -57,6 +60,7 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
         includeAttendance = try container.decodeIfPresent(Bool.self, forKey: .includeAttendance) ?? true
         includeRoster = try container.decodeIfPresent(Bool.self, forKey: .includeRoster) ?? true
         includeSupports = try container.decodeIfPresent(Bool.self, forKey: .includeSupports) ?? true
+        includeCommitments = try container.decodeIfPresent(Bool.self, forKey: .includeCommitments) ?? true
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

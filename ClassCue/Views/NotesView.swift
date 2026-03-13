@@ -3,13 +3,16 @@ import SwiftUI
 struct NotesView: View {
     enum NotesMode: String, CaseIterable {
         case general
+        case personal
         case classNotes
         case studentNotes
 
         var title: String {
             switch self {
             case .general:
-                return "General"
+                return "School"
+            case .personal:
+                return "Personal"
             case .classNotes:
                 return "Class Notes"
             case .studentNotes:
@@ -20,10 +23,12 @@ struct NotesView: View {
 
     @Binding var todos: [TodoItem]
     @Binding var studentProfiles: [StudentSupportProfile]
+    @Binding var classDefinitions: [ClassDefinitionItem]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
     let openTodayTab: () -> Void
     @AppStorage("notes_v1") private var notesText: String = ""
+    @AppStorage("personal_notes_v1") private var personalNotesText: String = ""
     @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
 
     @State private var showingShareSheet = false
@@ -41,12 +46,14 @@ struct NotesView: View {
     init(
         todos: Binding<[TodoItem]>,
         studentProfiles: Binding<[StudentSupportProfile]>,
+        classDefinitions: Binding<[ClassDefinitionItem]>,
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
         openTodayTab: @escaping () -> Void
     ) {
         _todos = todos
         _studentProfiles = studentProfiles
+        _classDefinitions = classDefinitions
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
         self.openTodayTab = openTodayTab
@@ -69,6 +76,11 @@ struct NotesView: View {
                     classFollowUpView
                 } else if notesMode == .studentNotes {
                     studentNotesView
+                } else if notesMode == .personal {
+                    TextEditor(text: $personalNotesText)
+                        .padding(12)
+                        .focused($isEditorFocused)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     TextEditor(text: $notesText)
                         .padding(12)
@@ -79,7 +91,7 @@ struct NotesView: View {
             .navigationTitle("Notes")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
-                    if notesMode == .general && !notesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if clearableNotesText != nil {
                         Button("Clear") {
                             showClearConfirm = true
                         }
@@ -109,7 +121,10 @@ struct NotesView: View {
                     }
 
                     Button("Export") {
-                        exportText = classCueNotesExportText(notes: notesText)
+                        exportText = classCueNotesExportText(
+                            notes: currentNotesText,
+                            title: notesMode == .personal ? "Class Cue Personal Notes Export" : "Class Cue Notes Export"
+                        )
                         showingShareSheet = true
                     }
 
@@ -121,7 +136,7 @@ struct NotesView: View {
                         }
                     }
 
-                    if notesMode == .general && isEditorFocused {
+                    if (notesMode == .general || notesMode == .personal) && isEditorFocused {
                         Button("Done") {
                             isEditorFocused = false
                         }
@@ -142,7 +157,7 @@ struct NotesView: View {
                 titleVisibility: .visible
             ) {
                 Button("Clear Notes", role: .destructive) {
-                    notesText = ""
+                    clearCurrentNotes()
                 }
 
                 Button("Cancel", role: .cancel) { }
@@ -176,9 +191,29 @@ struct NotesView: View {
             }
             .sheet(isPresented: $showingStudentDirectory) {
                 NavigationStack {
-                    StudentDirectoryView(profiles: $studentProfiles)
+                    StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
                 }
             }
+        }
+    }
+
+    private var currentNotesText: String {
+        notesMode == .personal ? personalNotesText : notesText
+    }
+
+    private var clearableNotesText: String? {
+        let text = currentNotesText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (notesMode == .general || notesMode == .personal) && !text.isEmpty ? text : nil
+    }
+
+    private func clearCurrentNotes() {
+        switch notesMode {
+        case .general:
+            notesText = ""
+        case .personal:
+            personalNotesText = ""
+        case .classNotes, .studentNotes:
+            break
         }
     }
 
@@ -214,9 +249,18 @@ struct NotesView: View {
                                     Text(task.task)
                                         .fontWeight(.semibold)
 
-                                    Text(taskFollowUpSubtitle(for: task))
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    let studentName = task.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let matchedStudent = studentProfile(named: studentName)
+
+                                    HStack(spacing: 6) {
+                                        Text(taskFollowUpSubtitle(for: task))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+
+                                        if let matchedStudent, !studentName.isEmpty {
+                                            gradePill(matchedStudent.gradeLevel)
+                                        }
+                                    }
                                 }
                                 .padding(.vertical, 2)
                             }
@@ -237,9 +281,15 @@ struct NotesView: View {
                                             .lineLimit(3)
 
                                         if !note.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                            Text(note.studentOrGroup)
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
+                                            HStack(spacing: 6) {
+                                                Text(note.studentOrGroup)
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+
+                                                if let matchedStudent = studentProfile(named: note.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                                                    gradePill(matchedStudent.gradeLevel)
+                                                }
+                                            }
                                         }
                                     }
                                     .padding(.vertical, 2)
@@ -282,7 +332,7 @@ struct NotesView: View {
                 }
             } else {
                 ForEach(groups, id: \.student) { group in
-                    Section(group.student) {
+                    Section {
                         if let context = group.context, !context.isEmpty {
                             Text(context)
                                 .font(.caption)
@@ -308,6 +358,15 @@ struct NotesView: View {
                         }
                         .onDelete { offsets in
                             deleteFollowUpNotes(at: offsets, from: group.notes)
+                        }
+                    }
+                    header: {
+                        HStack(spacing: 6) {
+                            Text(group.student)
+
+                            if let matchedStudent = studentProfile(named: group.student) {
+                                gradePill(matchedStudent.gradeLevel)
+                            }
                         }
                     }
                 }
@@ -398,9 +457,30 @@ struct NotesView: View {
         updated.removeAll { ids.contains($0.id) }
         savedFollowUpNotes = (try? JSONEncoder().encode(updated)) ?? Data()
     }
+
+    private func studentProfile(named name: String) -> StudentSupportProfile? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return nil }
+        return studentProfiles.first {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(trimmedName) == .orderedSame
+        }
+    }
+
+    private func gradePill(_ gradeLevel: String) -> some View {
+        Text(GradeLevelOption.pillLabel(for: gradeLevel))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(GradeLevelOption.color(for: gradeLevel))
+            )
+    }
 }
 
-func classCueNotesExportText(notes: String) -> String {
+func classCueNotesExportText(notes: String, title: String = "Class Cue Notes Export") -> String {
     let dateOnlyFormatter = DateFormatter()
     dateOnlyFormatter.dateStyle = .long
     dateOnlyFormatter.timeStyle = .none
@@ -412,7 +492,7 @@ func classCueNotesExportText(notes: String) -> String {
     let now = Date()
 
     return """
-    Class Cue Notes Export
+    \(title)
     \(dateOnlyFormatter.string(from: now))
     \(timeOnlyFormatter.string(from: now))
 

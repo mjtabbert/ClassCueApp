@@ -19,10 +19,37 @@ struct DayOverridesView: View {
     @State private var selectedProfileID: UUID?
     @State private var selectedKind: DayOverride.OverrideKind = .custom
     @State private var overrideToDelete: DayOverride?
+
+    private var todayOverride: DayOverride? {
+        overrides.first {
+            Calendar.current.isDateInToday($0.date)
+        }
+    }
     
     var body: some View {
         NavigationStack {
             Form {
+                if let todayOverride {
+                    Section("Today's Override") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(todayOverride.kind.displayName)
+                                .font(.headline)
+
+                            Text(profileName(for: todayOverride.profileID))
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Button("Load Into Editor") {
+                            loadOverride(todayOverride)
+                        }
+
+                        Button("Clear Today's Override", role: .destructive) {
+                            overrides.removeAll { $0.id == todayOverride.id }
+                        }
+                    }
+                }
+
                 Section("Add Day Override") {
                     DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
 
@@ -52,16 +79,24 @@ struct DayOverridesView: View {
                     } else {
                         ForEach(sortedOverrides) { override in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(formattedDate(override.date))
-                                    .font(.headline)
+                                Button {
+                                    loadOverride(override)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(formattedDate(override.date))
+                                            .font(.headline)
 
-                                Text(override.kind.displayName)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(.blue)
+                                        Text(override.kind.displayName)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.blue)
 
-                                Text(profileName(for: override.profileID))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                        Text(profileName(for: override.profileID))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
 
                                 HStack {
                                     Button("Use Today") {
@@ -127,6 +162,12 @@ struct DayOverridesView: View {
                 )
             )
         }
+    }
+
+    private func loadOverride(_ override: DayOverride) {
+        selectedDate = override.date
+        selectedKind = override.kind
+        selectedProfileID = override.profileID
     }
     
     private func profileName(for id: UUID) -> String {

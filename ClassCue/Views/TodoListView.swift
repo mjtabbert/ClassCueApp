@@ -12,6 +12,7 @@ struct TodoListView: View {
 
     @Binding var todos: [TodoItem]
     @Binding var studentProfiles: [StudentSupportProfile]
+    @Binding var classDefinitions: [ClassDefinitionItem]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
@@ -57,10 +58,33 @@ struct TodoListView: View {
         }
     }
 
+    enum WorkspaceFilter: String, CaseIterable {
+        case all
+        case school
+        case personal
+
+        var displayName: String {
+            switch self {
+            case .all: return "All Workspaces"
+            case .school: return "School"
+            case .personal: return "Personal"
+            }
+        }
+
+        var workspace: TodoItem.Workspace? {
+            switch self {
+            case .all: return nil
+            case .school: return .school
+            case .personal: return .personal
+            }
+        }
+    }
+
     @State private var showAdd = false
     @State private var editingTodo: TodoItem?
     @State private var showingQuickCapture = false
     @State private var categoryFilter: CategoryFilter = .all
+    @State private var workspaceFilter: WorkspaceFilter = .all
     @State private var showOnlyFollowUp = false
     @State private var showOnlyStudentContext = false
     @State private var studentFilter = ""
@@ -70,6 +94,7 @@ struct TodoListView: View {
     init(
         todos: Binding<[TodoItem]>,
         studentProfiles: Binding<[StudentSupportProfile]>,
+        classDefinitions: Binding<[ClassDefinitionItem]>,
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
         studentSupportsByName: [String: StudentSupportProfile] = [:],
@@ -77,6 +102,7 @@ struct TodoListView: View {
     ) {
         _todos = todos
         _studentProfiles = studentProfiles
+        _classDefinitions = classDefinitions
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
         self.studentSupportsByName = studentSupportsByName
@@ -173,6 +199,12 @@ struct TodoListView: View {
                             Toggle("Needs Follow-Up", isOn: $showOnlyFollowUp)
                             Toggle("Student / Group Context", isOn: $showOnlyStudentContext)
 
+                            Picker("Workspace", selection: $workspaceFilter) {
+                                ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
+                                    Text(filter.displayName).tag(filter)
+                                }
+                            }
+
                             if !suggestedStudents.isEmpty {
                                 Divider()
 
@@ -239,32 +271,50 @@ struct TodoListView: View {
             }
             .sheet(isPresented: $showingStudentDirectory) {
                 NavigationStack {
-                    StudentDirectoryView(profiles: $studentProfiles)
+                    StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
                 }
             }
         }
     }
 
     private func items(for bucket: TodoItem.Bucket) -> [TodoItem] {
-        todos
-            .filter { $0.bucket == bucket }
-            .filter { item in
-                guard let category = categoryFilter.category else { return true }
-                return item.category == category
+        let selectedCategory = categoryFilter.category
+        let selectedWorkspace = workspaceFilter.workspace
+
+        let filtered = todos.filter { item in
+            guard item.bucket == bucket else { return false }
+
+            if let selectedCategory, item.category != selectedCategory {
+                return false
             }
-            .filter { item in
-                !showOnlyFollowUp || !item.followUpNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || item.reminder != .none
+
+            if let selectedWorkspace, item.workspace != selectedWorkspace {
+                return false
             }
-            .filter { item in
-                !showOnlyStudentContext || !item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+            if showOnlyFollowUp,
+               item.followUpNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               item.reminder == .none {
+                return false
             }
-            .filter { item in
-                studentFilter.isEmpty || item.studentOrGroup == studentFilter
+
+            if showOnlyStudentContext,
+               item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return false
             }
-            .filter { item in
-                linkedContextFilter.isEmpty || item.linkedContext == linkedContextFilter
+
+            if !studentFilter.isEmpty, item.studentOrGroup != studentFilter {
+                return false
             }
-            .sorted { a, b in
+
+            if !linkedContextFilter.isEmpty, item.linkedContext != linkedContextFilter {
+                return false
+            }
+
+            return true
+        }
+
+        return filtered.sorted { a, b in
                 if a.isCompleted != b.isCompleted {
                     return !a.isCompleted
                 }
@@ -291,7 +341,10 @@ struct TodoListView: View {
     }
 
     private func todoRow(for item: TodoItem) -> some View {
-        HStack(spacing: 12) {
+        let studentName = item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchedStudent = studentProfile(named: studentName)
+
+        return HStack(spacing: 12) {
             Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
                 .foregroundColor(item.isCompleted ? .green : item.priority.color)
                 .font(.title3)
@@ -305,6 +358,14 @@ struct TodoListView: View {
                     .foregroundColor(item.isCompleted ? .secondary : .primary)
 
                 HStack(spacing: 6) {
+                    Label(item.workspace.displayName, systemImage: item.workspace.systemImage)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(item.workspace.tint)
+
+                    Text("•")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+
                     Label(item.category.displayName, systemImage: item.category.systemImage)
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(item.category.tint)
@@ -335,9 +396,15 @@ struct TodoListView: View {
                 }
 
                 if !item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Label(item.studentOrGroup, systemImage: "person.text.rectangle")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        Label(item.studentOrGroup, systemImage: "person.text.rectangle")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                        if let matchedStudent {
+                            gradePill(matchedStudent.gradeLevel)
+                        }
+                    }
                 }
 
                 if let support = studentSupportsByName[item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)],
@@ -401,6 +468,7 @@ struct TodoListView: View {
     private var activeFilterCount: Int {
         var count = 0
         if categoryFilter != .all { count += 1 }
+        if workspaceFilter != .all { count += 1 }
         if showOnlyFollowUp { count += 1 }
         if showOnlyStudentContext { count += 1 }
         if !studentFilter.isEmpty { count += 1 }
@@ -430,6 +498,26 @@ struct TodoListView: View {
         case .none: return 2
         }
     }
+
+    private func studentProfile(named name: String) -> StudentSupportProfile? {
+        guard !name.isEmpty else { return nil }
+        return studentProfiles.first {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+
+    private func gradePill(_ gradeLevel: String) -> some View {
+        Text(GradeLevelOption.pillLabel(for: gradeLevel))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(GradeLevelOption.color(for: gradeLevel))
+            )
+    }
 }
 
 #Preview {
@@ -440,6 +528,7 @@ struct TodoListView: View {
             TodoItem(task: "Email parent update", priority: .med, dueDate: nil)
         ]),
         studentProfiles: .constant([]),
+        classDefinitions: .constant([]),
         suggestedContexts: [],
         suggestedStudents: [],
         studentSupportsByName: [:],

@@ -17,10 +17,17 @@ struct SettingsView: View {
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
     @AppStorage("profiles_v1_data") private var savedProfiles: Data = Data()
     @AppStorage("day_overrides_v1_data") private var savedOverrides: Data = Data()
+    @AppStorage("todo_v6_data") private var savedTodos: Data = Data()
     @AppStorage("student_support_profiles_v1_data") private var savedStudentProfiles: Data = Data()
+    @AppStorage("class_definitions_v1_data") private var savedClassDefinitions: Data = Data()
     @AppStorage("school_quiet_hours_enabled") private var schoolQuietHoursEnabled = false
     @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
     @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
+    @AppStorage("school_show_end_of_day_wrap_up") private var showEndOfDayWrapUp = true
+    @AppStorage("school_offer_task_carryover") private var offerTaskCarryover = true
+    @AppStorage("school_hide_dashboard_after_hours") private var hideSchoolDashboardAfterHours = true
+    @AppStorage("school_show_personal_focus_card") private var showPersonalFocusCard = true
+    @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
 
     @State private var holidayModeEnabled = false
     @State private var holidayResumeDate = Date().addingTimeInterval(60 * 60 * 24)
@@ -32,9 +39,13 @@ struct SettingsView: View {
     ) ?? Date()
 
     @State private var alarms: [AlarmItem] = []
+    @State private var todos: [TodoItem] = []
     @State private var profiles: [ScheduleProfile] = []
     @State private var overrides: [DayOverride] = []
     @State private var studentProfiles: [StudentSupportProfile] = []
+    @State private var classDefinitions: [ClassDefinitionItem] = []
+    @State private var exportURL: URL?
+    @State private var showingShareSheet = false
 
     var body: some View {
         NavigationStack {
@@ -43,12 +54,15 @@ struct SettingsView: View {
                 liveActivityStatusSection
                 holidaySection
                 schoolBoundariesSection
+                integrationsSection
                 studentContextSection
                 scheduleToolsSection
                 appToolsSection
                 aboutSection
             }
             .navigationTitle("Settings")
+            .scrollContentBackground(.hidden)
+            .background(settingsBackground)
             .onAppear {
                 loadData()
                 configureHolidayMode()
@@ -67,6 +81,11 @@ struct SettingsView: View {
                     $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 })) ?? Data()
             }
+            .onChange(of: classDefinitions) { _, newValue in
+                savedClassDefinitions = (try? JSONEncoder().encode(newValue.sorted {
+                    $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                })) ?? Data()
+            }
             .onChange(of: schoolQuietHoursEnabled) { _, _ in
                 syncSchoolQuietStart()
                 refreshNotifications()
@@ -77,7 +96,26 @@ struct SettingsView: View {
                 schoolQuietMinute = components.minute ?? 0
                 refreshNotifications()
             }
+            .sheet(isPresented: $showingShareSheet) {
+                if let exportURL {
+                    ShareSheet(activityItems: [exportURL])
+                }
+            }
         }
+    }
+
+    private var settingsBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(.systemBackground),
+                Color.blue.opacity(0.05),
+                Color.orange.opacity(0.03),
+                Color(.systemGroupedBackground)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
     }
 
     private var alertsSection: some View {
@@ -192,6 +230,11 @@ struct SettingsView: View {
     private var schoolBoundariesSection: some View {
         Section("School Boundaries") {
             Toggle("Quiet School Alerts After Hours", isOn: $schoolQuietHoursEnabled)
+            Toggle("Show End-of-Day Wrap Up", isOn: $showEndOfDayWrapUp)
+            Toggle("Offer Task Carryover to Tomorrow", isOn: $offerTaskCarryover)
+            Toggle("Hide School Dashboard After Quiet Hours", isOn: $hideSchoolDashboardAfterHours)
+            Toggle("Show Personal Focus After Quiet Hours", isOn: $showPersonalFocusCard)
+            Toggle("Default New Capture to Personal After Quiet Hours", isOn: $defaultPersonalCaptureAfterHours)
 
             if schoolQuietHoursEnabled {
                 DatePicker(
@@ -211,6 +254,27 @@ struct SettingsView: View {
         }
     }
 
+    private var integrationsSection: some View {
+        Section("Integrations") {
+            Button {
+                exportTodayScheduleToCalendar()
+            } label: {
+                Label("Export Today's Schedule to Calendar", systemImage: "calendar.badge.plus")
+            }
+            .disabled(todayScheduleForExport.isEmpty)
+
+            Button {
+                exportOpenTasksToReminders()
+            } label: {
+                Label("Export Open Tasks to Reminders", systemImage: "checklist.checked")
+            }
+
+            Text("This is the first integration layer: ClassCue can package today’s schedule as a calendar file and open tasks as a reminders checklist, so you can push data into other systems without making the app dependent on them.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+    }
+
     private var scheduleToolsSection: some View {
         Section("Schedule Tools") {
             NavigationLink("Schedule Profiles") {
@@ -226,11 +290,20 @@ struct SettingsView: View {
     private var studentContextSection: some View {
         Section("Class / Student Context") {
             NavigationLink {
-                StudentDirectoryView(profiles: $studentProfiles)
+                StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
             } label: {
                 LabeledContent("Student Directory") {
                     Text(studentProfiles.isEmpty ? "Not Set" : "\(studentProfiles.count)")
                         .foregroundColor(studentProfiles.isEmpty ? .secondary : .primary)
+                }
+            }
+
+            NavigationLink {
+                ClassDefinitionsView(classDefinitions: $classDefinitions)
+            } label: {
+                LabeledContent("Saved Classes") {
+                    Text(classDefinitions.isEmpty ? "Not Set" : "\(classDefinitions.count)")
+                        .foregroundColor(classDefinitions.isEmpty ? .secondary : .primary)
                 }
             }
 
@@ -290,6 +363,12 @@ struct SettingsView: View {
             alarms = []
         }
 
+        if let decodedTodos = try? JSONDecoder().decode([TodoItem].self, from: savedTodos) {
+            todos = decodedTodos
+        } else {
+            todos = []
+        }
+
         if let decodedProfiles = try? JSONDecoder().decode([ScheduleProfile].self, from: savedProfiles) {
             profiles = decodedProfiles
         } else {
@@ -302,6 +381,14 @@ struct SettingsView: View {
             }
         } else {
             studentProfiles = []
+        }
+
+        if let decodedDefinitions = try? JSONDecoder().decode([ClassDefinitionItem].self, from: savedClassDefinitions) {
+            classDefinitions = decodedDefinitions.sorted {
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+        } else {
+            classDefinitions = []
         }
 
         if let decodedOverrides = try? JSONDecoder().decode([DayOverride].self, from: savedOverrides) {
@@ -344,7 +431,9 @@ struct SettingsView: View {
         NotificationManager.shared.refreshNotifications(
             for: alarms,
             activeOverrideSchedule: activeOverride?.alarms,
-            activeOverrideDate: activeOverride?.date
+            activeOverrideDate: activeOverride?.date,
+            overrides: overrides,
+            profiles: profiles
         )
     }
 
@@ -394,5 +483,127 @@ struct SettingsView: View {
 
     private var activeLiveActivityCount: Int {
         Activity<ClassCueActivityAttributes>.activities.count
+    }
+
+    private var todayScheduleForExport: [AlarmItem] {
+        let today = Date()
+        let weekday = Calendar.current.component(.weekday, from: today)
+        if let activeOverride = activeOverrideForToday() {
+            return activeOverride.alarms.sorted { $0.startTime < $1.startTime }
+        }
+        return alarms
+            .filter { $0.dayOfWeek == weekday }
+            .sorted { $0.startTime < $1.startTime }
+    }
+
+    private func exportTodayScheduleToCalendar() {
+        let title = "ClassCue \(Date().formatted(date: .abbreviated, time: .omitted))"
+        let text = calendarICS(
+            title: title,
+            date: Date(),
+            alarms: todayScheduleForExport,
+            overrideLabel: activeOverrideForToday().map { _ in "Active Day Override" }
+        )
+        shareTextFile(named: "classcue-today-schedule.ics", contents: text)
+    }
+
+    private func exportOpenTasksToReminders() {
+        let text = remindersChecklist(date: Date(), todos: todos)
+        shareTextFile(named: "classcue-open-tasks.txt", contents: text)
+    }
+
+    private func shareTextFile(named filename: String, contents: String) {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? contents.write(to: url, atomically: true, encoding: .utf8)
+        exportURL = url
+        showingShareSheet = true
+    }
+
+    private func calendarICS(
+        title: String,
+        date: Date,
+        alarms: [AlarmItem],
+        overrideLabel: String? = nil
+    ) -> String {
+        let events = alarms.sorted { $0.startTime < $1.startTime }.map { alarm in
+            let start = anchoredDate(alarm.startTime, on: date)
+            let end = anchoredDate(alarm.endTime, on: date)
+            let descriptionParts = [
+                overrideLabel.map { "Override: \($0)" },
+                alarm.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : "Grade: \(alarm.gradeLevel)",
+                alarm.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : "Location: \(alarm.location)"
+            ].compactMap { $0 }
+
+            return """
+            BEGIN:VEVENT
+            UID:\(alarm.id.uuidString)@classcue
+            DTSTAMP:\(icsTimestamp(from: Date()))
+            DTSTART:\(icsTimestamp(from: start))
+            DTEND:\(icsTimestamp(from: end))
+            SUMMARY:\(escapedICS(alarm.className))
+            LOCATION:\(escapedICS(alarm.location))
+            DESCRIPTION:\(escapedICS(descriptionParts.joined(separator: "\\n")))
+            END:VEVENT
+            """
+        }.joined(separator: "\n")
+
+        return """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//ClassCue//Teacher Workspace//EN
+        CALSCALE:GREGORIAN
+        X-WR-CALNAME:\(escapedICS(title))
+        \(events)
+        END:VCALENDAR
+        """
+    }
+
+    private func remindersChecklist(date: Date, todos: [TodoItem]) -> String {
+        let openTodos = todos.filter { !$0.isCompleted }
+        let header = "ClassCue Tasks\n\(date.formatted(date: .complete, time: .omitted))"
+
+        guard !openTodos.isEmpty else {
+            return "\(header)\n\nNo open tasks."
+        }
+
+        let body = openTodos.map { todo in
+            let parts = [
+                todo.task,
+                todo.bucket.displayName,
+                todo.category.displayName,
+                todo.linkedContext.isEmpty ? nil : todo.linkedContext,
+                todo.studentOrGroup.isEmpty ? nil : todo.studentOrGroup
+            ].compactMap { $0 }.joined(separator: " • ")
+            return "- \(parts)"
+        }.joined(separator: "\n")
+
+        return "\(header)\n\n\(body)"
+    }
+
+    private func anchoredDate(_ time: Date, on day: Date) -> Date {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: time)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: day
+        ) ?? day
+    }
+
+    private func icsTimestamp(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+        return formatter.string(from: date)
+    }
+
+    private func escapedICS(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: ",", with: "\\,")
+            .replacingOccurrences(of: ";", with: "\\;")
+            .replacingOccurrences(of: "\n", with: "\\n")
     }
 }

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 enum GradeLevelOption: String, CaseIterable, Codable, Identifiable {
     case preK = "Pre-K"
@@ -77,5 +78,69 @@ enum GradeLevelOption: String, CaseIterable, Codable, Identifiable {
 
     static func optionsForPicker() -> [String] {
         allCases.map(\.rawValue)
+    }
+
+    static func color(for value: String) -> Color {
+        switch normalized(value) {
+        case preK.rawValue:
+            return .red
+        case kindergarten.rawValue:
+            return .orange
+        case first.rawValue, second.rawValue:
+            return .yellow
+        case third.rawValue, fourth.rawValue:
+            return .green
+        case fifth.rawValue, sixth.rawValue:
+            return .mint
+        case seventh.rawValue, eighth.rawValue:
+            return .blue
+        case ninth.rawValue, tenth.rawValue:
+            return .indigo
+        case eleventh.rawValue, twelfth.rawValue, twelvePlus.rawValue:
+            return .purple
+        case other.rawValue:
+            return .gray
+        default:
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .gray
+        }
+    }
+
+    static func pillLabel(for value: String) -> String {
+        switch normalized(value) {
+        case preK.rawValue:
+            return "Pre-K"
+        case kindergarten.rawValue:
+            return "K"
+        case first.rawValue:
+            return "1"
+        case second.rawValue:
+            return "2"
+        case third.rawValue:
+            return "3"
+        case fourth.rawValue:
+            return "4"
+        case fifth.rawValue:
+            return "5"
+        case sixth.rawValue:
+            return "6"
+        case seventh.rawValue:
+            return "7"
+        case eighth.rawValue:
+            return "8"
+        case ninth.rawValue:
+            return "9"
+        case tenth.rawValue:
+            return "10"
+        case eleventh.rawValue:
+            return "11"
+        case twelfth.rawValue:
+            return "12"
+        case twelvePlus.rawValue:
+            return "12+"
+        case other.rawValue:
+            return "Other"
+        default:
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No Grade" : normalized(value)
+        }
     }
 }

@@ -59,14 +59,34 @@ struct TypeBadge: View {
     }
 
     var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: type.symbolName)
+                .font(.system(size: 9, weight: .black))
 
-        Text(label)
-            .font(.caption2)
-            .fontWeight(.bold)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundColor(foregroundColor)
-            .background(type.themeColor)
-            .clipShape(Capsule())
+            Text(label)
+                .font(.caption2)
+                .fontWeight(.black)
+                .tracking(0.3)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .foregroundColor(foregroundColor)
+        .background(
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            type.themeColor.opacity(type == .blank ? 0.12 : 0.95),
+                            type.themeColor.opacity(type == .blank ? 0.05 : 0.72)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+        )
     }
 }

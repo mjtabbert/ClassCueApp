@@ -12,6 +12,7 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
     var name: String
     var className: String = ""
     var gradeLevel: String = ""
+    var classDefinitionID: UUID? = nil
     var graduationYear: String = ""
     var parentNames: String = ""
     var parentPhoneNumbers: String = ""
@@ -25,6 +26,7 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         name: String,
         className: String = "",
         gradeLevel: String = "",
+        classDefinitionID: UUID? = nil,
         graduationYear: String = "",
         parentNames: String = "",
         parentPhoneNumbers: String = "",
@@ -37,6 +39,7 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         self.name = name
         self.className = className
         self.gradeLevel = gradeLevel
+        self.classDefinitionID = classDefinitionID
         self.graduationYear = graduationYear
         self.parentNames = parentNames
         self.parentPhoneNumbers = parentPhoneNumbers
@@ -52,6 +55,7 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         name = try container.decode(String.self, forKey: .name)
         className = try container.decodeIfPresent(String.self, forKey: .className) ?? ""
         gradeLevel = try container.decodeIfPresent(String.self, forKey: .gradeLevel) ?? ""
+        classDefinitionID = try container.decodeIfPresent(UUID.self, forKey: .classDefinitionID)
         graduationYear = try container.decodeIfPresent(String.self, forKey: .graduationYear) ?? ""
         parentNames = try container.decodeIfPresent(String.self, forKey: .parentNames) ?? ""
         parentPhoneNumbers = try container.decodeIfPresent(String.self, forKey: .parentPhoneNumbers) ?? ""

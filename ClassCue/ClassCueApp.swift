@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import UserNotifications
 
 @main
@@ -15,5 +16,6 @@ struct ClassCueApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(ClassCuePersistence.sharedModelContainer)
     }
 }
