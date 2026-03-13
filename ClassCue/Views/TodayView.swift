@@ -43,6 +43,7 @@ struct TodayView: View {
     @AppStorage("school_offer_task_carryover") private var offerTaskCarryover = true
     @AppStorage("school_hide_dashboard_after_hours") private var hideSchoolDashboardAfterHours = true
     @AppStorage("school_show_personal_focus_card") private var showPersonalFocusCard = true
+    @AppStorage("live_activities_enabled") private var liveActivitiesEnabled = true
 
     @State private var activeWarning: InAppWarning?
     @State private var lastWarningKey: String?
@@ -532,6 +533,7 @@ struct TodayView: View {
                 topTasksCard(now: now)
                 studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: false)
                 notesSnapshotCard(compact: false)
+                subPlanCard(schedule: schedule, compact: false)
                 schoolBoundaryCard(now: now, schedule: schedule)
                 if showEndOfDayWrapUp {
                     endOfDayCard(now: now, schedule: schedule)
@@ -580,6 +582,7 @@ struct TodayView: View {
                 topTasksCard(now: now, compact: true)
                 studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: true)
                 notesSnapshotCard(compact: true)
+                subPlanCard(schedule: schedule, compact: true)
                 schoolBoundaryCard(now: now, schedule: schedule, compact: true)
                 if showEndOfDayWrapUp {
                     endOfDayCard(now: now, schedule: schedule, compact: true)
@@ -660,17 +663,33 @@ struct TodayView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(roster.isEmpty)
                 }
-
-                Button {
-                    subPlanItem = item
-                } label: {
-                    Label("Sub Plan", systemImage: "doc.text.below.ecg")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
             }
             .modifier(DashboardCardStyle(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor, compact: compact))
         }
+    }
+
+    @ViewBuilder
+    private func subPlanCard(schedule: [AlarmItem], compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Sub Plan", systemImage: "doc.text")
+                    .font((compact ? Font.subheadline : .headline).weight(.bold))
+                Spacer()
+            }
+
+            Text("Build and export the full substitute packet for today, including schedule, roster, supports, notes, and attendance.")
+                .font(compact ? .caption : .subheadline)
+                .foregroundStyle(.secondary)
+
+            Button {
+                showingDailySubPlan = true
+            } label: {
+                Label("Open Sub Plan Builder", systemImage: "square.and.pencil")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .modifier(DashboardCardStyle(accent: .indigo, compact: compact))
     }
 
     @ViewBuilder
@@ -1135,7 +1154,7 @@ struct TodayView: View {
                 showingStudentDirectory = true
             }
 
-            Button("Daily Sub Plan", systemImage: "doc.text") {
+            Button("Sub Plan", systemImage: "doc.text") {
                 showingDailySubPlan = true
             }
 
@@ -2044,6 +2063,7 @@ struct TodayView: View {
     }
 
     private func liveActivityState(for activeItem: AlarmItem?, now: Date) -> LiveActivitySnapshot? {
+        guard liveActivitiesEnabled else { return nil }
         guard let activeItem else { return nil }
 
         let nextItem = adjustedTodaySchedule(for: now).first {
@@ -2067,6 +2087,11 @@ struct TodayView: View {
 
     private func syncLiveActivity(with snapshot: LiveActivitySnapshot?) {
         pendingLiveActivityStopTask?.cancel()
+
+        guard liveActivitiesEnabled else {
+            LiveActivityManager.stop()
+            return
+        }
 
         guard let snapshot else {
             pendingLiveActivityStopTask = Task {
@@ -2558,6 +2583,10 @@ private struct TodayClassSubPlanView: View {
         ClassCuePersistence.loadFollowUpNotes(from: modelContext)
     }
 
+    private var subPlanProfile: SubPlanProfile {
+        ClassCuePersistence.loadSubPlanProfile(from: modelContext)
+    }
+
     private var relevantClassNotes: [FollowUpNoteItem] {
         followUpNotes.filter {
             $0.kind == .classNote &&
@@ -2818,6 +2847,11 @@ private struct TodayClassSubPlanView: View {
         timeFormatter.timeStyle = .short
         timeFormatter.dateStyle = .none
 
+        let teacherContactText = teacherContactBlock()
+        let emergencyText = emergencyDrillBlock()
+        let classroomAccessText = classroomAccessBlock()
+        let staticNotesText = staticNotesBlock()
+
         let classNotesText = relevantClassNotes.isEmpty ? "None" : relevantClassNotes.map {
             "- \($0.note)"
         }.joined(separator: "\n")
@@ -2887,9 +2921,21 @@ private struct TodayClassSubPlanView: View {
         Active Schedule
         \(activeOverrideName ?? "Regular Day")
 
+        Teacher Contact
+        \(teacherContactText)
+
+        Emergency / Drill
+        \(emergencyText)
+
+        Classroom Access
+        \(classroomAccessText)
+
+        Static Notes
+        \(staticNotesText)
+
         Class
         \(item.className)
-        \(GradeLevelOption.normalized(item.gradeLevel)) • \(item.location)
+        \(GradeLevelOption.normalized(item.gradeLevel)) • \(resolvedRoomText())
         \(timeFormatter.string(from: item.startTime)) - \(timeFormatter.string(from: item.endTime))
 
         Overview
@@ -2922,6 +2968,72 @@ private struct TodayClassSubPlanView: View {
         Attendance Snapshot
         \(attendanceText)
         """
+    }
+
+    private func resolvedRoomText() -> String {
+        let room = item.location.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !room.isEmpty { return room }
+        let fallback = subPlanProfile.room.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? "Room not set" : fallback
+    }
+
+    private func teacherContactBlock() -> String {
+        let lines = [
+            labeledLine("Teacher", subPlanProfile.teacherName),
+            labeledLine("Room", resolvedRoomText()),
+            labeledLine("Email", subPlanProfile.contactEmail),
+            labeledLine("Phone", subPlanProfile.contactPhone),
+            labeledLine("Front Office", subPlanProfile.schoolFrontOfficeContact),
+            labeledLine("Neighboring Teacher", subPlanProfile.neighboringTeacher)
+        ].compactMap { $0 }
+        return lines.isEmpty ? "Not added yet" : lines.joined(separator: "\n")
+    }
+
+    private func emergencyDrillBlock() -> String {
+        let lines = [
+            blockText(subPlanProfile.emergencyDrillProcedures),
+            labeledLine("File Link", subPlanProfile.emergencyDrillFileLink)
+        ].compactMap { $0 }
+        return lines.isEmpty ? "Not added yet" : lines.joined(separator: "\n")
+    }
+
+    private func classroomAccessBlock() -> String {
+        let credentialText = subPlanProfile.appCredentials
+            .filter(\.hasContent)
+            .map { credential in
+                [
+                    labeledLine("App", credential.applicationName),
+                    labeledLine("Link", credential.applicationLink),
+                    labeledLine("Username", credential.username),
+                    labeledLine("Password", credential.password)
+                ]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+
+        let lines = [
+            labeledLine("Extensions", subPlanProfile.phoneExtensions),
+            blockText(subPlanProfile.passwordsAccessNotes),
+            credentialText.isEmpty ? nil : credentialText
+        ].compactMap { $0 }
+        return lines.isEmpty ? "Not added yet" : lines.joined(separator: "\n")
+    }
+
+    private func staticNotesBlock() -> String {
+        blockText(subPlanProfile.staticNotes) ?? "Not added yet"
+    }
+
+    private func labeledLine(_ label: String, _ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return "\(label): \(trimmed)"
+    }
+
+    private func blockText(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private var relevantCommitments: [CommitmentItem] {
@@ -3011,6 +3123,10 @@ private struct TodayDailySubPlanView: View {
         ClassCuePersistence.loadFollowUpNotes(from: modelContext)
     }
 
+    private var subPlanProfile: SubPlanProfile {
+        ClassCuePersistence.loadSubPlanProfile(from: modelContext)
+    }
+
     var body: some View {
         Form {
             Section {
@@ -3026,6 +3142,18 @@ private struct TodayDailySubPlanView: View {
                 }
                 .padding(.vertical, 8)
                 .listRowBackground(dailySubPlanCardBackground(accent: .blue))
+            }
+
+            Section {
+                NavigationLink {
+                    SubPlanProfileSettingsView()
+                } label: {
+                    Label("Review Sub Plan Profile", systemImage: "person.text.rectangle")
+                }
+
+                Text("Check your reusable teacher contact, emergency, access, and static note details before exporting.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Day-Wide Notes") {
@@ -3234,6 +3362,11 @@ private struct TodayDailySubPlanView: View {
         timeFormatter.timeStyle = .short
         timeFormatter.dateStyle = .none
 
+        let teacherContactText = teacherContactBlock()
+        let emergencyText = emergencyDrillBlock()
+        let classroomAccessText = classroomAccessBlock()
+        let staticNotesText = staticNotesBlock()
+
         let blockText = schedule.map { block in
             let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
             let roster = rosterForBlock(block)
@@ -3316,6 +3449,18 @@ private struct TodayDailySubPlanView: View {
         Active Schedule
         \(activeOverrideName ?? "Regular Day")
 
+        Teacher Contact
+        \(teacherContactText)
+
+        Emergency / Drill
+        \(emergencyText)
+
+        Classroom Access
+        \(classroomAccessText)
+
+        Static Notes
+        \(staticNotesText)
+
         Morning Notes
         \(morningNotes.isEmpty ? "None added" : morningNotes)
 
@@ -3331,6 +3476,65 @@ private struct TodayDailySubPlanView: View {
         Day Schedule and Block Plans
         \(blockText)
         """
+    }
+
+    private func teacherContactBlock() -> String {
+        let lines = [
+            labeledLine("Teacher", subPlanProfile.teacherName),
+            labeledLine("Room", subPlanProfile.room),
+            labeledLine("Email", subPlanProfile.contactEmail),
+            labeledLine("Phone", subPlanProfile.contactPhone),
+            labeledLine("Front Office", subPlanProfile.schoolFrontOfficeContact),
+            labeledLine("Neighboring Teacher", subPlanProfile.neighboringTeacher)
+        ].compactMap { $0 }
+        return lines.isEmpty ? "Not added yet" : lines.joined(separator: "\n")
+    }
+
+    private func emergencyDrillBlock() -> String {
+        let lines = [
+            blockText(subPlanProfile.emergencyDrillProcedures),
+            labeledLine("File Link", subPlanProfile.emergencyDrillFileLink)
+        ].compactMap { $0 }
+        return lines.isEmpty ? "Not added yet" : lines.joined(separator: "\n")
+    }
+
+    private func classroomAccessBlock() -> String {
+        let credentialText = subPlanProfile.appCredentials
+            .filter(\.hasContent)
+            .map { credential in
+                [
+                    labeledLine("App", credential.applicationName),
+                    labeledLine("Link", credential.applicationLink),
+                    labeledLine("Username", credential.username),
+                    labeledLine("Password", credential.password)
+                ]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+
+        let lines = [
+            labeledLine("Extensions", subPlanProfile.phoneExtensions),
+            blockText(subPlanProfile.passwordsAccessNotes),
+            credentialText.isEmpty ? nil : credentialText
+        ].compactMap { $0 }
+        return lines.isEmpty ? "Not added yet" : lines.joined(separator: "\n")
+    }
+
+    private func staticNotesBlock() -> String {
+        blockText(subPlanProfile.staticNotes) ?? "Not added yet"
+    }
+
+    private func labeledLine(_ label: String, _ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return "\(label): \(trimmed)"
+    }
+
+    private func blockText(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func rosterForBlock(_ block: AlarmItem) -> [StudentSupportProfile] {

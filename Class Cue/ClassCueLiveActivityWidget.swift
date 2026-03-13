@@ -77,22 +77,20 @@ struct ClassCueLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                ZStack {
-                    Circle()
-                        .fill(accentColor(for: context.state.iconName).opacity(0.18))
-                    Image(systemName: context.state.iconName)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(accentColor(for: context.state.iconName))
-                }
+                Image(systemName: context.state.iconName)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(accentColor(for: context.state.iconName))
             } compactTrailing: {
                 if context.state.isHeld {
                     Image(systemName: "pause.fill")
                 } else {
                     Text(context.state.endTime, style: .timer)
                         .monospacedDigit()
+                        .font(.caption2.weight(.semibold))
                 }
             } minimal: {
                 Image(systemName: context.state.iconName)
+                    .foregroundStyle(accentColor(for: context.state.iconName))
             }
         }
     }

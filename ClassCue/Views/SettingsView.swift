@@ -32,6 +32,7 @@ struct SettingsView: View {
     @AppStorage("school_hide_dashboard_after_hours") private var hideSchoolDashboardAfterHours = true
     @AppStorage("school_show_personal_focus_card") private var showPersonalFocusCard = true
     @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
+    @AppStorage("live_activities_enabled") private var liveActivitiesEnabledPreference = true
 
     @State private var holidayModeEnabled = false
     @State private var holidayResumeDate = Date().addingTimeInterval(60 * 60 * 24)
@@ -233,6 +234,8 @@ struct SettingsView: View {
     private var liveActivityStatusSection: some View {
         Section("Live Activity Status") {
 #if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
+            Toggle("Enable Live Activities", isOn: $liveActivitiesEnabledPreference)
+
             LabeledContent("iPhone Allows Live Activities") {
                 Text(liveActivitiesEnabled ? "On" : "Off")
                     .foregroundColor(liveActivitiesEnabled ? .green : .red)
@@ -259,6 +262,10 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
+
+            Text("Turning this off removes the Dynamic Island and lock-screen Live Activity entirely.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
 #else
             Text("Live Activities are unavailable on this platform. ClassCue sync, schedule editing, students, tasks, notes, and sub plans remain available.")
                 .font(.footnote)
@@ -336,6 +343,10 @@ struct SettingsView: View {
 
             NavigationLink("Day Overrides") {
                 DayOverridesView(overrides: $overrides, profiles: $profiles)
+            }
+
+            NavigationLink("Sub Plan Profile") {
+                SubPlanProfileSettingsView()
             }
         }
     }
@@ -672,5 +683,125 @@ struct SettingsView: View {
             .replacingOccurrences(of: ",", with: "\\,")
             .replacingOccurrences(of: ";", with: "\\;")
             .replacingOccurrences(of: "\n", with: "\\n")
+    }
+}
+struct SubPlanProfileSettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var profile = SubPlanProfile()
+    @State private var hasLoaded = false
+    @State private var saveStatusMessage = ""
+
+    var body: some View {
+        Form {
+            Section("Teacher Contact") {
+                TextField("Teacher name", text: $profile.teacherName)
+                TextField("Default room", text: $profile.room)
+                TextField("Contact email", text: $profile.contactEmail)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.emailAddress)
+                TextField("Contact phone", text: $profile.contactPhone)
+                    .keyboardType(.phonePad)
+                TextField("School / front office contact", text: $profile.schoolFrontOfficeContact, axis: .vertical)
+                    .lineLimit(2...4)
+                TextField("Neighboring teacher", text: $profile.neighboringTeacher)
+            }
+
+            Section("Emergency / Drill") {
+                TextField("Emergency / drill procedures", text: $profile.emergencyDrillProcedures, axis: .vertical)
+                    .lineLimit(4...8)
+                TextField("Emergency / drill file link", text: $profile.emergencyDrillFileLink, axis: .vertical)
+                    .lineLimit(2...4)
+
+                Text("Paste either the procedures themselves or a shared file link. Both will be included in sub-plan exports.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Access / Extensions") {
+                TextField("General passwords / access notes", text: $profile.passwordsAccessNotes, axis: .vertical)
+                    .lineLimit(3...6)
+                TextField("Phone extensions", text: $profile.phoneExtensions, axis: .vertical)
+                    .lineLimit(2...4)
+            }
+
+            Section("Application Credentials") {
+                if profile.appCredentials.isEmpty {
+                    Text("Add login details for the applications a substitute may need.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach($profile.appCredentials) { $credential in
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("Application", text: $credential.applicationName)
+                        TextField("Application link", text: $credential.applicationLink, axis: .vertical)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                            .lineLimit(2...4)
+                        TextField("Username", text: $credential.username)
+                            .textInputAutocapitalization(.never)
+                        TextField("Password", text: $credential.password)
+                            .textInputAutocapitalization(.never)
+
+                        Button("Remove App", role: .destructive) {
+                            removeCredential(id: credential.id)
+                        }
+                        .font(.footnote)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Button {
+                    profile.appCredentials.append(SubPlanProfile.AppCredential())
+                } label: {
+                    Label("Add App Credential", systemImage: "plus.circle")
+                }
+            }
+
+            Section("Static Notes") {
+                TextField("Reusable static notes for every sub plan", text: $profile.staticNotes, axis: .vertical)
+                    .lineLimit(4...8)
+            }
+
+            if !saveStatusMessage.isEmpty {
+                Section {
+                    Text(saveStatusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Sub Plan Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") {
+                    saveProfile()
+                }
+            }
+        }
+        .onAppear {
+            guard !hasLoaded else { return }
+            profile = ClassCuePersistence.loadSubPlanProfile(from: modelContext)
+            hasLoaded = true
+        }
+    }
+
+    private func saveProfile() {
+        let cleaned = cleanedProfile(profile)
+        profile = cleaned
+        ClassCuePersistence.saveSubPlanProfile(cleaned, into: modelContext)
+        saveStatusMessage = "Saved \(Date.now.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private func removeCredential(id: UUID) {
+        profile.appCredentials.removeAll { $0.id == id }
+    }
+
+    private func cleanedProfile(_ profile: SubPlanProfile) -> SubPlanProfile {
+        var cleaned = profile
+        cleaned.appCredentials = profile.appCredentials.filter(\.hasContent)
+        return cleaned
     }
 }

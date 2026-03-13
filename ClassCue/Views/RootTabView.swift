@@ -23,8 +23,8 @@ enum AppTab: Hashable {
 
 struct RootTabView: View {
 
-    private static let cloudSyncRefreshInterval: Duration = .seconds(3)
-    private static let localMutationRefreshPauseSeconds: TimeInterval = 2
+    private static let cloudSyncRefreshInterval: Duration = .seconds(8)
+    private static let localMutationRefreshPauseSeconds: TimeInterval = 4
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase

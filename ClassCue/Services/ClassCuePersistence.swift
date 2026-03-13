@@ -479,6 +479,82 @@ final class PersistedDayOverride: PersistedUUIDModel {
     }
 }
 
+@Model
+final class PersistedSubPlanProfile: PersistedUUIDModel {
+    var id: UUID = UUID()
+    var teacherName: String = ""
+    var room: String = ""
+    var contactEmail: String = ""
+    var contactPhone: String = ""
+    var schoolFrontOfficeContact: String = ""
+    var neighboringTeacher: String = ""
+    var emergencyDrillProcedures: String = ""
+    var emergencyDrillFileLink: String = ""
+    var passwordsAccessNotes: String = ""
+    var appCredentialsJSON: String = ""
+    var phoneExtensions: String = ""
+    var staticNotes: String = ""
+
+    init(from item: SubPlanProfile) {
+        update(from: item)
+    }
+
+    func update(from item: SubPlanProfile) {
+        id = item.id
+        teacherName = item.teacherName
+        room = item.room
+        contactEmail = item.contactEmail
+        contactPhone = item.contactPhone
+        schoolFrontOfficeContact = item.schoolFrontOfficeContact
+        neighboringTeacher = item.neighboringTeacher
+        emergencyDrillProcedures = item.emergencyDrillProcedures
+        emergencyDrillFileLink = item.emergencyDrillFileLink
+        passwordsAccessNotes = item.passwordsAccessNotes
+        appCredentialsJSON = Self.encodeCredentials(item.appCredentials)
+        phoneExtensions = item.phoneExtensions
+        staticNotes = item.staticNotes
+    }
+
+    func asSubPlanProfile() -> SubPlanProfile {
+        SubPlanProfile(
+            id: id,
+            teacherName: teacherName,
+            room: room,
+            contactEmail: contactEmail,
+            contactPhone: contactPhone,
+            schoolFrontOfficeContact: schoolFrontOfficeContact,
+            neighboringTeacher: neighboringTeacher,
+            emergencyDrillProcedures: emergencyDrillProcedures,
+            emergencyDrillFileLink: emergencyDrillFileLink,
+            passwordsAccessNotes: passwordsAccessNotes,
+            appCredentials: Self.decodeCredentials(appCredentialsJSON),
+            phoneExtensions: phoneExtensions,
+            staticNotes: staticNotes
+        )
+    }
+
+    private static func encodeCredentials(_ credentials: [SubPlanProfile.AppCredential]) -> String {
+        guard
+            let data = try? JSONEncoder().encode(credentials),
+            let string = String(data: data, encoding: .utf8)
+        else {
+            return ""
+        }
+        return string
+    }
+
+    private static func decodeCredentials(_ rawValue: String) -> [SubPlanProfile.AppCredential] {
+        guard
+            !rawValue.isEmpty,
+            let data = rawValue.data(using: .utf8),
+            let credentials = try? JSONDecoder().decode([SubPlanProfile.AppCredential].self, from: data)
+        else {
+            return []
+        }
+        return credentials
+    }
+}
+
 struct FirstPersistenceSliceSnapshot {
     var alarms: [AlarmItem]
     var studentProfiles: [StudentSupportProfile]
@@ -509,7 +585,7 @@ enum ClassCuePersistence {
     static let secondSliceMigrationKey = "swiftdata_second_slice_migration_v1"
     static let thirdSliceMigrationKey = "swiftdata_third_slice_migration_v1"
     static let cloudKitContainerIdentifier = "iCloud.com.mrmike.classcue"
-    static let cloudKitSchemaInitializationKey = "swiftdata_cloudkit_schema_initialized_v1"
+    static let cloudKitSchemaInitializationKey = "swiftdata_cloudkit_schema_initialized_v3"
     static private(set) var activeContainerMode: ContainerMode = .localFallback
     static private(set) var lastContainerStatusMessage = "Container not initialized yet."
     static private(set) var lastSchemaInitializationMessage = "Schema initializer not run yet."
@@ -525,7 +601,8 @@ enum ClassCuePersistence {
         PersistedDailySubPlanItem.self,
         PersistedAttendanceRecord.self,
         PersistedScheduleProfile.self,
-        PersistedDayOverride.self
+        PersistedDayOverride.self,
+        PersistedSubPlanProfile.self
     ]
 
     static func describe(error: Error) -> String {
@@ -567,6 +644,7 @@ enum ClassCuePersistence {
                         PersistedAttendanceRecord.self,
                         PersistedScheduleProfile.self,
                         PersistedDayOverride.self,
+                        PersistedSubPlanProfile.self,
                     configurations: cloudConfiguration
                 )
                 activeContainerMode = .cloudKit
@@ -593,6 +671,7 @@ enum ClassCuePersistence {
                         PersistedAttendanceRecord.self,
                         PersistedScheduleProfile.self,
                         PersistedDayOverride.self,
+                        PersistedSubPlanProfile.self,
                     configurations: localConfiguration
                 )
                 activeContainerMode = .localFallback
@@ -849,6 +928,24 @@ enum ClassCuePersistence {
     }
 
     @MainActor
+    static func loadSubPlanProfile(from context: ModelContext) -> SubPlanProfile {
+        let profiles = deduplicatedModels((try? context.fetch(FetchDescriptor<PersistedSubPlanProfile>())) ?? [], in: context)
+        return profiles.first?.asSubPlanProfile() ?? SubPlanProfile()
+    }
+
+    @MainActor
+    static func saveSubPlanProfile(_ profile: SubPlanProfile, into context: ModelContext) {
+        syncModels(
+            PersistedSubPlanProfile.self,
+            values: [profile],
+            in: context,
+            create: PersistedSubPlanProfile.init,
+            update: { $0.update(from: $1) }
+        )
+        save(context)
+    }
+
+    @MainActor
     private static func replaceAll<T: PersistentModel>(_ type: T.Type, in context: ModelContext, with models: [T]) {
         let descriptor = FetchDescriptor<T>()
         let existing = (try? context.fetch(descriptor)) ?? []
@@ -902,7 +999,7 @@ enum ClassCuePersistence {
     ) {
         let descriptor = FetchDescriptor<T>()
         let existing = deduplicatedModels((try? context.fetch(descriptor)) ?? [], in: context)
-        var existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+        let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
         let incomingIDs = Set(values.map(identifier))
 
         for model in existing where !incomingIDs.contains(model.id) {
