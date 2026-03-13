@@ -11,6 +11,7 @@ import SwiftUI
 
 struct AddEditView: View {
     @Binding var alarms: [AlarmItem]
+    let studentProfiles: [StudentSupportProfile]
 
     let day: Int
     var existing: AlarmItem? = nil
@@ -24,10 +25,27 @@ struct AddEditView: View {
 
     @State private var start = Date()
     @State private var end = Date().addingTimeInterval(60 * 30)
+    @State private var linkedStudentIDs: Set<UUID> = []
 
     @State private var showDeleteConfirm = false
     @State private var showValidationAlert = false
     @State private var validationMessage = ""
+
+    private struct StudentRosterGroup: Identifiable {
+        let key: String
+        let className: String
+        let gradeLevel: String
+        let students: [StudentSupportProfile]
+
+        var id: String { key }
+
+        var title: String {
+            let parts = [className, gradeLevel]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return parts.isEmpty ? "Unassigned Group" : parts.joined(separator: " - ")
+        }
+    }
 
     private var isEditing: Bool {
         existing != nil
@@ -46,7 +64,8 @@ struct AddEditView: View {
             gradeLevel: grade.trimmingCharacters(in: .whitespacesAndNewlines),
             startTime: start,
             endTime: end,
-            type: type
+            type: type,
+            linkedStudentIDs: Array(linkedStudentIDs)
         )
     }
 
@@ -95,6 +114,46 @@ struct AddEditView: View {
                         selection: $end,
                         displayedComponents: .hourAndMinute
                     )
+                }
+
+                if !sortedStudentProfiles.isEmpty {
+                    Section("Linked Roster") {
+                        if !suggestedRosterGroups.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Suggested groups for this block")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+
+                                ForEach(suggestedRosterGroups) { group in
+                                    rosterGroupRow(group)
+                                }
+                            }
+                        }
+
+                        if !allRosterGroups.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Roster groups")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+
+                                ForEach(remainingRosterGroups) { group in
+                                    rosterGroupRow(group)
+                                }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !suggestedStudents.isEmpty || !suggestedRosterGroups.isEmpty {
+                                Text("Individual students")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            ForEach(sortedStudentProfiles) { profile in
+                                studentToggleRow(profile)
+                            }
+                        }
+                    }
                 }
 
                 if isEditing {
@@ -164,6 +223,7 @@ struct AddEditView: View {
             type = existing.type
             start = existing.startTime
             end = existing.endTime
+            linkedStudentIDs = Set(existing.linkedStudentIDs)
         } else {
             let roundedStart = roundedDate(from: Date())
             let defaultEnd = Calendar.current.date(byAdding: .minute, value: 30, to: roundedStart) ?? roundedStart.addingTimeInterval(1800)
@@ -198,7 +258,8 @@ struct AddEditView: View {
             gradeLevel: trimmedGrade,
             startTime: start,
             endTime: end,
-            type: type
+            type: type,
+            linkedStudentIDs: Array(linkedStudentIDs)
         )
 
         if let existing,
@@ -233,7 +294,8 @@ struct AddEditView: View {
             gradeLevel: existing.gradeLevel,
             startTime: newStart,
             endTime: newEnd,
-            type: existing.type
+            type: existing.type,
+            linkedStudentIDs: existing.linkedStudentIDs
         )
 
         alarms.append(duplicated)
@@ -266,6 +328,131 @@ struct AddEditView: View {
                 minute: roundedMinute
             )
         ) ?? date
+    }
+
+    private var sortedStudentProfiles: [StudentSupportProfile] {
+        studentProfiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var suggestedStudents: [StudentSupportProfile] {
+        let normalizedGrade = GradeLevelOption.normalized(grade)
+        let typeName = type.displayName
+        return sortedStudentProfiles.filter { profile in
+            classNamesMatch(scheduleClassName: typeName, profileClassName: profile.className) &&
+            (
+                normalizedGrade.isEmpty ||
+                profile.gradeLevel.isEmpty ||
+                normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel)) == normalizedStudentKey(normalizedGrade)
+            )
+        }
+    }
+
+    private var allRosterGroups: [StudentRosterGroup] {
+        let grouped = Dictionary(grouping: sortedStudentProfiles) { profile in
+            let classKey = normalizedClassKey(profile.className)
+            let gradeKey = normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel))
+            return "\(classKey)|\(gradeKey)"
+        }
+
+        return grouped.compactMap { key, students in
+            guard let first = students.first else { return nil }
+            return StudentRosterGroup(
+                key: key,
+                className: first.className,
+                gradeLevel: GradeLevelOption.normalized(first.gradeLevel),
+                students: students.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            )
+        }
+        .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    private var suggestedRosterGroups: [StudentRosterGroup] {
+        let normalizedGrade = normalizedStudentKey(GradeLevelOption.normalized(grade))
+        let typeName = type.displayName
+
+        return allRosterGroups.filter { group in
+            classNamesMatch(scheduleClassName: typeName, profileClassName: group.className) &&
+            (
+                normalizedGrade.isEmpty ||
+                group.gradeLevel.isEmpty ||
+                normalizedStudentKey(group.gradeLevel) == normalizedGrade
+            )
+        }
+    }
+
+    private var remainingRosterGroups: [StudentRosterGroup] {
+        let suggestedKeys = Set(suggestedRosterGroups.map(\.key))
+        return allRosterGroups.filter { !suggestedKeys.contains($0.key) }
+    }
+
+    @ViewBuilder
+    private func studentToggleRow(_ profile: StudentSupportProfile) -> some View {
+        let isSelected = linkedStudentIDs.contains(profile.id)
+        Button {
+            if isSelected {
+                linkedStudentIDs.remove(profile.id)
+            } else {
+                linkedStudentIDs.insert(profile.id)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.name)
+                        .foregroundStyle(.primary)
+
+                    let detail = [profile.className, profile.gradeLevel]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " • ")
+
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func rosterGroupRow(_ group: StudentRosterGroup) -> some View {
+        let groupIDs = Set(group.students.map(\.id))
+        let selectedCount = linkedStudentIDs.intersection(groupIDs).count
+        let isFullySelected = selectedCount == group.students.count
+
+        Button {
+            if isFullySelected {
+                linkedStudentIDs.subtract(groupIDs)
+            } else {
+                linkedStudentIDs.formUnion(groupIDs)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isFullySelected ? "checkmark.circle.fill" : "circle.circle")
+                    .foregroundStyle(isFullySelected ? .blue : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.title)
+                        .foregroundStyle(.primary)
+
+                    Text("\(group.students.count) student\(group.students.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -157,6 +157,13 @@ struct SettingsView: View {
                     .foregroundColor(activeLiveActivityCount > 0 ? .green : .secondary)
             }
 
+            LabeledContent("Last Live Activity Event") {
+                Text(LiveActivityManager.lastStatusMessage)
+                    .font(.footnote)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(.secondary)
+            }
+
             if activeLiveActivityCount > 0 {
                 Text("ClassCue currently has \(activeLiveActivityCount) active Live Activit\(activeLiveActivityCount == 1 ? "y" : "ies").")
                     .font(.footnote)

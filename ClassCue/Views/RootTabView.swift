@@ -30,6 +30,8 @@ struct RootTabView: View {
     @AppStorage("commitments_v1_data") private var savedCommitments: Data = Data()
     @AppStorage("student_support_profiles_v1_data") private var savedStudentProfiles: Data = Data()
     @AppStorage("attendance_v1_data") private var savedAttendance: Data = Data()
+    @AppStorage("sub_plans_v1_data") private var savedSubPlans: Data = Data()
+    @AppStorage("daily_sub_plans_v1_data") private var savedDailySubPlans: Data = Data()
     @AppStorage("profiles_v1_data") private var savedProfiles: Data = Data()
     @AppStorage("day_overrides_v1_data") private var savedOverrides: Data = Data()
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
@@ -39,6 +41,8 @@ struct RootTabView: View {
     @State private var commitments: [CommitmentItem] = []
     @State private var studentProfiles: [StudentSupportProfile] = []
     @State private var attendanceRecords: [AttendanceRecord] = []
+    @State private var subPlans: [SubPlanItem] = []
+    @State private var dailySubPlans: [DailySubPlanItem] = []
     @State private var profiles: [ScheduleProfile] = []
     @State private var overrides: [DayOverride] = []
 
@@ -131,6 +135,16 @@ struct RootTabView: View {
                 savedAttendance = encoded
             }
         }
+        .onChange(of: subPlans) { _, newValue in
+            if let encoded = try? JSONEncoder().encode(newValue) {
+                savedSubPlans = encoded
+            }
+        }
+        .onChange(of: dailySubPlans) { _, newValue in
+            if let encoded = try? JSONEncoder().encode(newValue) {
+                savedDailySubPlans = encoded
+            }
+        }
     }
 
     private var todayTab: some View {
@@ -140,6 +154,8 @@ struct RootTabView: View {
             commitments: $commitments,
             studentSupportProfiles: $studentProfiles,
             attendanceRecords: $attendanceRecords,
+            subPlans: $subPlans,
+            dailySubPlans: $dailySubPlans,
             suggestedStudents: suggestedStudents,
             studentSupportsByName: studentSupportsByName,
             activeOverrideName: activeDayOverride?.displayName,
@@ -165,8 +181,10 @@ struct RootTabView: View {
         ScheduleView(
             selectedDay: $selectedScheduleDay,
             alarms: $alarms,
+            studentProfiles: $studentProfiles,
             activeOverrideName: activeDayOverride?.displayName,
-            overrideSchedule: activeDayOverride?.alarms
+            overrideSchedule: activeDayOverride?.alarms,
+            openTodayTab: { selectedTab = .today }
         )
         .tabItem {
             Label("Schedule", systemImage: "calendar")
@@ -177,9 +195,11 @@ struct RootTabView: View {
     private var todoTab: some View {
         TodoListView(
             todos: $todos,
+            studentProfiles: $studentProfiles,
             suggestedContexts: suggestedTaskContexts,
             suggestedStudents: suggestedStudents,
-            studentSupportsByName: studentSupportsByName
+            studentSupportsByName: studentSupportsByName,
+            openTodayTab: { selectedTab = .today }
         )
         .tabItem {
             Label("To Do", systemImage: "checklist")
@@ -188,7 +208,13 @@ struct RootTabView: View {
     }
 
     private var notesTab: some View {
-        NotesView(todos: $todos, suggestedContexts: suggestedTaskContexts, suggestedStudents: suggestedStudents)
+        NotesView(
+            todos: $todos,
+            studentProfiles: $studentProfiles,
+            suggestedContexts: suggestedTaskContexts,
+            suggestedStudents: suggestedStudents,
+            openTodayTab: { selectedTab = .today }
+        )
             .tabItem {
                 Label("Notes", systemImage: "note.text")
             }
@@ -217,7 +243,8 @@ struct RootTabView: View {
                     gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
                     startTime: $0.startTime,
                     endTime: $0.endTime,
-                    type: $0.type
+                    type: $0.type,
+                    linkedStudentIDs: $0.linkedStudentIDs
                 )
             }
         }
@@ -235,6 +262,16 @@ struct RootTabView: View {
             attendanceRecords = decodedAttendance
         } else {
             attendanceRecords = []
+        }
+        if let decodedSubPlans = try? JSONDecoder().decode([SubPlanItem].self, from: savedSubPlans) {
+            subPlans = decodedSubPlans
+        } else {
+            subPlans = []
+        }
+        if let decodedDailySubPlans = try? JSONDecoder().decode([DailySubPlanItem].self, from: savedDailySubPlans) {
+            dailySubPlans = decodedDailySubPlans
+        } else {
+            dailySubPlans = []
         }
         loadProfiles()
         loadOverrides()

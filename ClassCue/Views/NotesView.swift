@@ -19,8 +19,10 @@ struct NotesView: View {
     }
 
     @Binding var todos: [TodoItem]
+    @Binding var studentProfiles: [StudentSupportProfile]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
+    let openTodayTab: () -> Void
     @AppStorage("notes_v1") private var notesText: String = ""
     @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
 
@@ -34,15 +36,20 @@ struct NotesView: View {
     @State private var selectedStudentFilter = ""
     @State private var showingAddFollowUp = false
     @State private var editingFollowUp: FollowUpNoteItem?
+    @State private var showingStudentDirectory = false
 
     init(
         todos: Binding<[TodoItem]>,
+        studentProfiles: Binding<[StudentSupportProfile]>,
         suggestedContexts: [String] = [],
-        suggestedStudents: [String] = []
+        suggestedStudents: [String] = [],
+        openTodayTab: @escaping () -> Void
     ) {
         _todos = todos
+        _studentProfiles = studentProfiles
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
+        self.openTodayTab = openTodayTab
     }
 
     var body: some View {
@@ -81,6 +88,20 @@ struct NotesView: View {
                 }
 
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Menu("Actions") {
+                        Button("Quick Add", systemImage: "square.and.pencil") {
+                            showingQuickCapture = true
+                        }
+
+                        Button("Students", systemImage: "person.3") {
+                            showingStudentDirectory = true
+                        }
+
+                        Button("Daily Sub Plan", systemImage: "doc.text") {
+                            openTodayTab()
+                        }
+                    }
+
                     Button {
                         showingQuickCapture = true
                     } label: {
@@ -152,6 +173,11 @@ struct NotesView: View {
                     preferredKind: nil,
                     existing: note
                 )
+            }
+            .sheet(isPresented: $showingStudentDirectory) {
+                NavigationStack {
+                    StudentDirectoryView(profiles: $studentProfiles)
+                }
             }
         }
     }

@@ -11,9 +11,11 @@ import SwiftUI
 struct TodoListView: View {
 
     @Binding var todos: [TodoItem]
+    @Binding var studentProfiles: [StudentSupportProfile]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
+    let openTodayTab: () -> Void
 
     enum CategoryFilter: String, CaseIterable {
         case all
@@ -63,17 +65,22 @@ struct TodoListView: View {
     @State private var showOnlyStudentContext = false
     @State private var studentFilter = ""
     @State private var linkedContextFilter = ""
+    @State private var showingStudentDirectory = false
 
     init(
         todos: Binding<[TodoItem]>,
+        studentProfiles: Binding<[StudentSupportProfile]>,
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
-        studentSupportsByName: [String: StudentSupportProfile] = [:]
+        studentSupportsByName: [String: StudentSupportProfile] = [:],
+        openTodayTab: @escaping () -> Void
     ) {
         _todos = todos
+        _studentProfiles = studentProfiles
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
         self.studentSupportsByName = studentSupportsByName
+        self.openTodayTab = openTodayTab
     }
 
     var body: some View {
@@ -140,6 +147,20 @@ struct TodoListView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack {
+                        Menu("Actions") {
+                            Button("Quick Add", systemImage: "square.and.pencil") {
+                                showingQuickCapture = true
+                            }
+
+                            Button("Students", systemImage: "person.3") {
+                                showingStudentDirectory = true
+                            }
+
+                            Button("Daily Sub Plan", systemImage: "doc.text") {
+                                openTodayTab()
+                            }
+                        }
+
                         Menu {
                             Picker("Category", selection: $categoryFilter) {
                                 ForEach(CategoryFilter.allCases, id: \.self) { filter in
@@ -215,6 +236,11 @@ struct TodoListView: View {
                     studentSupportsByName: studentSupportsByName,
                     existing: todo
                 )
+            }
+            .sheet(isPresented: $showingStudentDirectory) {
+                NavigationStack {
+                    StudentDirectoryView(profiles: $studentProfiles)
+                }
             }
         }
     }
@@ -413,8 +439,10 @@ struct TodoListView: View {
             TodoItem(task: "Print spelling sheets", isCompleted: true, priority: .low, dueDate: nil),
             TodoItem(task: "Email parent update", priority: .med, dueDate: nil)
         ]),
+        studentProfiles: .constant([]),
         suggestedContexts: [],
         suggestedStudents: [],
-        studentSupportsByName: [:]
+        studentSupportsByName: [:],
+        openTodayTab: {}
     )
 }

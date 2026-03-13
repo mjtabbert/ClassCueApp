@@ -13,8 +13,10 @@ struct ScheduleView: View {
 
     @Binding var selectedDay: WeekdayTab
     @Binding var alarms: [AlarmItem]
+    @Binding var studentProfiles: [StudentSupportProfile]
     var activeOverrideName: String? = nil
     var overrideSchedule: [AlarmItem]? = nil
+    let openTodayTab: () -> Void
 
     @AppStorage("profiles_v1_data") private var savedProfiles: Data = Data()
     @AppStorage("day_overrides_v1_data") private var savedOverrides: Data = Data()
@@ -29,6 +31,7 @@ struct ScheduleView: View {
     @State private var showingImportSheet = false
     @State private var showingExportSheet = false
     @State private var showingOverridesSheet = false
+    @State private var showingStudentDirectory = false
     @State private var profileName = ""
     @State private var overrides: [DayOverride] = []
     @State private var showPastBlocks = false
@@ -91,6 +94,17 @@ struct ScheduleView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
                         Menu {
+                            Button("Students", systemImage: "person.3") {
+                                showingStudentDirectory = true
+                            }
+
+                            Button("Daily Sub Plan", systemImage: "doc.text") {
+                                selectedDay = .today
+                                openTodayTab()
+                            }
+
+                            Divider()
+
                             Button("Import CSV", systemImage: "square.and.arrow.down") {
                                 showingImportSheet = true
                             }
@@ -145,12 +159,14 @@ struct ScheduleView: View {
             .sheet(isPresented: $showingAddSheet) {
                 AddEditView(
                     alarms: $alarms,
+                    studentProfiles: studentProfiles,
                     day: selectedDay.rawValue
                 )
             }
             .sheet(item: $editingItem) { item in
                 AddEditView(
                     alarms: $alarms,
+                    studentProfiles: studentProfiles,
                     day: item.dayOfWeek,
                     existing: item
                 )
@@ -170,6 +186,11 @@ struct ScheduleView: View {
                     overrides: $overrides,
                     profiles: $profiles
                 )
+            }
+            .sheet(isPresented: $showingStudentDirectory) {
+                NavigationStack {
+                    StudentDirectoryView(profiles: $studentProfiles)
+                }
             }
             .onChange(of: overrides) { _, newValue in
                 saveOverrides(newValue)
@@ -440,7 +461,8 @@ struct ScheduleView: View {
                 gradeLevel: item.gradeLevel,
                 startTime: item.startTime,
                 endTime: item.endTime,
-                type: item.type
+                type: item.type,
+                linkedStudentIDs: item.linkedStudentIDs
             )
         }
 

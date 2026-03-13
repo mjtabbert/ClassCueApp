@@ -13,6 +13,7 @@ import ActivityKit
 class LiveActivityManager {
 
     static var currentActivity: Activity<ClassCueActivityAttributes>?
+    @MainActor static var lastStatusMessage: String = "Idle"
 
     private static var resolvedActivity: Activity<ClassCueActivityAttributes>? {
         if let currentActivity {
@@ -36,6 +37,9 @@ class LiveActivityManager {
         nextIconName: String
     ) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            Task { @MainActor in
+                lastStatusMessage = "Live Activities are disabled in iOS settings."
+            }
             return
         }
 
@@ -76,8 +80,16 @@ class LiveActivityManager {
                 attributes: attributes,
                 content: content
             )
+            Task { @MainActor in
+                lastStatusMessage = currentActivity == nil
+                    ? "Activity request returned no activity."
+                    : "Started \(className)"
+            }
         } catch {
             print("Live Activity start failed:", error.localizedDescription)
+            Task { @MainActor in
+                lastStatusMessage = "Start failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -112,6 +124,10 @@ class LiveActivityManager {
                     staleDate: endTime
                 )
             )
+
+            await MainActor.run {
+                lastStatusMessage = "Updated \(className)"
+            }
         }
     }
 
@@ -160,6 +176,9 @@ class LiveActivityManager {
             }
 
             currentActivity = nil
+            await MainActor.run {
+                lastStatusMessage = "Stopped"
+            }
         }
     }
 }

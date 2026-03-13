@@ -17,6 +17,8 @@ struct TodayView: View {
     @Binding var commitments: [CommitmentItem]
     @Binding var studentSupportProfiles: [StudentSupportProfile]
     @Binding var attendanceRecords: [AttendanceRecord]
+    @Binding var subPlans: [SubPlanItem]
+    @Binding var dailySubPlans: [DailySubPlanItem]
     let suggestedStudents: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
     let activeOverrideName: String?
@@ -48,6 +50,9 @@ struct TodayView: View {
     @State private var showingStudentDirectory = false
     @State private var rosterItem: AlarmItem?
     @State private var attendanceItem: AlarmItem?
+    @State private var subPlanItem: AlarmItem?
+    @State private var showingDailySubPlan = false
+    @State private var pendingLiveActivityStopTask: Task<Void, Never>?
 
     var body: some View {
 
@@ -194,6 +199,7 @@ struct TodayView: View {
             .sheet(item: $editingAlarm) { item in
                 AddEditView(
                     alarms: $alarms,
+                    studentProfiles: studentSupportProfiles,
                     day: item.dayOfWeek,
                     existing: item
                 )
@@ -215,6 +221,30 @@ struct TodayView: View {
                         date: now,
                         students: rosterStudents(for: item),
                         records: $attendanceRecords
+                    )
+                }
+            }
+            .sheet(item: $subPlanItem) { item in
+                NavigationStack {
+                    TodayClassSubPlanView(
+                        item: item,
+                        date: now,
+                        students: rosterStudents(for: item),
+                        schedule: adjustedTodaySchedule(for: now),
+                        attendanceRecords: attendanceRecords,
+                        subPlans: $subPlans
+                    )
+                }
+            }
+            .sheet(isPresented: $showingDailySubPlan) {
+                NavigationStack {
+                    TodayDailySubPlanView(
+                        date: now,
+                        schedule: adjustedTodaySchedule(for: now),
+                        students: studentSupportProfiles,
+                        attendanceRecords: attendanceRecords,
+                        subPlans: $subPlans,
+                        dailySubPlans: $dailySubPlans
                     )
                 }
             }
@@ -585,6 +615,14 @@ struct TodayView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(roster.isEmpty)
                 }
+
+                Button {
+                    subPlanItem = item
+                } label: {
+                    Label("Sub Plan", systemImage: "doc.text.below.ecg")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
             .padding(compact ? 12 : 14)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -609,7 +647,7 @@ struct TodayView: View {
                     Spacer()
 
                     Button("Open") {
-                        openTodoTab()
+                        rosterItem = activeItem
                     }
                     .font(.caption.weight(.semibold))
                 }
@@ -648,7 +686,7 @@ struct TodayView: View {
                     Spacer()
 
                     Button("Open") {
-                        openTodoTab()
+                        rosterItem = nextItem
                     }
                     .font(.caption.weight(.semibold))
                 }
@@ -676,6 +714,17 @@ struct TodayView: View {
     }
 
     private func rosterStudents(for item: AlarmItem) -> [StudentSupportProfile] {
+        if !item.linkedStudentIDs.isEmpty {
+            let linkedIDs = Set(item.linkedStudentIDs)
+            let linkedProfiles = studentSupportProfiles
+                .filter { linkedIDs.contains($0.id) }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+            if !linkedProfiles.isEmpty {
+                return linkedProfiles
+            }
+        }
+
         let gradeKey = normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
 
         return studentSupportProfiles
@@ -1007,6 +1056,10 @@ struct TodayView: View {
 
             Button("Students", systemImage: "person.3") {
                 showingStudentDirectory = true
+            }
+
+            Button("Daily Sub Plan", systemImage: "doc.text") {
+                showingDailySubPlan = true
             }
 
             Button("Settings", systemImage: "gearshape") {
@@ -1807,8 +1860,14 @@ struct TodayView: View {
     }
 
     private func syncLiveActivity(with snapshot: LiveActivitySnapshot?) {
+        pendingLiveActivityStopTask?.cancel()
+
         guard let snapshot else {
-            LiveActivityManager.stop()
+            pendingLiveActivityStopTask = Task {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled else { return }
+                LiveActivityManager.stop()
+            }
             return
         }
 
@@ -2128,6 +2187,721 @@ private struct TodayClassAttendanceView: View {
     private func csvEscape(_ value: String) -> String {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
+    }
+}
+
+private struct TodayClassSubPlanView: View {
+    let item: AlarmItem
+    let date: Date
+    let students: [StudentSupportProfile]
+    let schedule: [AlarmItem]
+    let attendanceRecords: [AttendanceRecord]
+    @Binding var subPlans: [SubPlanItem]
+
+    @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var overview = ""
+    @State private var lessonPlan = ""
+    @State private var materials = ""
+    @State private var subNotes = ""
+    @State private var includeRoster = true
+    @State private var includeSupports = true
+    @State private var includeAttendance = true
+    @State private var includeDaySchedule = true
+    @State private var exportURL: URL?
+    @State private var showingShareSheet = false
+
+    private var dateKey: String {
+        AttendanceRecord.dateKey(for: date)
+    }
+
+    private var existingPlan: SubPlanItem? {
+        subPlans.first {
+            $0.dateKey == dateKey &&
+            ($0.linkedAlarmID == item.id || (
+                classNamesMatch(scheduleClassName: $0.className, profileClassName: item.className) &&
+                normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+            ))
+        }
+    }
+
+    private var followUpNotes: [FollowUpNoteItem] {
+        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+    }
+
+    private var relevantClassNotes: [FollowUpNoteItem] {
+        followUpNotes.filter {
+            $0.kind == .classNote &&
+            classNamesMatch(scheduleClassName: item.className, profileClassName: $0.context)
+        }
+    }
+
+    private var relevantStudentNotes: [FollowUpNoteItem] {
+        let studentKeys = Set(students.map { normalizedStudentKey($0.name) })
+        return followUpNotes.filter {
+            ($0.kind == .studentNote || $0.kind == .parentContact) &&
+            studentKeys.contains(normalizedStudentKey($0.studentOrGroup))
+        }
+    }
+
+    private var attendanceSummary: [AttendanceRecord.Status: Int] {
+        var summary: [AttendanceRecord.Status: Int] = [:]
+        for record in attendanceRows {
+            summary[record.status, default: 0] += 1
+        }
+        return summary
+    }
+
+    private var attendanceRows: [AttendanceRecord] {
+        attendanceRecords.filter {
+            $0.dateKey == dateKey &&
+            classNamesMatch(scheduleClassName: item.className, profileClassName: $0.className) &&
+            normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+        }
+        .sorted { $0.studentName.localizedCaseInsensitiveCompare($1.studentName) == .orderedAscending }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.className)
+                        .font(.headline.weight(.bold))
+
+                    let meta = [
+                        date.formatted(date: .abbreviated, time: .omitted),
+                        item.gradeLevel,
+                        item.location
+                    ]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " • ")
+
+                    if !meta.isEmpty {
+                        Text(meta)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section("Sub Overview") {
+                TextField("Quick summary for the substitute", text: $overview, axis: .vertical)
+                    .lineLimit(2...4)
+                TextField("Lesson plan or class flow", text: $lessonPlan, axis: .vertical)
+                    .lineLimit(4...8)
+            }
+
+            Section("Materials & Notes") {
+                TextField("Materials, copies, links, devices", text: $materials, axis: .vertical)
+                    .lineLimit(3...6)
+                TextField("Sub notes, routines, dismissal reminders", text: $subNotes, axis: .vertical)
+                    .lineLimit(4...8)
+            }
+
+            Section("Include in Export") {
+                Toggle("Include roster", isOn: $includeRoster)
+                Toggle("Include accommodations and prompts", isOn: $includeSupports)
+                Toggle("Include attendance snapshot", isOn: $includeAttendance)
+                Toggle("Include day schedule", isOn: $includeDaySchedule)
+            }
+
+            Section("Packet Preview") {
+                Label("\(students.count) linked student\(students.count == 1 ? "" : "s")", systemImage: "person.3.sequence.fill")
+                Label("\(relevantClassNotes.count) class note\(relevantClassNotes.count == 1 ? "" : "s")", systemImage: "note.text")
+                Label("\(relevantStudentNotes.count) student note\(relevantStudentNotes.count == 1 ? "" : "s")", systemImage: "person.text.rectangle")
+                Label("\(schedule.count) block\(schedule.count == 1 ? "" : "s") in day schedule", systemImage: "calendar")
+                Label("\(attendanceRows.count) attendance record\(attendanceRows.count == 1 ? "" : "s")", systemImage: "checklist.checked")
+            }
+
+            if includeDaySchedule {
+                Section("Day Schedule Snapshot") {
+                    ForEach(schedule) { block in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(block.className)
+                                    .fontWeight(.semibold)
+
+                                let meta = [block.gradeLevel, block.location]
+                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                    .filter { !$0.isEmpty }
+                                    .joined(separator: " • ")
+
+                                if !meta.isEmpty {
+                                    Text(meta)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            Spacer()
+
+                            Text("\(block.startTime.formatted(date: .omitted, time: .shortened)) - \(block.endTime.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if includeAttendance {
+                Section("Attendance Snapshot") {
+                    if attendanceRows.isEmpty {
+                        Text("No attendance has been taken for this class yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        HStack {
+                            ForEach(AttendanceRecord.Status.allCases) { status in
+                                if let count = attendanceSummary[status], count > 0 {
+                                    Text("\(status.rawValue): \(count)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+
+                        ForEach(attendanceRows) { record in
+                            HStack {
+                                Text(record.studentName)
+                                Spacer()
+                                Text(record.status.rawValue)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Sub Plan")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") { dismiss() }
+            }
+
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button("Export") {
+                    save()
+                    exportPlan()
+                }
+
+                Button("Save") {
+                    save()
+                    dismiss()
+                }
+            }
+        }
+        .onAppear {
+            if let existingPlan {
+                overview = existingPlan.overview
+                lessonPlan = existingPlan.lessonPlan
+                materials = existingPlan.materials
+                subNotes = existingPlan.subNotes
+                includeRoster = existingPlan.includeRoster
+                includeSupports = existingPlan.includeSupports
+                includeAttendance = existingPlan.includeAttendance
+                includeDaySchedule = existingPlan.includeDaySchedule
+            }
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let exportURL {
+                ShareSheet(activityItems: [exportURL])
+            }
+        }
+    }
+
+    private func save() {
+        let updated = SubPlanItem(
+            id: existingPlan?.id ?? UUID(),
+            dateKey: dateKey,
+            linkedAlarmID: item.id,
+            className: item.className,
+            gradeLevel: GradeLevelOption.normalized(item.gradeLevel),
+            location: item.location,
+            overview: overview.trimmingCharacters(in: .whitespacesAndNewlines),
+            lessonPlan: lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines),
+            materials: materials.trimmingCharacters(in: .whitespacesAndNewlines),
+            subNotes: subNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            includeRoster: includeRoster,
+            includeSupports: includeSupports,
+            includeAttendance: includeAttendance,
+            includeDaySchedule: includeDaySchedule,
+            createdAt: existingPlan?.createdAt ?? Date(),
+            updatedAt: Date()
+        )
+
+        if let index = subPlans.firstIndex(where: { $0.id == updated.id }) {
+            subPlans[index] = updated
+        } else {
+            subPlans.insert(updated, at: 0)
+        }
+    }
+
+    private func exportPlan() {
+        let filename = "classcue-sub-plan-\(dateKey)-\(item.className.replacingOccurrences(of: " ", with: "-")).txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? exportText().write(to: url, atomically: true, encoding: .utf8)
+        exportURL = url
+        showingShareSheet = true
+    }
+
+    private func exportText() -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
+        timeFormatter.dateStyle = .none
+
+        let classNotesText = relevantClassNotes.isEmpty ? "None" : relevantClassNotes.map {
+            "- \($0.note)"
+        }.joined(separator: "\n")
+
+        let studentNotesText = relevantStudentNotes.isEmpty ? "None" : relevantStudentNotes.map {
+            "- \($0.studentOrGroup): \($0.note)"
+        }.joined(separator: "\n")
+
+        let dayScheduleText: String = {
+            guard includeDaySchedule else { return "Not included" }
+            return schedule.map { block in
+                let timeRange = "\(timeFormatter.string(from: block.startTime)) - \(timeFormatter.string(from: block.endTime))"
+                let meta = [block.gradeLevel, block.location]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " • ")
+                if meta.isEmpty {
+                    return "- \(timeRange): \(block.className)"
+                }
+                return "- \(timeRange): \(block.className) (\(meta))"
+            }
+            .joined(separator: "\n")
+        }()
+
+        let attendanceText: String = {
+            guard includeAttendance else { return "Not included" }
+            guard !attendanceRows.isEmpty else { return "No attendance taken yet" }
+            return attendanceRows.map {
+                "- \($0.studentName): \($0.status.rawValue)"
+            }.joined(separator: "\n")
+        }()
+
+        let rosterText: String = {
+            guard includeRoster, !students.isEmpty else { return "Not included" }
+            return students.map { student in
+                var lines = ["- \(student.name)"]
+                if includeSupports {
+                    let supportParts = [student.accommodations, student.prompts]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if !supportParts.isEmpty {
+                        lines.append("  Supports: \(supportParts.joined(separator: " • "))")
+                    }
+                }
+                return lines.joined(separator: "\n")
+            }
+            .joined(separator: "\n")
+        }()
+
+        return """
+        ClassCue Sub Plan
+        \(date.formatted(date: .complete, time: .omitted))
+
+        Class
+        \(item.className)
+        \(GradeLevelOption.normalized(item.gradeLevel)) • \(item.location)
+        \(timeFormatter.string(from: item.startTime)) - \(timeFormatter.string(from: item.endTime))
+
+        Overview
+        \(overview.isEmpty ? "None added" : overview)
+
+        Lesson Plan
+        \(lessonPlan.isEmpty ? "None added" : lessonPlan)
+
+        Materials
+        \(materials.isEmpty ? "None added" : materials)
+
+        Sub Notes
+        \(subNotes.isEmpty ? "None added" : subNotes)
+
+        Roster
+        \(rosterText)
+
+        Class Notes
+        \(classNotesText)
+
+        Student Notes
+        \(studentNotesText)
+
+        Day Schedule
+        \(dayScheduleText)
+
+        Attendance Snapshot
+        \(attendanceText)
+        """
+    }
+}
+
+private struct TodayDailySubPlanView: View {
+    let date: Date
+    let schedule: [AlarmItem]
+    let students: [StudentSupportProfile]
+    let attendanceRecords: [AttendanceRecord]
+    @Binding var subPlans: [SubPlanItem]
+    @Binding var dailySubPlans: [DailySubPlanItem]
+
+    @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var morningNotes = ""
+    @State private var sharedMaterials = ""
+    @State private var dismissalNotes = ""
+    @State private var emergencyNotes = ""
+    @State private var includeAttendance = true
+    @State private var includeRoster = true
+    @State private var includeSupports = true
+    @State private var blockPlans: [UUID: BlockSubPlanDraft] = [:]
+    @State private var exportURL: URL?
+    @State private var showingShareSheet = false
+
+    private struct BlockSubPlanDraft {
+        var overview: String = ""
+        var lessonPlan: String = ""
+        var materials: String = ""
+        var subNotes: String = ""
+    }
+
+    private var dateKey: String {
+        AttendanceRecord.dateKey(for: date)
+    }
+
+    private var existingDailyPlan: DailySubPlanItem? {
+        dailySubPlans.first { $0.dateKey == dateKey }
+    }
+
+    private var followUpNotes: [FollowUpNoteItem] {
+        (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(date.formatted(date: .complete, time: .omitted))
+                        .font(.headline.weight(.bold))
+                    Text("\(schedule.count) block\(schedule.count == 1 ? "" : "s") prepared for the day")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Day-Wide Notes") {
+                TextField("Morning notes for the substitute", text: $morningNotes, axis: .vertical)
+                    .lineLimit(2...4)
+                TextField("Shared materials, links, copies, devices", text: $sharedMaterials, axis: .vertical)
+                    .lineLimit(2...4)
+                TextField("Dismissal notes and end-of-day reminders", text: $dismissalNotes, axis: .vertical)
+                    .lineLimit(2...4)
+                TextField("Emergency / important alerts", text: $emergencyNotes, axis: .vertical)
+                    .lineLimit(2...4)
+            }
+
+            Section("Include in Export") {
+                Toggle("Include attendance snapshots", isOn: $includeAttendance)
+                Toggle("Include rosters", isOn: $includeRoster)
+                Toggle("Include accommodations and prompts", isOn: $includeSupports)
+            }
+
+            Section("Class Blocks") {
+                ForEach(schedule) { block in
+                    let draft = binding(for: block)
+                    DisclosureGroup {
+                        VStack(spacing: 10) {
+                            TextField("Overview", text: draft.overview, axis: .vertical)
+                                .lineLimit(2...4)
+                            TextField("Lesson plan", text: draft.lessonPlan, axis: .vertical)
+                                .lineLimit(3...6)
+                            TextField("Materials", text: draft.materials, axis: .vertical)
+                                .lineLimit(2...4)
+                            TextField("Sub notes", text: draft.subNotes, axis: .vertical)
+                                .lineLimit(3...6)
+                        }
+                        .padding(.top, 6)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(block.className)
+                                .fontWeight(.semibold)
+                            Text("\(block.startTime.formatted(date: .omitted, time: .shortened)) - \(block.endTime.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Daily Sub Plan")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") { dismiss() }
+            }
+
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button("Export") {
+                    save()
+                    exportPlan()
+                }
+
+                Button("Save") {
+                    save()
+                    dismiss()
+                }
+            }
+        }
+        .onAppear {
+            loadExisting()
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let exportURL {
+                ShareSheet(activityItems: [exportURL])
+            }
+        }
+    }
+
+    private func loadExisting() {
+        if let existingDailyPlan {
+            morningNotes = existingDailyPlan.morningNotes
+            sharedMaterials = existingDailyPlan.sharedMaterials
+            dismissalNotes = existingDailyPlan.dismissalNotes
+            emergencyNotes = existingDailyPlan.emergencyNotes
+            includeAttendance = existingDailyPlan.includeAttendance
+            includeRoster = existingDailyPlan.includeRoster
+            includeSupports = existingDailyPlan.includeSupports
+        }
+
+        for block in schedule {
+            if let existing = subPlans.first(where: { $0.dateKey == dateKey && $0.linkedAlarmID == block.id }) {
+                blockPlans[block.id] = BlockSubPlanDraft(
+                    overview: existing.overview,
+                    lessonPlan: existing.lessonPlan,
+                    materials: existing.materials,
+                    subNotes: existing.subNotes
+                )
+            } else {
+                blockPlans[block.id] = blockPlans[block.id] ?? BlockSubPlanDraft()
+            }
+        }
+    }
+
+    private func binding(for block: AlarmItem) -> (
+        overview: Binding<String>,
+        lessonPlan: Binding<String>,
+        materials: Binding<String>,
+        subNotes: Binding<String>
+    ) {
+        (
+            overview: Binding(
+                get: { blockPlans[block.id]?.overview ?? "" },
+                set: { blockPlans[block.id, default: BlockSubPlanDraft()].overview = $0 }
+            ),
+            lessonPlan: Binding(
+                get: { blockPlans[block.id]?.lessonPlan ?? "" },
+                set: { blockPlans[block.id, default: BlockSubPlanDraft()].lessonPlan = $0 }
+            ),
+            materials: Binding(
+                get: { blockPlans[block.id]?.materials ?? "" },
+                set: { blockPlans[block.id, default: BlockSubPlanDraft()].materials = $0 }
+            ),
+            subNotes: Binding(
+                get: { blockPlans[block.id]?.subNotes ?? "" },
+                set: { blockPlans[block.id, default: BlockSubPlanDraft()].subNotes = $0 }
+            )
+        )
+    }
+
+    private func save() {
+        let updatedDaily = DailySubPlanItem(
+            id: existingDailyPlan?.id ?? UUID(),
+            dateKey: dateKey,
+            morningNotes: morningNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            sharedMaterials: sharedMaterials.trimmingCharacters(in: .whitespacesAndNewlines),
+            dismissalNotes: dismissalNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            emergencyNotes: emergencyNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            includeAttendance: includeAttendance,
+            includeRoster: includeRoster,
+            includeSupports: includeSupports,
+            createdAt: existingDailyPlan?.createdAt ?? Date(),
+            updatedAt: Date()
+        )
+
+        if let index = dailySubPlans.firstIndex(where: { $0.id == updatedDaily.id }) {
+            dailySubPlans[index] = updatedDaily
+        } else {
+            dailySubPlans.insert(updatedDaily, at: 0)
+        }
+
+        for block in schedule {
+            let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
+            let existing = subPlans.first(where: { $0.dateKey == dateKey && $0.linkedAlarmID == block.id })
+            let updated = SubPlanItem(
+                id: existing?.id ?? UUID(),
+                dateKey: dateKey,
+                linkedAlarmID: block.id,
+                className: block.className,
+                gradeLevel: GradeLevelOption.normalized(block.gradeLevel),
+                location: block.location,
+                overview: draft.overview.trimmingCharacters(in: .whitespacesAndNewlines),
+                lessonPlan: draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines),
+                materials: draft.materials.trimmingCharacters(in: .whitespacesAndNewlines),
+                subNotes: draft.subNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+                includeRoster: includeRoster,
+                includeSupports: includeSupports,
+                includeAttendance: includeAttendance,
+                includeDaySchedule: true,
+                createdAt: existing?.createdAt ?? Date(),
+                updatedAt: Date()
+            )
+
+            if let index = subPlans.firstIndex(where: { $0.id == updated.id }) {
+                subPlans[index] = updated
+            } else {
+                subPlans.append(updated)
+            }
+        }
+    }
+
+    private func exportPlan() {
+        let filename = "classcue-daily-sub-plan-\(dateKey).txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? exportText().write(to: url, atomically: true, encoding: .utf8)
+        exportURL = url
+        showingShareSheet = true
+    }
+
+    private func exportText() -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
+        timeFormatter.dateStyle = .none
+
+        let blockText = schedule.map { block in
+            let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
+            let roster = rosterForBlock(block)
+            let attendance = attendanceForBlock(block)
+            let classNotes = classNotesForBlock(block)
+            let studentNotes = studentNotesForBlock(block, roster: roster)
+
+            let rosterText = includeRoster
+                ? (roster.isEmpty ? "None" : roster.map { student in
+                    var lines = ["- \(student.name)"]
+                    if includeSupports {
+                        let supports = [student.accommodations, student.prompts]
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        if !supports.isEmpty {
+                            lines.append("  Supports: \(supports.joined(separator: " • "))")
+                        }
+                    }
+                    return lines.joined(separator: "\n")
+                }.joined(separator: "\n"))
+                : "Not included"
+
+            let attendanceText = includeAttendance
+                ? (attendance.isEmpty ? "No attendance taken yet" : attendance.map { "- \($0.studentName): \($0.status.rawValue)" }.joined(separator: "\n"))
+                : "Not included"
+
+            let classNotesText = classNotes.isEmpty ? "None" : classNotes.map { "- \($0.note)" }.joined(separator: "\n")
+            let studentNotesText = studentNotes.isEmpty ? "None" : studentNotes.map { "- \($0.studentOrGroup): \($0.note)" }.joined(separator: "\n")
+
+            return """
+            \(block.className)
+            \(timeFormatter.string(from: block.startTime)) - \(timeFormatter.string(from: block.endTime))
+            \(block.gradeLevel) • \(block.location)
+
+            Overview
+            \(draft.overview.isEmpty ? "None added" : draft.overview)
+
+            Lesson Plan
+            \(draft.lessonPlan.isEmpty ? "None added" : draft.lessonPlan)
+
+            Materials
+            \(draft.materials.isEmpty ? "None added" : draft.materials)
+
+            Sub Notes
+            \(draft.subNotes.isEmpty ? "None added" : draft.subNotes)
+
+            Roster
+            \(rosterText)
+
+            Attendance
+            \(attendanceText)
+
+            Class Notes
+            \(classNotesText)
+
+            Student Notes
+            \(studentNotesText)
+            """
+        }.joined(separator: "\n\n--------------------\n\n")
+
+        return """
+        ClassCue Daily Sub Plan
+        \(date.formatted(date: .complete, time: .omitted))
+
+        Morning Notes
+        \(morningNotes.isEmpty ? "None added" : morningNotes)
+
+        Shared Materials
+        \(sharedMaterials.isEmpty ? "None added" : sharedMaterials)
+
+        Dismissal Notes
+        \(dismissalNotes.isEmpty ? "None added" : dismissalNotes)
+
+        Emergency Notes
+        \(emergencyNotes.isEmpty ? "None added" : emergencyNotes)
+
+        Day Schedule and Block Plans
+        \(blockText)
+        """
+    }
+
+    private func rosterForBlock(_ block: AlarmItem) -> [StudentSupportProfile] {
+        let linkedIDs = Set(block.linkedStudentIDs)
+        if !linkedIDs.isEmpty {
+            return students.filter { linkedIDs.contains($0.id) }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+
+        let normalizedGrade = GradeLevelOption.normalized(block.gradeLevel)
+        return students.filter { profile in
+            classNamesMatch(scheduleClassName: block.className, profileClassName: profile.className) &&
+            (
+                normalizedGrade.isEmpty ||
+                profile.gradeLevel.isEmpty ||
+                normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel)) == normalizedStudentKey(normalizedGrade)
+            )
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func attendanceForBlock(_ block: AlarmItem) -> [AttendanceRecord] {
+        attendanceRecords.filter {
+            $0.dateKey == dateKey &&
+            classNamesMatch(scheduleClassName: block.className, profileClassName: $0.className) &&
+            normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(block.gradeLevel))
+        }
+        .sorted { $0.studentName.localizedCaseInsensitiveCompare($1.studentName) == .orderedAscending }
+    }
+
+    private func classNotesForBlock(_ block: AlarmItem) -> [FollowUpNoteItem] {
+        followUpNotes.filter {
+            $0.kind == .classNote &&
+            classNamesMatch(scheduleClassName: block.className, profileClassName: $0.context)
+        }
+    }
+
+    private func studentNotesForBlock(_ block: AlarmItem, roster: [StudentSupportProfile]) -> [FollowUpNoteItem] {
+        let studentKeys = Set(roster.map { normalizedStudentKey($0.name) })
+        return followUpNotes.filter {
+            ($0.kind == .studentNote || $0.kind == .parentContact) &&
+            studentKeys.contains(normalizedStudentKey($0.studentOrGroup))
+        }
     }
 }
 

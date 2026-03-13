@@ -150,6 +150,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
     var scheduleType: ScheduleType = .other
     var dayOfWeekValue: Int? = nil
     var gradeLevelValue: String = ""
+    var linkedStudentIDs: [UUID] = []
 
     init(
         id: UUID = UUID(),
@@ -159,7 +160,8 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         location: String,
         scheduleType: ScheduleType = .other,
         dayOfWeek: Int? = nil,
-        gradeLevel: String = ""
+        gradeLevel: String = "",
+        linkedStudentIDs: [UUID] = []
     ) {
         self.id = id
         self.name = name
@@ -169,6 +171,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         self.scheduleType = scheduleType
         self.dayOfWeekValue = dayOfWeek
         self.gradeLevelValue = gradeLevel
+        self.linkedStudentIDs = linkedStudentIDs
     }
 
     init(
@@ -179,7 +182,8 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         gradeLevel: String = "",
         startTime: Date,
         endTime: Date,
-        type: ScheduleType = .other
+        type: ScheduleType = .other,
+        linkedStudentIDs: [UUID] = []
     ) {
         self.init(
             id: id,
@@ -189,7 +193,8 @@ struct AlarmItem: Identifiable, Codable, Hashable {
             location: location,
             scheduleType: type,
             dayOfWeek: dayOfWeek,
-            gradeLevel: gradeLevel
+            gradeLevel: gradeLevel,
+            linkedStudentIDs: linkedStudentIDs
         )
     }
 
