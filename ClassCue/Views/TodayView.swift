@@ -2580,7 +2580,7 @@ private struct TodayClassSubPlanView: View {
     }
 
     private var followUpNotes: [FollowUpNoteItem] {
-        ClassTraxPersistence.loadFollowUpNotes(from: modelContext)
+        decodeFollowUpNotesFromDefaults()
     }
 
     private var subPlanProfile: SubPlanProfile {
@@ -3120,7 +3120,7 @@ private struct TodayDailySubPlanView: View {
     }
 
     private var followUpNotes: [FollowUpNoteItem] {
-        ClassTraxPersistence.loadFollowUpNotes(from: modelContext)
+        decodeFollowUpNotesFromDefaults()
     }
 
     private var subPlanProfile: SubPlanProfile {

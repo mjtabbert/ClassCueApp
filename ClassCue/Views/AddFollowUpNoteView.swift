@@ -49,11 +49,11 @@ struct AddFollowUpNoteView: View {
                         LabeledContent("Type", value: kind.title)
                     }
 
-                    if kind != .parentContact {
+                    if showsContextField {
                         TextField(kind == .classNote ? "Class or Commitment" : "Class or Commitment (Optional)", text: $context)
                     }
 
-                    if !suggestedContexts.isEmpty {
+                    if showsContextField && !suggestedContexts.isEmpty {
                         Picker("Saved Class Link", selection: $context) {
                             Text("None").tag("")
                             ForEach(suggestedContexts, id: \.self) { context in
@@ -62,9 +62,11 @@ struct AddFollowUpNoteView: View {
                         }
                     }
 
-                    TextField(kind == .classNote ? "Student or Group (Optional)" : "Student or Group", text: $studentOrGroup)
+                    if showsStudentField {
+                        TextField(kind == .classNote ? "Student or Group (Optional)" : "Student or Group", text: $studentOrGroup)
+                    }
 
-                    if !suggestedStudents.isEmpty {
+                    if showsStudentField && !suggestedStudents.isEmpty {
                         Picker("Saved Student / Group", selection: $studentOrGroup) {
                             Text("None").tag("")
                             ForEach(suggestedStudents, id: \.self) { student in
@@ -113,10 +115,30 @@ struct AddFollowUpNoteView: View {
         guard !trimmedNote.isEmpty else { return false }
 
         switch kind {
+        case .generalNote, .personalNote:
+            return true
         case .classNote:
             return !trimmedContext.isEmpty
         case .studentNote, .parentContact:
             return !trimmedStudent.isEmpty
+        }
+    }
+
+    private var showsContextField: Bool {
+        switch kind {
+        case .generalNote, .personalNote, .parentContact:
+            return false
+        case .classNote, .studentNote:
+            return true
+        }
+    }
+
+    private var showsStudentField: Bool {
+        switch kind {
+        case .generalNote, .personalNote:
+            return false
+        case .classNote, .studentNote, .parentContact:
+            return true
         }
     }
 

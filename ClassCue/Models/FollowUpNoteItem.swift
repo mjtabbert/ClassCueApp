@@ -9,12 +9,18 @@ import Foundation
 
 struct FollowUpNoteItem: Identifiable, Codable, Equatable {
     enum Kind: String, Codable, CaseIterable {
+        case generalNote
+        case personalNote
         case classNote
         case studentNote
         case parentContact
 
         var title: String {
             switch self {
+            case .generalNote:
+                return "School Note"
+            case .personalNote:
+                return "Personal Note"
             case .classNote:
                 return "Class Note"
             case .studentNote:
@@ -60,6 +66,10 @@ struct FollowUpNoteItem: Identifiable, Codable, Equatable {
             self.kind = kind
         } else if let raw = try container.decodeIfPresent(String.self, forKey: .kind) {
             switch raw {
+            case "general", "generalNote":
+                self.kind = .generalNote
+            case "personal", "personalNote":
+                self.kind = .personalNote
             case "classFollowUp":
                 self.kind = .classNote
             case "studentFollowUp":

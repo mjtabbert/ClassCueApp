@@ -315,7 +315,6 @@ struct RootTabView: View {
 
     private var notesTab: some View {
         NotesView(
-            todos: $todos,
             studentProfiles: $studentProfiles,
             classDefinitions: $classDefinitions,
             suggestedContexts: suggestedTaskContexts,
@@ -555,7 +554,7 @@ struct RootTabView: View {
     ) {
         ClassTraxPersistence.saveSecondSlice(
             todos: todos,
-            followUpNotes: ClassTraxPersistence.loadFollowUpNotes(from: modelContext),
+            followUpNotes: decodeFollowUpNotes(from: savedFollowUpNotes),
             subPlans: subPlans,
             dailySubPlans: dailySubPlans,
             into: modelContext

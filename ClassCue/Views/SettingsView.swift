@@ -437,6 +437,9 @@ struct SettingsView: View {
     }
 
     private func loadData() {
+        let firstSlice = ClassTraxPersistence.loadFirstSlice(from: modelContext)
+        let thirdSlice = ClassTraxPersistence.loadThirdSlice(from: modelContext)
+
         if let decodedAlarms = try? JSONDecoder().decode([AlarmItem].self, from: savedAlarms) {
             alarms = decodedAlarms
         } else {
@@ -455,25 +458,14 @@ struct SettingsView: View {
             todos = []
         }
 
-        profiles = ClassTraxPersistence.loadThirdSlice(from: modelContext).profiles
-
-        if let decodedProfiles = try? JSONDecoder().decode([StudentSupportProfile].self, from: savedStudentProfiles) {
-            studentProfiles = decodedProfiles.sorted {
-                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-            }
-        } else {
-            studentProfiles = []
+        profiles = thirdSlice.profiles
+        studentProfiles = firstSlice.studentProfiles.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
-
-        if let decodedDefinitions = try? JSONDecoder().decode([ClassDefinitionItem].self, from: savedClassDefinitions) {
-            classDefinitions = decodedDefinitions.sorted {
-                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-            }
-        } else {
-            classDefinitions = []
+        classDefinitions = firstSlice.classDefinitions.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
-
-        overrides = ClassTraxPersistence.loadThirdSlice(from: modelContext).overrides
+        overrides = thirdSlice.overrides
     }
 
     private func saveAlarms(_ alarms: [AlarmItem]) {

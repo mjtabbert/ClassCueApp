@@ -274,63 +274,27 @@ struct QuickCaptureView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let route = noteRoutePrefix()
-        let noteLine = route.isEmpty ? trimmed : "\(route): \(trimmed)"
-
-        if noteDestination == .personal {
-            if personalNotesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                personalNotesText = noteLine
-            } else {
-                personalNotesText = "\(noteLine)\n\n\(personalNotesText)"
-            }
-        } else {
-            if notesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                notesText = noteLine
-            } else {
-                notesText = "\(noteLine)\n\n\(notesText)"
-            }
-        }
-
-        if let kind = structuredKindForDestination() {
-            var notes = decodeFollowUpNotes()
-            notes.insert(
-                FollowUpNoteItem(
-                    kind: kind,
-                    context: linkedContext.trimmingCharacters(in: .whitespacesAndNewlines),
-                    studentOrGroup: studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines),
-                    note: trimmed
-                ),
-                at: 0
-            )
-            saveFollowUpNotes(notes)
-        }
+        var notes = decodeFollowUpNotes()
+        notes.insert(
+            FollowUpNoteItem(
+                kind: structuredKindForDestination(),
+                context: linkedContext.trimmingCharacters(in: .whitespacesAndNewlines),
+                studentOrGroup: studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines),
+                note: trimmed
+            ),
+            at: 0
+        )
+        saveFollowUpNotes(notes)
 
         dismiss()
     }
 
-    private func noteRoutePrefix() -> String {
-        var parts = ["[\(noteDestination.title)]"]
-
-        let trimmedContext = linkedContext.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedStudent = studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !trimmedContext.isEmpty {
-            parts.append(trimmedContext)
-        }
-
-        if !trimmedStudent.isEmpty {
-            parts.append(trimmedStudent)
-        }
-
-        return parts.joined(separator: " ")
-    }
-
-    private func structuredKindForDestination() -> FollowUpNoteItem.Kind? {
+    private func structuredKindForDestination() -> FollowUpNoteItem.Kind {
         switch noteDestination {
         case .general:
-            return nil
+            return .generalNote
         case .personal:
-            return nil
+            return .personalNote
         case .classFollowUp:
             return .classNote
         case .studentFollowUp:
@@ -365,6 +329,7 @@ struct QuickCaptureView: View {
     private func saveFollowUpNotes(_ notes: [FollowUpNoteItem]) {
         ClassTraxPersistence.saveFollowUpNotes(notes, into: modelContext)
         savedFollowUpNotes = (try? JSONEncoder().encode(notes)) ?? Data()
+        syncLegacyNoteTextStorage(from: notes, schoolNotesText: &notesText, personalNotesText: &personalNotesText)
     }
 
     private var studentSupport: StudentSupportProfile? {

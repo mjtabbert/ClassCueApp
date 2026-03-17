@@ -291,7 +291,7 @@ struct ActiveTimerCard: View {
         let minutes = seconds / 60
         let secs = seconds % 60
 
-        return String(format: "%02d:%02d", minutes, secs)
+        return "\(minutes):" + String(format: "%02d", secs)
     }
 
     private var timeRangeText: String {
