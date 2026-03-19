@@ -63,6 +63,8 @@ final class PersistedStudentSupportProfile: PersistedUUIDModel {
     var className: String = ""
     var gradeLevel: String = ""
     var classDefinitionID: UUID?
+    var classDefinitionIDsRawValue: String = ""
+    var classContextsRawValue: String = ""
     var graduationYear: String = ""
     var parentNames: String = ""
     var parentPhoneNumbers: String = ""
@@ -81,6 +83,10 @@ final class PersistedStudentSupportProfile: PersistedUUIDModel {
         self.className = item.className
         self.gradeLevel = item.gradeLevel
         self.classDefinitionID = item.classDefinitionID
+        self.classDefinitionIDsRawValue = linkedClassDefinitionIDs(for: item)
+            .map(\.uuidString)
+            .joined(separator: ",")
+        self.classContextsRawValue = (try? String(data: JSONEncoder().encode(item.classContexts), encoding: .utf8)) ?? ""
         self.graduationYear = item.graduationYear
         self.parentNames = item.parentNames
         self.parentPhoneNumbers = item.parentPhoneNumbers
@@ -97,6 +103,10 @@ final class PersistedStudentSupportProfile: PersistedUUIDModel {
             className: className,
             gradeLevel: gradeLevel,
             classDefinitionID: classDefinitionID,
+            classDefinitionIDs: classDefinitionIDsRawValue
+                .split(separator: ",")
+                .compactMap { UUID(uuidString: String($0)) },
+            classContexts: (try? JSONDecoder().decode([StudentSupportProfile.ClassContext].self, from: Data(classContextsRawValue.utf8))) ?? [],
             graduationYear: graduationYear,
             parentNames: parentNames,
             parentPhoneNumbers: parentPhoneNumbers,
@@ -391,7 +401,10 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
     var className: String = ""
     var gradeLevel: String = ""
     var studentName: String = ""
+    var studentID: UUID?
+    var classDefinitionID: UUID?
     var statusRawValue: String = AttendanceRecord.Status.present.rawValue
+    var absentHomework: String = ""
 
     init(from item: AttendanceRecord) {
         update(from: item)
@@ -403,7 +416,10 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
         self.className = item.className
         self.gradeLevel = item.gradeLevel
         self.studentName = item.studentName
+        self.studentID = item.studentID
+        self.classDefinitionID = item.classDefinitionID
         self.statusRawValue = item.status.rawValue
+        self.absentHomework = item.absentHomework
     }
 
     func asAttendanceRecord() -> AttendanceRecord {
@@ -413,7 +429,10 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
             className: className,
             gradeLevel: gradeLevel,
             studentName: studentName,
-            status: AttendanceRecord.Status(rawValue: statusRawValue) ?? .present
+            studentID: studentID,
+            classDefinitionID: classDefinitionID,
+            status: AttendanceRecord.Status(rawValue: statusRawValue) ?? .present,
+            absentHomework: absentHomework
         )
     }
 }

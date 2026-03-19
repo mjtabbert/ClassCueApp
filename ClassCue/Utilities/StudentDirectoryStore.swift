@@ -86,6 +86,95 @@ func classNamesMatch(scheduleClassName: String, profileClassName: String) -> Boo
     }
 }
 
+func linkedClassDefinitionIDs(for profile: StudentSupportProfile) -> [UUID] {
+    let ids = profile.classDefinitionIDs + (profile.classDefinitionID.map { [$0] } ?? [])
+    var seen = Set<UUID>()
+    return ids.filter { seen.insert($0).inserted }
+}
+
+func profileMatches(classDefinitionID: UUID, profile: StudentSupportProfile) -> Bool {
+    linkedClassDefinitionIDs(for: profile).contains(classDefinitionID)
+}
+
+func linkedClassDefinitions(
+    for profile: StudentSupportProfile,
+    in definitions: [ClassDefinitionItem]
+) -> [ClassDefinitionItem] {
+    let linkedIDs = Set(linkedClassDefinitionIDs(for: profile))
+    guard !linkedIDs.isEmpty else { return [] }
+    return definitions.filter { linkedIDs.contains($0.id) }
+        .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+}
+
+func linkedClassNames(
+    for profile: StudentSupportProfile,
+    in definitions: [ClassDefinitionItem]
+) -> [String] {
+    let namesFromDefinitions = linkedClassDefinitions(for: profile, in: definitions).map(\.displayName)
+    if !namesFromDefinitions.isEmpty {
+        return namesFromDefinitions
+    }
+
+    let separators = CharacterSet(charactersIn: ",;/|\n")
+    return profile.className
+        .components(separatedBy: separators)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .reduce(into: [String]()) { result, value in
+            if !result.contains(where: { $0.localizedCaseInsensitiveCompare(value) == .orderedSame }) {
+                result.append(value)
+            }
+        }
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+}
+
+func classSummary(
+    for profile: StudentSupportProfile,
+    in definitions: [ClassDefinitionItem]
+) -> String {
+    let names = linkedClassNames(for: profile, in: definitions)
+    if !names.isEmpty {
+        return names.joined(separator: ", ")
+    }
+
+    return profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func updatingProfile(
+    _ profile: StudentSupportProfile,
+    linkedTo classDefinitionIDs: [UUID],
+    definitions: [ClassDefinitionItem]
+) -> StudentSupportProfile {
+    let uniqueIDs = Array(Set(classDefinitionIDs))
+    let primaryID = uniqueIDs.sorted { $0.uuidString < $1.uuidString }.first
+    var updated = profile
+    updated.classDefinitionID = primaryID
+    updated.classDefinitionIDs = uniqueIDs.sorted { $0.uuidString < $1.uuidString }
+    updated.className = classSummary(for: updated, in: definitions)
+    return updated
+}
+
+func classContext(
+    for profile: StudentSupportProfile,
+    classDefinitionID: UUID
+) -> StudentSupportProfile.ClassContext? {
+    profile.classContexts.first { $0.classDefinitionID == classDefinitionID }
+}
+
+func updatingProfile(
+    _ profile: StudentSupportProfile,
+    classContext: StudentSupportProfile.ClassContext
+) -> StudentSupportProfile {
+    var updated = profile
+    if let index = updated.classContexts.firstIndex(where: { $0.classDefinitionID == classContext.classDefinitionID }) {
+        updated.classContexts[index] = classContext
+    } else {
+        updated.classContexts.append(classContext)
+    }
+    updated.classContexts.sort { $0.classDefinitionID.uuidString < $1.classDefinitionID.uuidString }
+    return updated
+}
+
 func exactClassDefinitionMatch(
     name: String,
     gradeLevel: String,
@@ -94,10 +183,31 @@ func exactClassDefinitionMatch(
     let normalizedName = normalizedClassKey(name)
     let normalizedGrade = normalizedStudentKey(GradeLevelOption.normalized(gradeLevel))
 
-    return definitions.first {
-        normalizedClassKey($0.name) == normalizedName &&
-        normalizedStudentKey(GradeLevelOption.normalized($0.gradeLevel)) == normalizedGrade
+    guard !normalizedName.isEmpty else { return nil }
+
+    if !normalizedGrade.isEmpty,
+       let exactGradeMatch = definitions.first(where: {
+           normalizedClassKey($0.name) == normalizedName &&
+           normalizedStudentKey(GradeLevelOption.normalized($0.gradeLevel)) == normalizedGrade
+       }) {
+        return exactGradeMatch
     }
+
+    let nameMatches = definitions.filter {
+        normalizedClassKey($0.name) == normalizedName
+    }
+
+    if let gradeAgnosticMatch = nameMatches.first(where: {
+        normalizedStudentKey(GradeLevelOption.normalized($0.gradeLevel)).isEmpty
+    }) {
+        return gradeAgnosticMatch
+    }
+
+    if nameMatches.count == 1 {
+        return nameMatches.first
+    }
+
+    return nil
 }
 
 func classDefinitionCandidates(
@@ -122,7 +232,23 @@ func classDefinitionCandidates(
 
         return false
     }
-    .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    .sorted { lhs, rhs in
+        let lhsNameMatch = normalizedClassKey(lhs.name) == normalizedName
+        let rhsNameMatch = normalizedClassKey(rhs.name) == normalizedName
+        if lhsNameMatch != rhsNameMatch {
+            return lhsNameMatch
+        }
+
+        let lhsGradeMatch = !normalizedGrade.isEmpty &&
+            normalizedStudentKey(GradeLevelOption.normalized(lhs.gradeLevel)) == normalizedGrade
+        let rhsGradeMatch = !normalizedGrade.isEmpty &&
+            normalizedStudentKey(GradeLevelOption.normalized(rhs.gradeLevel)) == normalizedGrade
+        if lhsGradeMatch != rhsGradeMatch {
+            return lhsGradeMatch
+        }
+
+        return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+    }
 }
 
 func duplicateStudentProfileGroups(in profiles: [StudentSupportProfile]) -> [[StudentSupportProfile]] {
@@ -153,6 +279,12 @@ func mergedStudentProfile(from profiles: [StudentSupportProfile]) -> StudentSupp
         className: mergedValue(\.className),
         gradeLevel: mergedValue(\.gradeLevel),
         classDefinitionID: profiles.compactMap(\.classDefinitionID).first,
+        classDefinitionIDs: Array(Set(profiles.flatMap(\.classDefinitionIDs) + profiles.compactMap(\.classDefinitionID))),
+        classContexts: profiles.flatMap(\.classContexts).reduce(into: [StudentSupportProfile.ClassContext]()) { result, context in
+            if !result.contains(where: { $0.classDefinitionID == context.classDefinitionID }) {
+                result.append(context)
+            }
+        },
         graduationYear: mergedValue(\.graduationYear),
         parentNames: mergedValue(\.parentNames),
         parentPhoneNumbers: mergedValue(\.parentPhoneNumbers),
@@ -176,6 +308,14 @@ func mergedStudentProfile(existing: StudentSupportProfile, incoming: StudentSupp
         className: preferred(existing.className, incoming.className),
         gradeLevel: preferred(existing.gradeLevel, incoming.gradeLevel),
         classDefinitionID: incoming.classDefinitionID ?? existing.classDefinitionID,
+        classDefinitionIDs: Array(Set(existing.classDefinitionIDs + incoming.classDefinitionIDs + [existing.classDefinitionID, incoming.classDefinitionID].compactMap { $0 })),
+        classContexts: (existing.classContexts + incoming.classContexts).reduce(into: [StudentSupportProfile.ClassContext]()) { result, context in
+            if let index = result.firstIndex(where: { $0.classDefinitionID == context.classDefinitionID }) {
+                result[index] = context
+            } else {
+                result.append(context)
+            }
+        },
         graduationYear: preferred(existing.graduationYear, incoming.graduationYear),
         parentNames: preferred(existing.parentNames, incoming.parentNames),
         parentPhoneNumbers: preferred(existing.parentPhoneNumbers, incoming.parentPhoneNumbers),

@@ -8,6 +8,9 @@
 
 import SwiftUI
 import SwiftData
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 // MARK: - App Tabs
 
@@ -117,6 +120,7 @@ struct RootTabView: View {
                     guard !isRefreshingFromPersistence else { return }
                     recordLocalMutation()
                     handleAlarmsChange(newValue)
+                    syncSharedSnapshot()
                 }
                 .onChange(of: todos) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
@@ -142,6 +146,7 @@ struct RootTabView: View {
                     recordLocalMutation()
                     saveClassDefinitions(newValue)
                     reconcileClassDefinitionLinks()
+                    syncSharedSnapshot()
                 }
                 .onChange(of: savedStudentProfiles) { _, _ in
                     guard !isRefreshingFromPersistence else { return }
@@ -152,6 +157,7 @@ struct RootTabView: View {
                     guard !isRefreshingFromPersistence else { return }
                     loadClassDefinitions()
                     reconcileClassDefinitionLinks()
+                    syncSharedSnapshot()
                 }
                 .onChange(of: savedProfiles) { _, _ in
                     guard !isRefreshingFromPersistence else { return }
@@ -162,6 +168,7 @@ struct RootTabView: View {
                     guard !isRefreshingFromPersistence else { return }
                     loadOverrides()
                     refreshNotifications()
+                    syncSharedSnapshot()
                 }
         )
 
@@ -170,11 +177,19 @@ struct RootTabView: View {
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .active {
                         refreshFromCloudBackedStore()
+                        syncSharedSnapshot()
                     }
                 }
                 .task(id: scenePhase) {
                     guard scenePhase == .active else { return }
                     await runCloudSyncRefreshLoop()
+                }
+                .task(id: scenePhase) {
+                    guard scenePhase == .active else { return }
+                    while scenePhase == .active && !Task.isCancelled {
+                        syncSharedSnapshot()
+                        try? await Task.sleep(for: .seconds(1))
+                    }
                 }
                 .onChange(of: attendanceRecords) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
@@ -211,6 +226,7 @@ struct RootTabView: View {
                         subPlans: subPlans,
                         dailySubPlans: newValue
                     )
+                    syncSharedSnapshot()
                 }
         )
     }
@@ -223,6 +239,7 @@ struct RootTabView: View {
         loadSavedData()
         selectedScheduleDay = .today
         refreshNotifications()
+        syncSharedSnapshot()
     }
 
     private func handleSelectedTabChange(_ newTab: AppTab) {
@@ -234,6 +251,99 @@ struct RootTabView: View {
     private func handleAlarmsChange(_ newValue: [AlarmItem]) {
         saveAlarms(newValue)
         refreshNotifications()
+    }
+
+    private func syncSharedSnapshot(now: Date = Date()) {
+        let snapshot = watchSnapshot(now: now)
+        WidgetSnapshotStore.save(snapshot)
+        WatchSessionSyncManager.shared.sync(snapshot: snapshot)
+#if canImport(WidgetKit)
+        WidgetCenter.shared.reloadTimelines(ofKind: "ClassTraxHomeWidget")
+#endif
+    }
+
+    private func watchSnapshot(now: Date) -> ClassTraxWidgetSnapshot {
+        let schedule = adjustedTodaySchedule(for: now)
+        let activeItem = schedule.first {
+            now >= startDateToday(for: $0, now: now) && now <= endDateToday(for: $0, now: now)
+        }
+        let nextItem = displayableNextItem(schedule.first {
+            startDateToday(for: $0, now: now) > now
+        }, now: now)
+
+        func summary(for item: AlarmItem) -> ClassTraxWidgetSnapshot.BlockSummary {
+            ClassTraxWidgetSnapshot.BlockSummary(
+                id: item.id,
+                className: item.className,
+                room: item.location.trimmingCharacters(in: .whitespacesAndNewlines),
+                gradeLevel: item.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines),
+                symbolName: item.scheduleType.symbolName,
+                startTime: startDateToday(for: item, now: now),
+                endTime: endDateToday(for: item, now: now),
+                typeName: item.typeLabel
+            )
+        }
+
+        return ClassTraxWidgetSnapshot(
+            updatedAt: now,
+            current: activeItem.map(summary),
+            next: nextItem.map(summary)
+        )
+    }
+
+    private func adjustedTodaySchedule(for now: Date) -> [AlarmItem] {
+        let weekday = Calendar.current.component(.weekday, from: now)
+        let todaysItems = (activeDayOverride?.alarms ?? alarms)
+            .filter { $0.dayOfWeek == weekday }
+            .sorted { $0.startTime < $1.startTime }
+
+        var cumulativeOffset: TimeInterval = 0
+        var adjustedItems: [AlarmItem] = []
+
+        for item in todaysItems {
+            var adjusted = item
+            adjusted.start = item.start.addingTimeInterval(cumulativeOffset)
+
+            let extra = (SessionControlStore.extraTimeByItemID()[item.id] ?? 0) + liveHoldDuration(for: item, now: now)
+            adjusted.end = item.end
+                .addingTimeInterval(cumulativeOffset)
+                .addingTimeInterval(extra)
+
+            adjustedItems.append(adjusted)
+            cumulativeOffset += extra
+        }
+
+        return adjustedItems
+    }
+
+    private func startDateToday(for item: AlarmItem, now: Date) -> Date {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: item.startTime)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: now
+        ) ?? now
+    }
+
+    private func endDateToday(for item: AlarmItem, now: Date) -> Date {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: item.endTime)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: now
+        ) ?? now
+    }
+
+    private func liveHoldDuration(for item: AlarmItem, now: Date) -> TimeInterval {
+        SessionControlStore.liveHoldDuration(for: item.id, now: now)
+    }
+
+    private func displayableNextItem(_ item: AlarmItem?, now: Date) -> AlarmItem? {
+        guard let item else { return nil }
+        guard startDateToday(for: item, now: now).timeIntervalSince(now) <= 7200 else { return nil }
+        return item
     }
 
     @MainActor
@@ -429,6 +539,8 @@ struct RootTabView: View {
                     className: $0.className,
                     gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
                     classDefinitionID: $0.classDefinitionID,
+                    classDefinitionIDs: linkedClassDefinitionIDs(for: $0),
+                    classContexts: $0.classContexts,
                     graduationYear: $0.graduationYear,
                     parentNames: $0.parentNames,
                     parentPhoneNumbers: $0.parentPhoneNumbers,
@@ -499,6 +611,8 @@ struct RootTabView: View {
                     className: $0.className,
                     gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
                     classDefinitionID: $0.classDefinitionID,
+                    classDefinitionIDs: linkedClassDefinitionIDs(for: $0),
+                    classContexts: $0.classContexts,
                     graduationYear: $0.graduationYear,
                     parentNames: $0.parentNames,
                     parentPhoneNumbers: $0.parentPhoneNumbers,
@@ -596,6 +710,8 @@ struct RootTabView: View {
                 className: $0.className,
                 gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
                 classDefinitionID: $0.classDefinitionID,
+                classDefinitionIDs: linkedClassDefinitionIDs(for: $0),
+                classContexts: $0.classContexts,
                 graduationYear: $0.graduationYear,
                 parentNames: $0.parentNames,
                 parentPhoneNumbers: $0.parentPhoneNumbers,
@@ -642,12 +758,14 @@ struct RootTabView: View {
 
         studentProfiles = studentProfiles.map { profile in
             var updated = profile
-            if updated.classDefinitionID == nil {
-                updated.classDefinitionID = exactClassDefinitionMatch(
+            if linkedClassDefinitionIDs(for: updated).isEmpty,
+               let matchedID = exactClassDefinitionMatch(
                     name: updated.className,
                     gradeLevel: updated.gradeLevel,
                     in: classDefinitions
-                )?.id
+                )?.id {
+                updated.classDefinitionID = matchedID
+                updated.classDefinitionIDs = [matchedID]
             }
             return updated
         }

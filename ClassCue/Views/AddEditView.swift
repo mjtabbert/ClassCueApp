@@ -530,7 +530,7 @@ struct AddEditView: View {
 
     private func matchesCurrentClassDefinition(profile: StudentSupportProfile, fallbackClassName: String) -> Bool {
         if let selectedClassDefinitionID {
-            return profile.classDefinitionID == selectedClassDefinitionID
+            return profileMatches(classDefinitionID: selectedClassDefinitionID, profile: profile)
         }
 
         return classNamesMatch(scheduleClassName: fallbackClassName, profileClassName: profile.className)
@@ -538,7 +538,7 @@ struct AddEditView: View {
 
     private func matchesCurrentGroup(_ group: StudentRosterGroup, fallbackClassName: String) -> Bool {
         if let selectedClassDefinitionID {
-            return group.students.contains { $0.classDefinitionID == selectedClassDefinitionID }
+            return group.students.contains { profileMatches(classDefinitionID: selectedClassDefinitionID, profile: $0) }
         }
 
         return classNamesMatch(scheduleClassName: fallbackClassName, profileClassName: group.className)

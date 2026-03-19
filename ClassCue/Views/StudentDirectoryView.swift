@@ -137,9 +137,9 @@ struct StudentDirectoryView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingAdd) {
-            EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: nil)
-        }
+                .sheet(isPresented: $showingAdd) {
+                    EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: nil)
+                }
         .sheet(item: $editingProfile) { profile in
             EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: profile)
         }
@@ -492,6 +492,11 @@ struct StudentDirectoryView: View {
                         gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
                         in: classDefinitions
                     )?.id,
+                    classDefinitionIDs: exactClassDefinitionMatch(
+                        name: parts.count >= 2 ? parts[1] : "",
+                        gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
+                        in: classDefinitions
+                    ).map { [$0.id] } ?? [],
                     graduationYear: parts.count >= 6 ? parts[5] : "",
                     parentNames: parts.count >= 7 ? parts[6] : "",
                     parentPhoneNumbers: parts.count >= 8 ? parts[7] : "",
@@ -525,6 +530,9 @@ struct StudentDirectoryView: View {
                 name: $0.name,
                 className: $0.className,
                 gradeLevel: GradeLevelOption.normalized($0.gradeLevel),
+                classDefinitionID: $0.classDefinitionID,
+                classDefinitionIDs: linkedClassDefinitionIDs(for: $0),
+                classContexts: $0.classContexts,
                 graduationYear: $0.graduationYear,
                 parentNames: $0.parentNames,
                 parentPhoneNumbers: $0.parentPhoneNumbers,
@@ -555,7 +563,8 @@ struct StudentDirectoryView: View {
     }
 
     private func profileSummary(_ profile: StudentSupportProfile) -> String {
-        [profile.className, profile.gradeLevel, profile.graduationYear.isEmpty ? "" : "Class of \(profile.graduationYear)"]
+        let classSummary = linkedClassNames(for: profile, in: classDefinitions).joined(separator: ", ")
+        return [classSummary.isEmpty ? profile.className : classSummary, profile.gradeLevel, profile.graduationYear.isEmpty ? "" : "Class of \(profile.graduationYear)"]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " • ")
@@ -563,7 +572,10 @@ struct StudentDirectoryView: View {
 
     private var availableClasses: [String] {
         profiles
-            .map(\.className)
+            .flatMap { profile in
+                let names = linkedClassNames(for: profile, in: classDefinitions)
+                return names.isEmpty ? [profile.className] : names
+            }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .removingDuplicates()
@@ -622,7 +634,9 @@ struct StudentDirectoryView: View {
         switch mode {
         case .className:
             filtered = profiles.filter {
-                $0.className.trimmingCharacters(in: .whitespacesAndNewlines)
+                linkedClassNames(for: $0, in: classDefinitions).contains(where: {
+                    $0.localizedCaseInsensitiveCompare(value) == .orderedSame
+                }) || $0.className.trimmingCharacters(in: .whitespacesAndNewlines)
                     .localizedCaseInsensitiveCompare(value) == .orderedSame
             }
             export(filtered, filename: "classtrax-class-\(safeValue).csv")
@@ -717,6 +731,7 @@ private extension StudentDirectoryView {
             [
                 profile.name,
                 profile.className,
+                linkedClassNames(for: profile, in: classDefinitions).joined(separator: ", "),
                 profile.gradeLevel,
                 profile.parentNames,
                 profile.parentEmails,
@@ -733,13 +748,7 @@ private extension StudentDirectoryView {
         case .none:
             return [StudentProfileSection(title: "Saved Supports", profiles: filteredProfiles)]
         case .className:
-            return groupedSections(
-                from: filteredProfiles,
-                using: { profile in
-                    let value = profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return value.isEmpty ? "Unassigned Class" : value
-                }
-            )
+            return groupedClassSections(from: filteredProfiles)
         case .gradeLevel:
             return groupedSections(
                 from: filteredProfiles,
@@ -769,6 +778,35 @@ private extension StudentDirectoryView {
                 )
             }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    func groupedClassSections(from profiles: [StudentSupportProfile]) -> [StudentProfileSection] {
+        var grouped: [String: [StudentSupportProfile]] = [:]
+
+        for profile in profiles {
+            let names = linkedClassNames(for: profile, in: classDefinitions)
+            let classNames = names.isEmpty
+                ? [profile.className.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+                : names
+
+            if classNames.isEmpty {
+                grouped["Unassigned Class", default: []].append(profile)
+            } else {
+                for name in classNames {
+                    grouped[name, default: []].append(profile)
+                }
+            }
+        }
+
+        return grouped.map { key, value in
+            StudentProfileSection(
+                title: key,
+                profiles: value.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            )
+        }
+        .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 }
 

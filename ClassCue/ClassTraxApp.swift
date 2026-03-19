@@ -6,6 +6,7 @@ import UserNotifications
 struct ClassTraxApp: App {
     init() {
         ClassTraxPersistence.initializeCloudKitDevelopmentSchemaIfNeeded()
+        WatchSessionSyncManager.shared.activate()
 
         let center = UNUserNotificationCenter.current()
         center.delegate = NotificationDelegate.shared

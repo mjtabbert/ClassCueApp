@@ -22,7 +22,10 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
     var className: String
     var gradeLevel: String
     var studentName: String
+    var studentID: UUID?
+    var classDefinitionID: UUID?
     var status: Status
+    var absentHomework: String = ""
 
     static func dateKey(for date: Date) -> String {
         let formatter = DateFormatter()

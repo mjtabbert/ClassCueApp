@@ -18,6 +18,7 @@ enum ClassTraxSharedStore {
 
 struct ClassTraxWidgetSnapshot: Codable, Equatable {
     struct BlockSummary: Codable, Equatable {
+        var id: UUID
         var className: String
         var room: String
         var gradeLevel: String

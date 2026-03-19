@@ -11,13 +11,16 @@ struct EditStudentSupportView: View {
     @Binding var profiles: [StudentSupportProfile]
     let classDefinitions: [ClassDefinitionItem]
     let existing: StudentSupportProfile?
+    let initialLinkedClassDefinitionIDs: [UUID]
+    let initialClassName: String
+    let initialGradeLevel: String
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
     @State private var className = ""
     @State private var gradeLevel = ""
-    @State private var selectedClassDefinitionID: UUID?
+    @State private var selectedClassDefinitionIDs: Set<UUID> = []
     @State private var graduationYear = ""
     @State private var parentNames = ""
     @State private var parentPhoneNumbers = ""
@@ -26,28 +29,55 @@ struct EditStudentSupportView: View {
     @State private var accommodations = ""
     @State private var prompts = ""
 
+    init(
+        profiles: Binding<[StudentSupportProfile]>,
+        classDefinitions: [ClassDefinitionItem],
+        existing: StudentSupportProfile?,
+        initialLinkedClassDefinitionIDs: [UUID] = [],
+        initialClassName: String = "",
+        initialGradeLevel: String = ""
+    ) {
+        _profiles = profiles
+        self.classDefinitions = classDefinitions
+        self.existing = existing
+        self.initialLinkedClassDefinitionIDs = initialLinkedClassDefinitionIDs
+        self.initialClassName = initialClassName
+        self.initialGradeLevel = initialGradeLevel
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("Student or Group") {
                     TextField("Name", text: $name)
 
-                    Picker("Saved Class", selection: $selectedClassDefinitionID) {
-                        Text("None").tag(Optional<UUID>.none)
-                        ForEach(classDefinitions) { definition in
-                            Text(definition.displayName).tag(Optional(definition.id))
+                    TextField("Class", text: $className)
+
+                    if !classDefinitions.isEmpty {
+                        DisclosureGroup("Linked Saved Classes") {
+                            if !candidateClassDefinitions.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Suggested matches")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+
+                                    ForEach(candidateClassDefinitions) { definition in
+                                        linkedClassToggleRow(definition)
+                                    }
+                                }
+                                .padding(.bottom, 8)
+                            }
+
+                            ForEach(classDefinitions) { definition in
+                                linkedClassToggleRow(definition)
+                            }
                         }
                     }
 
-                    TextField("Class", text: $className)
-
-                    if selectedClassDefinitionID == nil, !candidateClassDefinitions.isEmpty {
-                        Picker("Suggested Match", selection: $selectedClassDefinitionID) {
-                            Text("No Match").tag(Optional<UUID>.none)
-                            ForEach(candidateClassDefinitions) { definition in
-                                Text(definition.displayName).tag(Optional(definition.id))
-                            }
-                        }
+                    if !selectedClassDefinitions.isEmpty {
+                        Text(selectedClassDefinitions.map(\.displayName).joined(separator: ", "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     Picker("Grade", selection: $gradeLevel) {
@@ -98,8 +128,8 @@ struct EditStudentSupportView: View {
             .onAppear {
                 configureInitialValues()
             }
-            .onChange(of: selectedClassDefinitionID) { _, newValue in
-                applySelectedClassDefinition(newValue)
+            .onChange(of: selectedClassDefinitionIDs) { _, _ in
+                applySelectedClassDefinitions()
             }
         }
     }
@@ -108,9 +138,10 @@ struct EditStudentSupportView: View {
         let item = StudentSupportProfile(
             id: existing?.id ?? UUID(),
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            className: className.trimmingCharacters(in: .whitespacesAndNewlines),
+            className: resolvedClassSummary(),
             gradeLevel: GradeLevelOption.normalized(gradeLevel),
-            classDefinitionID: resolvedClassDefinitionID(),
+            classDefinitionID: selectedClassDefinitionIDs.sorted { $0.uuidString < $1.uuidString }.first,
+            classDefinitionIDs: selectedClassDefinitionIDs.sorted { $0.uuidString < $1.uuidString },
             graduationYear: graduationYear.trimmingCharacters(in: .whitespacesAndNewlines),
             parentNames: parentNames.trimmingCharacters(in: .whitespacesAndNewlines),
             parentPhoneNumbers: parentPhoneNumbers.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -131,32 +162,53 @@ struct EditStudentSupportView: View {
     }
 
     private func configureInitialValues() {
-        guard let existing else { return }
-        name = existing.name
-        className = existing.className
-        gradeLevel = GradeLevelOption.normalized(existing.gradeLevel)
-        selectedClassDefinitionID = existing.classDefinitionID ?? exactClassDefinitionMatch(
-            name: existing.className,
-            gradeLevel: existing.gradeLevel,
-            in: classDefinitions
-        )?.id
-        graduationYear = existing.graduationYear
-        parentNames = existing.parentNames
-        parentPhoneNumbers = existing.parentPhoneNumbers
-        parentEmails = existing.parentEmails
-        studentEmail = existing.studentEmail
-        accommodations = existing.accommodations
-        prompts = existing.prompts
+        if let existing {
+            name = existing.name
+            className = existing.className
+            gradeLevel = GradeLevelOption.normalized(existing.gradeLevel)
+            selectedClassDefinitionIDs = Set(linkedClassDefinitionIDs(for: existing))
+            if selectedClassDefinitionIDs.isEmpty,
+               let matchedID = exactClassDefinitionMatch(
+                    name: existing.className,
+                    gradeLevel: existing.gradeLevel,
+                    in: classDefinitions
+               )?.id {
+                selectedClassDefinitionIDs = [matchedID]
+            }
+            graduationYear = existing.graduationYear
+            parentNames = existing.parentNames
+            parentPhoneNumbers = existing.parentPhoneNumbers
+            parentEmails = existing.parentEmails
+            studentEmail = existing.studentEmail
+            accommodations = existing.accommodations
+            prompts = existing.prompts
+            return
+        }
+
+        className = initialClassName
+        gradeLevel = GradeLevelOption.normalized(initialGradeLevel)
+        selectedClassDefinitionIDs = Set(initialLinkedClassDefinitionIDs)
     }
 
-    private func applySelectedClassDefinition(_ id: UUID?) {
-        guard let id, let definition = classDefinitions.first(where: { $0.id == id }) else { return }
-        className = definition.name
-        gradeLevel = GradeLevelOption.normalized(definition.gradeLevel)
+    private func applySelectedClassDefinitions() {
+        guard let primaryDefinition = selectedClassDefinitions.first else { return }
+        className = selectedClassDefinitions.map(\.name).joined(separator: ", ")
+
+        if gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let grades = selectedClassDefinitions
+                .map(\.gradeLevel)
+                .map(GradeLevelOption.normalized)
+                .filter { !$0.isEmpty }
+
+            if let singleGrade = Set(grades).first, Set(grades).count == 1 {
+                gradeLevel = singleGrade
+            } else if grades.isEmpty {
+                gradeLevel = GradeLevelOption.normalized(primaryDefinition.gradeLevel)
+            }
+        }
     }
 
     private var candidateClassDefinitions: [ClassDefinitionItem] {
-        guard selectedClassDefinitionID == nil else { return [] }
         return classDefinitionCandidates(
             name: className.trimmingCharacters(in: .whitespacesAndNewlines),
             gradeLevel: gradeLevel,
@@ -164,15 +216,55 @@ struct EditStudentSupportView: View {
         )
     }
 
-    private func resolvedClassDefinitionID() -> UUID? {
-        if let selectedClassDefinitionID {
-            return selectedClassDefinitionID
+    private var selectedClassDefinitions: [ClassDefinitionItem] {
+        classDefinitions
+            .filter { selectedClassDefinitionIDs.contains($0.id) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    @ViewBuilder
+    private func linkedClassToggleRow(_ definition: ClassDefinitionItem) -> some View {
+        let isSelected = selectedClassDefinitionIDs.contains(definition.id)
+
+        Button {
+            if isSelected {
+                selectedClassDefinitionIDs.remove(definition.id)
+            } else {
+                selectedClassDefinitionIDs.insert(definition.id)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? definition.themeColor : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(definition.displayName)
+                        .foregroundStyle(.primary)
+
+                    let detail = [definition.typeDisplayName, definition.defaultLocation]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " • ")
+
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func resolvedClassSummary() -> String {
+        if !selectedClassDefinitions.isEmpty {
+            return selectedClassDefinitions.map(\.name).joined(separator: ", ")
         }
 
-        return exactClassDefinitionMatch(
-            name: className.trimmingCharacters(in: .whitespacesAndNewlines),
-            gradeLevel: gradeLevel,
-            in: classDefinitions
-        )?.id
+        return className.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

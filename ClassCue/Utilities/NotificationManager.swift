@@ -30,6 +30,18 @@ final class NotificationManager {
         UserDefaults.standard.integer(forKey: "school_quiet_minute")
     }
 
+    private var warningFiveSoundPreference: String {
+        UserDefaults.standard.string(forKey: "pref_warning_sound_5min") ?? SoundPattern.softChime.rawValue
+    }
+
+    private var warningTwoSoundPreference: String {
+        UserDefaults.standard.string(forKey: "pref_warning_sound_2min") ?? SoundPattern.systemGlass.rawValue
+    }
+
+    private var warningOneSoundPreference: String {
+        UserDefaults.standard.string(forKey: "pref_warning_sound_1min") ?? SoundPattern.sharpBell.rawValue
+    }
+
     // MARK: Authorization
 
     func requestAuthorization() {
@@ -151,9 +163,7 @@ final class NotificationManager {
 
         content.body = warningBody(for: alarm, minutesBefore: minutesBefore)
 
-        content.sound = UNNotificationSound(
-            named: UNNotificationSoundName(SystemSounds.warning)
-        )
+        content.sound = selectedWarningSound(minutesBefore: minutesBefore)
 
         content.categoryIdentifier = "CLASSTRAX_BELL"
         content.interruptionLevel = .timeSensitive
@@ -186,7 +196,7 @@ final class NotificationManager {
         content.title = warningTitle(minutesBefore: minutesBefore)
         content.subtitle = warningSubtitle(for: alarm, minutesBefore: minutesBefore)
         content.body = warningBody(for: alarm, minutesBefore: minutesBefore)
-        content.sound = UNNotificationSound(named: UNNotificationSoundName(SystemSounds.warning))
+        content.sound = selectedWarningSound(minutesBefore: minutesBefore)
         content.categoryIdentifier = "CLASSTRAX_BELL"
         content.interruptionLevel = .timeSensitive
         content.relevanceScore = 1.0
@@ -332,6 +342,20 @@ final class NotificationManager {
             ?? SoundPattern.classicAlarm.rawValue
 
         return BellSound.fromStoredPreference(raw).notificationSound
+    }
+
+    private func selectedWarningSound(minutesBefore: Int) -> UNNotificationSound? {
+        let rawValue: String
+        switch minutesBefore {
+        case 5:
+            rawValue = warningFiveSoundPreference
+        case 2:
+            rawValue = warningTwoSoundPreference
+        default:
+            rawValue = warningOneSoundPreference
+        }
+
+        return BellSound.fromStoredPreference(rawValue).notificationSound
     }
 
     private func formattedTimeRange(_ alarm: AlarmItem) -> String {

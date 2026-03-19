@@ -77,16 +77,23 @@ struct ClassTraxLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                Circle()
-                    .fill(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName))
-                    .frame(width: 8, height: 8)
+                Image(systemName: context.state.iconName)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName))
             } compactTrailing: {
-                Color.clear
-                    .frame(width: 1, height: 1)
+                if context.state.isHeld {
+                    Image(systemName: "pause.fill")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(context.state.endTime, style: .timer)
+                        .font(.caption2.weight(.bold))
+                        .monospacedDigit()
+                }
             } minimal: {
-                Circle()
-                    .fill(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName))
-                    .frame(width: 8, height: 8)
+                Image(systemName: context.state.iconName)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName))
             }
         }
         .supplementalActivityFamilies([.small])

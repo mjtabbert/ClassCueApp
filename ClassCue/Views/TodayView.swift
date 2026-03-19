@@ -48,10 +48,10 @@ struct TodayView: View {
     @State private var activeWarning: InAppWarning?
     @State private var lastWarningKey: String?
     @State private var warningDismissTask: Task<Void, Never>?
-    @State private var extraTimeByItemID: [UUID: TimeInterval] = [:]
-    @State private var heldItemID: UUID?
-    @State private var holdStartedAt: Date?
-    @State private var skippedBellItemIDs: Set<UUID> = []
+    @AppStorage("classtrax_extra_time_by_item_v1") private var storedExtraTimeByItemID: Data = Data()
+    @AppStorage("classtrax_held_item_id_v1") private var storedHeldItemID: String = ""
+    @AppStorage("classtrax_hold_started_at_v1") private var storedHoldStartedAt: Double = 0
+    @AppStorage("classtrax_skipped_bell_item_ids_v1") private var storedSkippedBellItemIDs: Data = Data()
     @State private var lastActiveItemID: UUID?
     @State private var showingSessionActions = false
     @State private var showingAddCommitment = false
@@ -64,6 +64,14 @@ struct TodayView: View {
     @State private var subPlanItem: AlarmItem?
     @State private var showingDailySubPlan = false
     @State private var pendingLiveActivityStopTask: Task<Void, Never>?
+
+    private var extraTimeByItemID: [UUID: TimeInterval] {
+        SessionControlStore.extraTimeByItemID()
+    }
+
+    private var skippedBellItemIDs: Set<UUID> {
+        SessionControlStore.skippedBellItemIDs()
+    }
 
     var body: some View {
 
@@ -223,7 +231,11 @@ struct TodayView: View {
             }
             .sheet(item: $rosterItem) { item in
                 NavigationStack {
-                    TodayClassRosterView(item: item, students: rosterStudents(for: item))
+                    TodayClassRosterView(
+                        item: item,
+                        profiles: $studentSupportProfiles,
+                        classDefinitions: classDefinitions
+                    )
                 }
             }
             .sheet(item: $attendanceItem) { item in
@@ -533,11 +545,11 @@ struct TodayView: View {
                 topTasksCard(now: now)
                 studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: false)
                 notesSnapshotCard(compact: false)
-                subPlanCard(schedule: schedule, compact: false)
                 schoolBoundaryCard(now: now, schedule: schedule)
                 if showEndOfDayWrapUp {
                     endOfDayCard(now: now, schedule: schedule)
                 }
+                subPlanCard(schedule: schedule, compact: false)
             }
         }
     }
@@ -582,11 +594,11 @@ struct TodayView: View {
                 topTasksCard(now: now, compact: true)
                 studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: true)
                 notesSnapshotCard(compact: true)
-                subPlanCard(schedule: schedule, compact: true)
                 schoolBoundaryCard(now: now, schedule: schedule, compact: true)
                 if showEndOfDayWrapUp {
                     endOfDayCard(now: now, schedule: schedule, compact: true)
                 }
+                subPlanCard(schedule: schedule, compact: true)
             }
         }
     }
@@ -687,7 +699,8 @@ struct TodayView: View {
                 Label("Open Sub Plan Builder", systemImage: "square.and.pencil")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
+            .tint(.indigo)
         }
         .modifier(DashboardCardStyle(accent: .indigo, compact: compact))
     }
@@ -790,7 +803,7 @@ struct TodayView: View {
         return studentSupportProfiles
             .filter { profile in
                 if let classDefinitionID = item.classDefinitionID {
-                    guard profile.classDefinitionID == classDefinitionID else { return false }
+                    guard profileMatches(classDefinitionID: classDefinitionID, profile: profile) else { return false }
                     if gradeKey.isEmpty {
                         return true
                     }
@@ -1138,16 +1151,20 @@ struct TodayView: View {
 
     private func floatingActionMenu(activeItem: AlarmItem?, now: Date) -> some View {
         Menu {
+            Button("Notes", systemImage: "note.text") {
+                openNotesTab()
+            }
+
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                onRefresh()
+            }
+
             Button("Schedule", systemImage: "calendar") {
                 openScheduleTab()
             }
 
-            Button("Tasks", systemImage: "checklist") {
-                openTodoTab()
-            }
-
-            Button("Notes", systemImage: "note.text") {
-                openNotesTab()
+            Button("Settings", systemImage: "gearshape") {
+                openSettingsTab()
             }
 
             Button("Students", systemImage: "person.3") {
@@ -1158,12 +1175,8 @@ struct TodayView: View {
                 showingDailySubPlan = true
             }
 
-            Button("Settings", systemImage: "gearshape") {
-                openSettingsTab()
-            }
-
-            Button("Refresh", systemImage: "arrow.clockwise") {
-                onRefresh()
+            Button("Tasks", systemImage: "checklist") {
+                openTodoTab()
             }
 
             Divider()
@@ -1211,13 +1224,13 @@ struct TodayView: View {
                     Capsule(style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [.blue, .purple],
+                                colors: [Color(red: 0.18, green: 0.42, blue: 0.72), Color(red: 0.23, green: 0.52, blue: 0.62)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                 )
-                .shadow(color: Color.blue.opacity(0.28), radius: 12, y: 6)
+                .shadow(color: Color.black.opacity(0.14), radius: 10, y: 4)
         }
     }
 
@@ -1677,6 +1690,12 @@ struct TodayView: View {
             .map { $0 }
     }
 
+    private func displayableNextItem(_ item: AlarmItem?, now: Date) -> AlarmItem? {
+        guard let item else { return nil }
+        guard startDateToday(for: item, now: now).timeIntervalSince(now) <= 7200 else { return nil }
+        return item
+    }
+
     private func commitmentsForToday(now: Date) -> [CommitmentItem] {
         let weekday = Calendar.current.component(.weekday, from: now)
 
@@ -2008,34 +2027,24 @@ struct TodayView: View {
     }
 
     private func extend(_ item: AlarmItem, byMinutes minutes: Int) {
-        extraTimeByItemID[item.id, default: 0] += TimeInterval(minutes * 60)
-        skippedBellItemIDs.remove(item.id)
+        SessionControlStore.extend(itemID: item.id, byMinutes: minutes)
     }
 
     private func toggleHold(for item: AlarmItem, now: Date) {
-        if heldItemID == item.id {
-            let additionalHold = liveHoldDuration(for: item, now: now)
-            extraTimeByItemID[item.id, default: 0] += additionalHold
-            heldItemID = nil
-            holdStartedAt = nil
-        } else {
-            heldItemID = item.id
-            holdStartedAt = now
-        }
+        SessionControlStore.toggleHold(itemID: item.id, now: now)
     }
 
     private func skipBell(for item: AlarmItem) {
-        skippedBellItemIDs.insert(item.id)
+        SessionControlStore.skipBell(itemID: item.id)
         BellCountdownEngine.shared.reset()
     }
 
     private func isHeld(_ item: AlarmItem) -> Bool {
-        heldItemID == item.id
+        SessionControlStore.isHeld(itemID: item.id)
     }
 
     private func liveHoldDuration(for item: AlarmItem, now: Date) -> TimeInterval {
-        guard heldItemID == item.id, let holdStartedAt else { return 0 }
-        return max(now.timeIntervalSince(holdStartedAt), 0)
+        SessionControlStore.liveHoldDuration(for: item.id, now: now)
     }
 
     private func handleActiveItemChange(_ newValue: UUID?) {
@@ -2044,10 +2053,7 @@ struct TodayView: View {
             lastActiveItemID = newValue
         }
 
-        if let heldItemID, heldItemID != newValue {
-            self.heldItemID = nil
-            holdStartedAt = nil
-        }
+        SessionControlStore.clearHoldIfNeeded(activeItemID: newValue)
     }
 
     private func processBellIfNeeded(_ activeItem: AlarmItem?, now: Date) {
@@ -2066,9 +2072,9 @@ struct TodayView: View {
         guard liveActivitiesEnabled else { return nil }
         guard let activeItem else { return nil }
 
-        let nextItem = adjustedTodaySchedule(for: now).first {
+        let nextItem = displayableNextItem(adjustedTodaySchedule(for: now).first {
             startDateToday(for: $0, now: now) > now
-        }
+        }, now: now)
 
         let room = activeItem.location.trimmingCharacters(in: .whitespacesAndNewlines)
         let liveHold = liveHoldDuration(for: activeItem, now: now)
@@ -2116,6 +2122,7 @@ struct TodayView: View {
     private func widgetSnapshot(activeItem: AlarmItem?, nextItem: AlarmItem?, now: Date) -> ClassTraxWidgetSnapshot {
         func summary(for item: AlarmItem) -> ClassTraxWidgetSnapshot.BlockSummary {
             ClassTraxWidgetSnapshot.BlockSummary(
+                id: item.id,
                 className: item.className,
                 room: item.location.trimmingCharacters(in: .whitespacesAndNewlines),
                 gradeLevel: item.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2129,16 +2136,18 @@ struct TodayView: View {
         return ClassTraxWidgetSnapshot(
             updatedAt: now,
             current: activeItem.map(summary),
-            next: nextItem.map(summary)
+            next: displayableNextItem(nextItem, now: now).map(summary)
         )
     }
 
     private func syncWidgetSnapshot(_ snapshot: ClassTraxWidgetSnapshot) {
 #if canImport(WidgetKit)
         WidgetSnapshotStore.save(snapshot)
+        WatchSessionSyncManager.shared.sync(snapshot: snapshot)
         WidgetCenter.shared.reloadTimelines(ofKind: "ClassTraxHomeWidget")
 #else
         WidgetSnapshotStore.save(snapshot)
+        WatchSessionSyncManager.shared.sync(snapshot: snapshot)
 #endif
     }
 
@@ -2218,7 +2227,46 @@ private struct LiveActivitySnapshot: Equatable {
 
 private struct TodayClassRosterView: View {
     let item: AlarmItem
-    let students: [StudentSupportProfile]
+    @Binding var profiles: [StudentSupportProfile]
+    let classDefinitions: [ClassDefinitionItem]
+
+    @State private var showingAddExisting = false
+    @State private var showingAddNew = false
+    @State private var editingStudent: StudentSupportProfile?
+    @State private var editingClassContextStudent: StudentSupportProfile?
+
+    private var students: [StudentSupportProfile] {
+        let gradeKey = normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+
+        return profiles
+            .filter { profile in
+                if let classDefinitionID = item.classDefinitionID {
+                    guard profileMatches(classDefinitionID: classDefinitionID, profile: profile) else { return false }
+                } else {
+                    guard classNamesMatch(scheduleClassName: item.className, profileClassName: profile.className) else { return false }
+                }
+
+                let profileGradeKey = normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel))
+                if gradeKey.isEmpty || profileGradeKey.isEmpty {
+                    return true
+                }
+                return profileGradeKey == gradeKey
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var availableProfilesToAdd: [StudentSupportProfile] {
+        let rosterIDs = Set(students.map(\.id))
+        let gradeKey = normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+
+        return profiles
+            .filter { !rosterIDs.contains($0.id) }
+            .filter { profile in
+                let profileGradeKey = normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel))
+                return gradeKey.isEmpty || profileGradeKey.isEmpty || profileGradeKey == gradeKey
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
 
     var body: some View {
         List {
@@ -2249,40 +2297,69 @@ private struct TodayClassRosterView: View {
                         .listRowBackground(rosterCardBackground(accent: .secondary))
                 } else {
                     ForEach(students) { student in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
-                                Text(student.name)
-                                    .fontWeight(.semibold)
+                        Button {
+                            editingStudent = student
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Text(student.name)
+                                        .fontWeight(.semibold)
 
-                                gradePill(student.gradeLevel)
+                                    gradePill(student.gradeLevel)
+                                }
+
+                                let info = classSummary(for: student, in: classDefinitions)
+                                if !info.isEmpty {
+                                    Text(info)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if !student.accommodations.isEmpty {
+                                    Text(student.accommodations)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if !student.prompts.isEmpty {
+                                    Text(student.prompts)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let classDefinitionID = item.classDefinitionID,
+                                   let context = classContext(for: student, classDefinitionID: classDefinitionID) {
+                                    let classDetail = [context.behaviorNotes, context.effortNotes, context.classNotes]
+                                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                        .filter { !$0.isEmpty }
+                                        .joined(separator: " • ")
+
+                                    if !classDetail.isEmpty {
+                                        Text(classDetail)
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(item.type.themeColor == .clear ? .blue : item.type.themeColor)
+                                            .lineLimit(3)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(rosterCardBackground(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if item.classDefinitionID != nil {
+                                Button("Class Notes") {
+                                    editingClassContextStudent = student
+                                }
+                                .tint(item.type.themeColor == .clear ? .blue : item.type.themeColor)
                             }
 
-                            let info = [student.gradeLevel, student.className]
-                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                .filter { !$0.isEmpty }
-                                .joined(separator: " • ")
-
-                            if !info.isEmpty {
-                                Text(info)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            if !student.accommodations.isEmpty {
-                                Text(student.accommodations)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            if !student.prompts.isEmpty {
-                                Text(student.prompts)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                            Button("Remove", role: .destructive) {
+                                removeStudentFromClass(student)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .listRowBackground(rosterCardBackground(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor))
                     }
                 }
             }
@@ -2302,6 +2379,112 @@ private struct TodayClassRosterView: View {
             )
             .ignoresSafeArea()
         )
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button {
+                    showingAddExisting = true
+                } label: {
+                    Image(systemName: "person.badge.plus")
+                }
+
+                Button {
+                    showingAddNew = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showingAddExisting) {
+            NavigationStack {
+                rosterAddSheet
+            }
+        }
+        .sheet(isPresented: $showingAddNew) {
+            EditStudentSupportView(
+                profiles: $profiles,
+                classDefinitions: classDefinitions,
+                existing: nil,
+                initialLinkedClassDefinitionIDs: item.classDefinitionID.map { [$0] } ?? [],
+                initialClassName: item.className,
+                initialGradeLevel: item.gradeLevel
+            )
+        }
+        .sheet(item: $editingStudent) { student in
+            EditStudentSupportView(
+                profiles: $profiles,
+                classDefinitions: classDefinitions,
+                existing: student
+            )
+        }
+        .sheet(item: $editingClassContextStudent) { student in
+            if let classDefinitionID = item.classDefinitionID {
+                NavigationStack {
+                    TodayStudentClassContextView(
+                        item: item,
+                        student: student,
+                        classDefinitionID: classDefinitionID,
+                        profiles: $profiles
+                    )
+                }
+            }
+        }
+    }
+
+    private var rosterAddSheet: some View {
+        List {
+            Section {
+                Text("Add existing students to \(item.className) without creating duplicate student records.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Available Students") {
+                if availableProfilesToAdd.isEmpty {
+                    Text("No additional students match this class or grade right now.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(availableProfilesToAdd) { student in
+                        Button {
+                            addStudentToClass(student)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(student.name)
+                                    .foregroundStyle(.primary)
+                                Text(classSummary(for: student, in: classDefinitions))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Add to Class")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") {
+                    showingAddExisting = false
+                }
+            }
+        }
+    }
+
+    private func addStudentToClass(_ student: StudentSupportProfile) {
+        guard let index = profiles.firstIndex(where: { $0.id == student.id }) else { return }
+
+        let currentIDs = linkedClassDefinitionIDs(for: profiles[index])
+        let updatedIDs = item.classDefinitionID.map { currentIDs + [$0] } ?? currentIDs
+        profiles[index] = updatingProfile(profiles[index], linkedTo: updatedIDs, definitions: classDefinitions)
+    }
+
+    private func removeStudentFromClass(_ student: StudentSupportProfile) {
+        guard let classDefinitionID = item.classDefinitionID else { return }
+        guard let index = profiles.firstIndex(where: { $0.id == student.id }) else { return }
+
+        let updatedIDs = linkedClassDefinitionIDs(for: profiles[index]).filter { $0 != classDefinitionID }
+        profiles[index] = updatingProfile(profiles[index], linkedTo: updatedIDs, definitions: classDefinitions)
     }
 
     private func rosterCardBackground(accent: Color) -> some View {
@@ -2340,6 +2523,85 @@ private struct TodayClassRosterView: View {
     }
 }
 
+private struct TodayStudentClassContextView: View {
+    let item: AlarmItem
+    let student: StudentSupportProfile
+    let classDefinitionID: UUID
+    @Binding var profiles: [StudentSupportProfile]
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var behaviorNotes = ""
+    @State private var effortNotes = ""
+    @State private var classNotes = ""
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(student.name)
+                        .font(.headline.weight(.bold))
+                    Text(item.className)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+            }
+
+            Section("Behavior / Support") {
+                TextField("Behavior notes", text: $behaviorNotes, axis: .vertical)
+                    .lineLimit(2...4)
+
+                TextField("Effort / participation", text: $effortNotes, axis: .vertical)
+                    .lineLimit(2...4)
+
+                TextField("Class-specific notes", text: $classNotes, axis: .vertical)
+                    .lineLimit(2...6)
+            }
+        }
+        .navigationTitle("Class Details")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Save") {
+                    save()
+                }
+                .fontWeight(.semibold)
+            }
+        }
+        .onAppear {
+            if let existingContext = classContext(for: student, classDefinitionID: classDefinitionID) {
+                behaviorNotes = existingContext.behaviorNotes
+                effortNotes = existingContext.effortNotes
+                classNotes = existingContext.classNotes
+            }
+        }
+    }
+
+    private func save() {
+        guard let index = profiles.firstIndex(where: { $0.id == student.id }) else {
+            dismiss()
+            return
+        }
+
+        let context = StudentSupportProfile.ClassContext(
+            classDefinitionID: classDefinitionID,
+            behaviorNotes: behaviorNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            effortNotes: effortNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            classNotes: classNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+
+        profiles[index] = updatingProfile(profiles[index], classContext: context)
+        dismiss()
+    }
+}
+
 private struct TodayClassAttendanceView: View {
     let item: AlarmItem
     let date: Date
@@ -2375,36 +2637,48 @@ private struct TodayClassAttendanceView: View {
                         .listRowBackground(attendanceCardBackground)
                 } else {
                     ForEach(students) { student in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 8) {
-                                    Text(student.name)
-                                        .fontWeight(.semibold)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 8) {
+                                        Text(student.name)
+                                            .fontWeight(.semibold)
 
-                                    gradePill(student.gradeLevel)
+                                        gradePill(student.gradeLevel)
+                                    }
+                                    if !student.accommodations.isEmpty {
+                                        Text(student.accommodations)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
                                 }
-                                if !student.accommodations.isEmpty {
-                                    Text(student.accommodations)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
+
+                                Spacer()
+
+                                Picker(
+                                    "Status",
+                                    selection: Binding(
+                                        get: { status(for: student) },
+                                        set: { setStatus($0, for: student) }
+                                    )
+                                ) {
+                                    ForEach(AttendanceRecord.Status.allCases) { status in
+                                        Text(status.rawValue).tag(status)
+                                    }
                                 }
+                                .pickerStyle(.menu)
                             }
 
-                            Spacer()
-
-                            Picker(
-                                "Status",
-                                selection: Binding(
-                                    get: { status(for: student) },
-                                    set: { setStatus($0, for: student) }
+                            if status(for: student) == .absent {
+                                TextField(
+                                    "Homework / assignment for absent student",
+                                    text: homeworkBinding(for: student),
+                                    axis: .vertical
                                 )
-                            ) {
-                                ForEach(AttendanceRecord.Status.allCases) { status in
-                                    Text(status.rawValue).tag(status)
-                                }
+                                .lineLimit(2...4)
+                                .textFieldStyle(.roundedBorder)
                             }
-                            .pickerStyle(.menu)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 8)
@@ -2448,23 +2722,16 @@ private struct TodayClassAttendanceView: View {
     }
 
     private func status(for student: StudentSupportProfile) -> AttendanceRecord.Status {
-        records.first(where: {
-            $0.dateKey == dateKey &&
-            classNamesMatch(scheduleClassName: item.className, profileClassName: $0.className) &&
-            normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel)) &&
-            normalizedStudentKey($0.studentName) == normalizedStudentKey(student.name)
-        })?.status ?? .present
+        record(for: student)?.status ?? .present
     }
 
     private func setStatus(_ status: AttendanceRecord.Status, for student: StudentSupportProfile) {
         let normalizedGrade = GradeLevelOption.normalized(item.gradeLevel)
-        if let index = records.firstIndex(where: {
-            $0.dateKey == dateKey &&
-            classNamesMatch(scheduleClassName: item.className, profileClassName: $0.className) &&
-            normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(normalizedGrade) &&
-            normalizedStudentKey($0.studentName) == normalizedStudentKey(student.name)
-        }) {
+        if let index = recordIndex(for: student) {
             records[index].status = status
+            if status != .absent {
+                records[index].absentHomework = ""
+            }
         } else {
             records.append(
                 AttendanceRecord(
@@ -2472,21 +2739,51 @@ private struct TodayClassAttendanceView: View {
                     className: item.className,
                     gradeLevel: normalizedGrade,
                     studentName: student.name,
+                    studentID: student.id,
+                    classDefinitionID: item.classDefinitionID,
                     status: status
                 )
             )
         }
     }
 
+    private func homeworkBinding(for student: StudentSupportProfile) -> Binding<String> {
+        Binding(
+            get: { record(for: student)?.absentHomework ?? "" },
+            set: { newValue in
+                let trimmedValue = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let index = recordIndex(for: student) {
+                    records[index].status = .absent
+                    records[index].absentHomework = trimmedValue
+                } else {
+                    records.append(
+                        AttendanceRecord(
+                            dateKey: dateKey,
+                            className: item.className,
+                            gradeLevel: GradeLevelOption.normalized(item.gradeLevel),
+                            studentName: student.name,
+                            studentID: student.id,
+                            classDefinitionID: item.classDefinitionID,
+                            status: .absent,
+                            absentHomework: trimmedValue
+                        )
+                    )
+                }
+            }
+        )
+    }
+
     private func exportAttendance() {
-        let header = "date,className,gradeLevel,studentName,status"
+        let header = "date,className,gradeLevel,studentName,status,absentHomework"
         let rows = students.map { student in
-            [
+            let record = record(for: student)
+            return [
                 dateKey,
                 item.className,
                 GradeLevelOption.normalized(item.gradeLevel),
                 student.name,
-                status(for: student).rawValue
+                record?.status.rawValue ?? AttendanceRecord.Status.present.rawValue,
+                record?.absentHomework ?? ""
             ]
             .map(csvEscape)
             .joined(separator: ",")
@@ -2502,6 +2799,29 @@ private struct TodayClassAttendanceView: View {
     private func csvEscape(_ value: String) -> String {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
+    }
+
+    private func record(for student: StudentSupportProfile) -> AttendanceRecord? {
+        guard let index = recordIndex(for: student) else { return nil }
+        return records[index]
+    }
+
+    private func recordIndex(for student: StudentSupportProfile) -> Int? {
+        let normalizedGrade = GradeLevelOption.normalized(item.gradeLevel)
+        return records.firstIndex(where: { record in
+            guard record.dateKey == dateKey else { return false }
+
+            if let studentID = record.studentID, studentID == student.id {
+                if let classDefinitionID = item.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
+                    return classDefinitionID == recordClassDefinitionID
+                }
+                return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className)
+            }
+
+            return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className) &&
+                normalizedStudentKey(record.gradeLevel) == normalizedStudentKey(normalizedGrade) &&
+                normalizedStudentKey(record.studentName) == normalizedStudentKey(student.name)
+        })
     }
 
     private var attendanceCardBackground: some View {
@@ -2724,11 +3044,19 @@ private struct TodayClassSubPlanView: View {
                         }
 
                         ForEach(attendanceRows) { record in
-                            HStack {
-                                Text(record.studentName)
-                                Spacer()
-                                Text(record.status.rawValue)
-                                    .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(record.studentName)
+                                    Spacer()
+                                    Text(record.status.rawValue)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if record.status == .absent && !record.absentHomework.isEmpty {
+                                    Text("Homework: \(record.absentHomework)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -2885,7 +3213,10 @@ private struct TodayClassSubPlanView: View {
             guard includeAttendance else { return "Not included" }
             guard !attendanceRows.isEmpty else { return "No attendance taken yet" }
             return attendanceRows.map {
-                "- \($0.studentName): \($0.status.rawValue)"
+                let homework = $0.status == .absent && !$0.absentHomework.isEmpty
+                    ? " — Homework: \($0.absentHomework)"
+                    : ""
+                return "- \($0.studentName): \($0.status.rawValue)\(homework)"
             }.joined(separator: "\n")
         }()
 
@@ -3138,7 +3469,7 @@ private struct TodayDailySubPlanView: View {
                         .foregroundStyle(.secondary)
                     Text(activeOverrideName ?? "Regular Day")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 8)
                 .listRowBackground(dailySubPlanCardBackground(accent: .blue))
@@ -3391,7 +3722,16 @@ private struct TodayDailySubPlanView: View {
                 : "Not included"
 
             let attendanceText = includeAttendance
-                ? (attendance.isEmpty ? "No attendance taken yet" : attendance.map { "- \($0.studentName): \($0.status.rawValue)" }.joined(separator: "\n"))
+                ? (
+                    attendance.isEmpty
+                    ? "No attendance taken yet"
+                    : attendance.map {
+                        let homework = $0.status == .absent && !$0.absentHomework.isEmpty
+                            ? " — Homework: \($0.absentHomework)"
+                            : ""
+                        return "- \($0.studentName): \($0.status.rawValue)\(homework)"
+                    }.joined(separator: "\n")
+                )
                 : "Not included"
 
             let commitmentsText = includeCommitments

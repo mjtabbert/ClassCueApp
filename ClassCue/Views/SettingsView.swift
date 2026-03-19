@@ -17,6 +17,9 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage("pref_haptic") private var selectedHapticRawValue: String = HapticPattern.doubleThump.rawValue
     @AppStorage("pref_sound") private var selectedSoundRawValue: String = SoundPattern.classicAlarm.rawValue
+    @AppStorage("pref_warning_sound_5min") private var warningFiveSoundRawValue: String = SoundPattern.softChime.rawValue
+    @AppStorage("pref_warning_sound_2min") private var warningTwoSoundRawValue: String = SoundPattern.systemGlass.rawValue
+    @AppStorage("pref_warning_sound_1min") private var warningOneSoundRawValue: String = SoundPattern.sharpBell.rawValue
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
     @AppStorage("commitments_v1_data") private var savedCommitments: Data = Data()
@@ -118,6 +121,18 @@ struct SettingsView: View {
                 schoolQuietMinute = components.minute ?? 0
                 refreshNotifications()
             }
+            .onChange(of: selectedSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+            .onChange(of: warningFiveSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+            .onChange(of: warningTwoSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+            .onChange(of: warningOneSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
             .sheet(isPresented: $showingShareSheet) {
                 if let exportURL {
                     ShareSheet(activityItems: [exportURL])
@@ -162,6 +177,18 @@ struct SettingsView: View {
                 }
             }
 
+            Picker("5 Minute Warning", selection: $warningFiveSoundRawValue) {
+                soundPatternOptions
+            }
+
+            Picker("2 Minute Warning", selection: $warningTwoSoundRawValue) {
+                soundPatternOptions
+            }
+
+            Picker("1 Minute Warning", selection: $warningOneSoundRawValue) {
+                soundPatternOptions
+            }
+
             if let selectedHaptic = HapticPattern(rawValue: selectedHapticRawValue) {
                 LabeledContent("Haptic Source", value: selectedHaptic.sourceGroup.rawValue)
                     .font(.footnote)
@@ -169,6 +196,21 @@ struct SettingsView: View {
 
             if let selectedSound = SoundPattern(rawValue: selectedSoundRawValue) {
                 LabeledContent("Sound Source", value: selectedSound.sourceGroup.rawValue)
+                    .font(.footnote)
+            }
+
+            if let warningFiveSound = SoundPattern(rawValue: warningFiveSoundRawValue) {
+                LabeledContent("5 Minute Source", value: warningFiveSound.sourceGroup.rawValue)
+                    .font(.footnote)
+            }
+
+            if let warningTwoSound = SoundPattern(rawValue: warningTwoSoundRawValue) {
+                LabeledContent("2 Minute Source", value: warningTwoSound.sourceGroup.rawValue)
+                    .font(.footnote)
+            }
+
+            if let warningOneSound = SoundPattern(rawValue: warningOneSoundRawValue) {
+                LabeledContent("1 Minute Source", value: warningOneSound.sourceGroup.rawValue)
                     .font(.footnote)
             }
 
@@ -423,6 +465,17 @@ struct SettingsView: View {
         let haptic = HapticPattern(rawValue: selectedHapticRawValue) ?? .doubleThump
         let sound = BellSound.fromStoredPreference(selectedSoundRawValue)
         BellFeedbackManager.shared.play(haptic: haptic, bellSound: sound)
+    }
+
+    @ViewBuilder
+    private var soundPatternOptions: some View {
+        ForEach(SoundPattern.SourceGroup.allCases, id: \.self) { group in
+            Section(group.rawValue) {
+                ForEach(SoundPattern.allCases.filter { $0.sourceGroup == group }, id: \.rawValue) { pattern in
+                    Text(pattern.displayName).tag(pattern.rawValue)
+                }
+            }
+        }
     }
 
     private func configureHolidayMode() {

@@ -366,9 +366,16 @@ struct TodoListView: View {
             .contentShape(Rectangle())
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.task)
-                    .strikethrough(item.isCompleted)
-                    .foregroundColor(item.isCompleted ? .secondary : .primary)
+                HStack(alignment: .top, spacing: 8) {
+                    Text(item.task)
+                        .strikethrough(item.isCompleted)
+                        .foregroundColor(item.isCompleted ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if !item.isCompleted, item.priority != .none {
+                        priorityBadge(for: item.priority)
+                    }
+                }
 
                 HStack(spacing: 6) {
                     Label(item.workspace.displayName, systemImage: item.workspace.systemImage)
@@ -387,9 +394,11 @@ struct TodoListView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
-                    Text("Priority: \(item.priority.rawValue)")
-                        .font(.caption2)
-                        .foregroundColor(item.priority.color)
+                    if item.priority != .none {
+                        Text(item.priority.rawValue)
+                            .font(.caption2.weight(.bold))
+                            .foregroundColor(item.priority.color)
+                    }
                 }
 
                 if item.reminder != .none {
@@ -448,6 +457,8 @@ struct TodoListView: View {
             .buttonStyle(.plain)
         }
         .padding(.vertical, 2)
+        .padding(.leading, 8)
+        .background(priorityAccent(for: item), alignment: .leading)
     }
 
     private func toggleCompletion(for item: TodoItem) {
@@ -477,6 +488,29 @@ struct TodoListView: View {
         case .low: return 2
         case .none: return 3
         }
+    }
+
+    @ViewBuilder
+    private func priorityAccent(for item: TodoItem) -> some View {
+        if !item.isCompleted, item.priority != .none {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(item.priority.color.gradient)
+                .frame(width: 6)
+        } else {
+            Color.clear.frame(width: 6)
+        }
+    }
+
+    private func priorityBadge(for priority: TodoItem.Priority) -> some View {
+        Text(priority.rawValue.uppercased())
+            .font(.caption2.weight(.black))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(priority.color.gradient)
+            )
     }
 
     private var activeFilterCount: Int {

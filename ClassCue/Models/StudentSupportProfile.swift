@@ -8,11 +8,22 @@
 import Foundation
 
 struct StudentSupportProfile: Identifiable, Codable, Equatable {
+    struct ClassContext: Identifiable, Codable, Equatable {
+        var classDefinitionID: UUID
+        var behaviorNotes: String = ""
+        var effortNotes: String = ""
+        var classNotes: String = ""
+
+        var id: UUID { classDefinitionID }
+    }
+
     var id: UUID = UUID()
     var name: String
     var className: String = ""
     var gradeLevel: String = ""
     var classDefinitionID: UUID? = nil
+    var classDefinitionIDs: [UUID] = []
+    var classContexts: [ClassContext] = []
     var graduationYear: String = ""
     var parentNames: String = ""
     var parentPhoneNumbers: String = ""
@@ -27,6 +38,8 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         className: String = "",
         gradeLevel: String = "",
         classDefinitionID: UUID? = nil,
+        classDefinitionIDs: [UUID] = [],
+        classContexts: [ClassContext] = [],
         graduationYear: String = "",
         parentNames: String = "",
         parentPhoneNumbers: String = "",
@@ -40,6 +53,8 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         self.className = className
         self.gradeLevel = gradeLevel
         self.classDefinitionID = classDefinitionID
+        self.classDefinitionIDs = classDefinitionIDs
+        self.classContexts = classContexts
         self.graduationYear = graduationYear
         self.parentNames = parentNames
         self.parentPhoneNumbers = parentPhoneNumbers
@@ -56,6 +71,11 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         className = try container.decodeIfPresent(String.self, forKey: .className) ?? ""
         gradeLevel = try container.decodeIfPresent(String.self, forKey: .gradeLevel) ?? ""
         classDefinitionID = try container.decodeIfPresent(UUID.self, forKey: .classDefinitionID)
+        classDefinitionIDs = try container.decodeIfPresent([UUID].self, forKey: .classDefinitionIDs) ?? []
+        if classDefinitionIDs.isEmpty, let classDefinitionID {
+            classDefinitionIDs = [classDefinitionID]
+        }
+        classContexts = try container.decodeIfPresent([ClassContext].self, forKey: .classContexts) ?? []
         graduationYear = try container.decodeIfPresent(String.self, forKey: .graduationYear) ?? ""
         parentNames = try container.decodeIfPresent(String.self, forKey: .parentNames) ?? ""
         parentPhoneNumbers = try container.decodeIfPresent(String.self, forKey: .parentPhoneNumbers) ?? ""

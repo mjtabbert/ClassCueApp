@@ -40,6 +40,7 @@ struct ClassTraxHomeProvider: TimelineProvider {
         return ClassTraxWidgetSnapshot(
             updatedAt: now,
             current: .init(
+                id: UUID(),
                 className: "Math",
                 room: "Room 204",
                 gradeLevel: "5th Grade",
@@ -49,6 +50,7 @@ struct ClassTraxHomeProvider: TimelineProvider {
                 typeName: "Math"
             ),
             next: .init(
+                id: UUID(),
                 className: "Science",
                 room: "Lab 2",
                 gradeLevel: "5th Grade",
@@ -366,6 +368,7 @@ struct Class_Trax: Widget {
         snapshot: ClassTraxWidgetSnapshot(
             updatedAt: .now,
             current: .init(
+                id: UUID(),
                 className: "Math",
                 room: "204",
                 gradeLevel: "5th Grade",
@@ -375,6 +378,7 @@ struct Class_Trax: Widget {
                 typeName: "Math"
             ),
             next: .init(
+                id: UUID(),
                 className: "Science",
                 room: "Lab 2",
                 gradeLevel: "5th Grade",
