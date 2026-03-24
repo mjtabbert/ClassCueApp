@@ -40,14 +40,239 @@ struct StudentDirectoryView: View {
     @State private var showingExportShareSheet = false
     @State private var searchText = ""
     @State private var groupingMode: GroupingMode = .none
+    @State private var expandedClassSections = Set<String>()
 
     var body: some View {
+        directoryList
+            .navigationTitle("Class List")
+            .environment(\.editMode, .constant(selection.isEmpty ? .inactive : .active))
+            .searchable(text: $searchText, prompt: "Search students, class, grade, or contact")
+            .scrollContentBackground(.hidden)
+            .background(directoryBackground)
+            .onChange(of: groupingMode) { _, newValue in
+                if newValue != .className {
+                    expandedClassSections.removeAll()
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Menu {
+                        Button("Import Roster CSV") {
+                            showingFileImporter = true
+                        }
+
+                        Button("Paste Roster CSV") {
+                            showingPasteImporter = true
+                        }
+
+                        Button("Share Roster Template") {
+                            showingTemplateShareSheet = true
+                        }
+
+                        Divider()
+
+                        Button("Export Roster CSV") {
+                            showingExportOptions = true
+                        }
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showingAdd = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAdd) {
+                EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: nil)
+            }
+            .sheet(item: $editingProfile) { profile in
+                EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: profile)
+            }
+            .sheet(isPresented: $showingTemplateShareSheet) {
+                StudentDirectoryShareSheet(activityItems: [makeTemplateFileURL()])
+            }
+            .sheet(isPresented: $showingExportShareSheet, onDismiss: {
+                exportFileURL = nil
+            }) {
+                if let exportFileURL {
+                    StudentDirectoryShareSheet(activityItems: [exportFileURL])
+                }
+            }
+            .sheet(isPresented: $showingPasteImporter) {
+                NavigationStack {
+                    pasteImportView
+                }
+            }
+            .sheet(isPresented: $showingClassExportPicker) {
+                NavigationStack {
+                    exportScopePickerView(
+                        title: "Export Class",
+                        values: availableClasses,
+                        selection: $exportClassSelection,
+                        buttonTitle: "Export Class"
+                    ) {
+                        exportProfiles(named: exportClassSelection, mode: .className)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingGradeExportPicker) {
+                NavigationStack {
+                    exportScopePickerView(
+                        title: "Export Grade",
+                        values: availableGrades,
+                        selection: $exportGradeSelection,
+                        buttonTitle: "Export Grade"
+                    ) {
+                        exportProfiles(named: exportGradeSelection, mode: .gradeLevel)
+                    }
+                }
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.commaSeparatedText, .plainText],
+                allowsMultipleSelection: false
+            ) { result in
+                handleImportResult(result)
+            }
+            .confirmationDialog(
+                "Export Student Roster",
+                isPresented: $showingExportOptions,
+                titleVisibility: .visible
+            ) {
+                if !selection.isEmpty {
+                    Button("Export Selected Students (\(selectedProfilesForExport.count))") {
+                        exportSelectedProfiles()
+                    }
+                }
+
+                if !availableClasses.isEmpty {
+                    Button("Export Whole Class") {
+                        exportClassSelection = availableClasses.first ?? ""
+                        showingClassExportPicker = true
+                    }
+                }
+
+                if !availableGrades.isEmpty {
+                    Button("Export Grade Level") {
+                        exportGradeSelection = availableGrades.first ?? ""
+                        showingGradeExportPicker = true
+                    }
+                }
+
+                Button("Export All Students") {
+                    exportAllProfiles()
+                }
+
+                Button("Cancel", role: .cancel) { }
+            }
+            .alert("Import Error", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
+    }
+
+    private var directoryList: some View {
         List(selection: $selection) {
             Section {
-                Text("Add students or groups here, then save their class, grade, accommodations, and instructional reminders. You can also import them from a Google Sheet as CSV.")
+                Text("Manage your class list here, then save each student's class, grade, accommodations, and instructional reminders. Roster CSV import lives here and does not change the bell schedule.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .listRowBackground(sectionCardBackground(accent: .blue))
+            }
+
+            Section("Quick Actions") {
+                Button {
+                    showingFileImporter = true
+                } label: {
+                    actionRowLabel(
+                        title: "Import Roster CSV",
+                        detail: "Bring in students from a saved file",
+                        systemImage: "square.and.arrow.down"
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(sectionCardBackground(accent: .green))
+
+                Button {
+                    showingPasteImporter = true
+                } label: {
+                    actionRowLabel(
+                        title: "Paste Roster CSV",
+                        detail: "Paste rows directly from a spreadsheet",
+                        systemImage: "doc.on.clipboard"
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(sectionCardBackground(accent: .mint))
+
+                Button {
+                    showingExportOptions = true
+                } label: {
+                    actionRowLabel(
+                        title: "Export Roster CSV",
+                        detail: exportSummaryText,
+                        systemImage: "square.and.arrow.up"
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(sectionCardBackground(accent: .orange))
+
+                Button {
+                    showingTemplateShareSheet = true
+                } label: {
+                    actionRowLabel(
+                        title: "Share Roster Template",
+                        detail: "Send a blank CSV template for roster setup",
+                        systemImage: "square.and.arrow.up.on.square"
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(sectionCardBackground(accent: .blue))
+            }
+
+            Section("Roster Snapshot") {
+                LabeledContent("Students") {
+                    Text("\(profiles.count)")
+                        .font(.headline)
+                }
+
+                LabeledContent("Classes") {
+                    Text("\(availableClasses.count)")
+                        .font(.headline)
+                }
+
+                LabeledContent("Grades") {
+                    Text("\(availableGrades.count)")
+                        .font(.headline)
+                }
+
+                if !selection.isEmpty {
+                    LabeledContent("Selected") {
+                        Text("\(selectedProfilesForExport.count)")
+                            .font(.headline)
+                    }
+                }
+
+                if let largestClass = groupedProfiles.max(by: { $0.profiles.count < $1.profiles.count }), !largestClass.title.isEmpty {
+                    LabeledContent("Largest Group") {
+                        Text("\(largestClass.title) (\(largestClass.profiles.count))")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                }
+
+                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    LabeledContent("Search Results") {
+                        Text("\(filteredProfiles.count)")
+                            .font(.headline)
+                    }
+                }
             }
 
             if !duplicateGroups.isEmpty {
@@ -90,138 +315,47 @@ struct StudentDirectoryView: View {
                         .listRowBackground(sectionCardBackground(accent: .secondary))
                 }
             } else {
-                ForEach(groupedProfiles, id: \.title) { section in
-                    Section(section.title) {
-                        ForEach(section.profiles) { profile in
-                            profileRow(profile)
+                if groupingMode == .className {
+                    ForEach(groupedProfiles, id: \.title) { section in
+                        Section {
+                            DisclosureGroup(
+                                isExpanded: classSectionBinding(for: section.title)
+                            ) {
+                                ForEach(section.profiles) { profile in
+                                    profileRow(profile)
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(section.title)
+                                            .fontWeight(.semibold)
+
+                                        Spacer()
+
+                                        Text("\(section.profiles.count)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Text(section.profiles.prefix(3).map(\.name).joined(separator: ", "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .listRowBackground(sectionCardBackground(accent: .indigo))
+                        }
+                    }
+                } else {
+                    ForEach(groupedProfiles, id: \.title) { section in
+                        Section(section.title) {
+                            ForEach(section.profiles) { profile in
+                                profileRow(profile)
+                            }
                         }
                     }
                 }
             }
-        }
-        .navigationTitle("Student Directory")
-        .environment(\.editMode, .constant(selection.isEmpty ? .inactive : .active))
-        .searchable(text: $searchText, prompt: "Search students, class, grade, or contact")
-        .scrollContentBackground(.hidden)
-        .background(directoryBackground)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Menu {
-                    Button("Import CSV File") {
-                        showingFileImporter = true
-                    }
-
-                    Button("Paste CSV Text") {
-                        showingPasteImporter = true
-                    }
-
-                    Button("Get Google Sheets Template") {
-                        showingTemplateShareSheet = true
-                    }
-
-                    Divider()
-
-                    Button("Export Students") {
-                        showingExportOptions = true
-                    }
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-            }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingAdd = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-        }
-                .sheet(isPresented: $showingAdd) {
-                    EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: nil)
-                }
-        .sheet(item: $editingProfile) { profile in
-            EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: profile)
-        }
-        .sheet(isPresented: $showingTemplateShareSheet) {
-            StudentDirectoryShareSheet(activityItems: [makeTemplateFileURL()])
-        }
-        .sheet(isPresented: $showingExportShareSheet) {
-            if let exportFileURL {
-                StudentDirectoryShareSheet(activityItems: [exportFileURL])
-            }
-        }
-        .sheet(isPresented: $showingPasteImporter) {
-            NavigationStack {
-                pasteImportView
-            }
-        }
-        .sheet(isPresented: $showingClassExportPicker) {
-            NavigationStack {
-                exportScopePickerView(
-                    title: "Export Class",
-                    values: availableClasses,
-                    selection: $exportClassSelection,
-                    buttonTitle: "Export Class"
-                ) {
-                    exportProfiles(named: exportClassSelection, mode: .className)
-                }
-            }
-        }
-        .sheet(isPresented: $showingGradeExportPicker) {
-            NavigationStack {
-                exportScopePickerView(
-                    title: "Export Grade",
-                    values: availableGrades,
-                    selection: $exportGradeSelection,
-                    buttonTitle: "Export Grade"
-                ) {
-                    exportProfiles(named: exportGradeSelection, mode: .gradeLevel)
-                }
-            }
-        }
-        .fileImporter(
-            isPresented: $showingFileImporter,
-            allowedContentTypes: [.commaSeparatedText, .plainText],
-            allowsMultipleSelection: false
-        ) { result in
-            handleImportResult(result)
-        }
-        .confirmationDialog(
-            "Export Student Directory",
-            isPresented: $showingExportOptions,
-            titleVisibility: .visible
-        ) {
-            if !selection.isEmpty {
-                Button("Export Selected Students") {
-                    exportSelectedProfiles()
-                }
-            }
-
-            if !availableClasses.isEmpty {
-                Button("Export Whole Class") {
-                    exportClassSelection = availableClasses.first ?? ""
-                    showingClassExportPicker = true
-                }
-            }
-
-            if !availableGrades.isEmpty {
-                Button("Export Grade Level") {
-                    exportGradeSelection = availableGrades.first ?? ""
-                    showingGradeExportPicker = true
-                }
-            }
-
-            Button("Export All Students") {
-                exportAllProfiles()
-            }
-
-            Button("Cancel", role: .cancel) { }
-        }
-        .alert("Import Error", isPresented: $showErrorAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(errorMessage)
         }
     }
 
@@ -300,6 +434,42 @@ struct StudentDirectoryView: View {
         .ignoresSafeArea()
     }
 
+    private var exportSummaryText: String {
+        if !selection.isEmpty {
+            let count = selectedProfilesForExport.count
+            return "\(count) selected student\(count == 1 ? "" : "s") ready to export"
+        }
+
+        return "\(profiles.count) total student\(profiles.count == 1 ? "" : "s") across \(availableClasses.count) class\(availableClasses.count == 1 ? "" : "es")"
+    }
+
+    private func actionRowLabel(title: String, detail: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 4)
+        }
+        .padding(.vertical, 4)
+    }
+
     private func accent(for profile: StudentSupportProfile) -> Color {
         let grade = normalizedStudentKey(profile.gradeLevel)
         if grade.contains("prek") || grade == "k" {
@@ -335,6 +505,19 @@ struct StudentDirectoryView: View {
             )
     }
 
+    private func classSectionBinding(for title: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedClassSections.contains(title) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedClassSections.insert(title)
+                } else {
+                    expandedClassSections.remove(title)
+                }
+            }
+        )
+    }
+
     @ViewBuilder
     private func gradePill(_ gradeLevel: String) -> some View {
         let color = GradeLevelOption.color(for: gradeLevel)
@@ -359,6 +542,9 @@ struct StudentDirectoryView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 Text("Additional optional columns: `graduationYear,parentNames,parentPhoneNumbers,parentEmails,studentEmail`.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Text("This imports students and class links only. It does not modify the schedule.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -485,15 +671,15 @@ struct StudentDirectoryView: View {
             imported.append(
                 StudentSupportProfile(
                     name: parts[0],
-                    className: parts.count >= 2 ? parts[1] : "",
+                    className: sanitizedImportedClassName(parts.count >= 2 ? parts[1] : ""),
                     gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
                     classDefinitionID: exactClassDefinitionMatch(
-                        name: parts.count >= 2 ? parts[1] : "",
+                        name: sanitizedImportedClassName(parts.count >= 2 ? parts[1] : ""),
                         gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
                         in: classDefinitions
                     )?.id,
                     classDefinitionIDs: exactClassDefinitionMatch(
-                        name: parts.count >= 2 ? parts[1] : "",
+                        name: sanitizedImportedClassName(parts.count >= 2 ? parts[1] : ""),
                         gradeLevel: parts.count >= 3 ? GradeLevelOption.normalized(parts[2]) : "",
                         in: classDefinitions
                     ).map { [$0.id] } ?? [],
@@ -548,6 +734,20 @@ struct StudentDirectoryView: View {
     private func isHeaderRow(_ parts: [String]) -> Bool {
         guard let first = parts.first?.lowercased() else { return false }
         return first == "name" || first == "student"
+    }
+
+    private func sanitizedImportedClassName(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        if normalized == "nsmanagedobject" || normalized == "managedobject" {
+            return ""
+        }
+
+        return trimmed
     }
 
     private func makeTemplateFileURL() -> URL {
@@ -618,7 +818,7 @@ struct StudentDirectoryView: View {
     }
 
     private func exportSelectedProfiles() {
-        let selected = profiles.filter { selection.contains($0.id) }
+        let selected = selectedProfilesForExport
         export(selected, filename: "classtrax-students-selected.csv")
     }
 
@@ -628,35 +828,29 @@ struct StudentDirectoryView: View {
     }
 
     private func exportProfiles(named value: String, mode: ExportMode) {
-        let filtered: [StudentSupportProfile]
         let safeValue = value.replacingOccurrences(of: " ", with: "-")
+        let filtered = filteredProfilesForExport(named: value, mode: mode)
 
         switch mode {
         case .className:
-            filtered = profiles.filter {
-                linkedClassNames(for: $0, in: classDefinitions).contains(where: {
-                    $0.localizedCaseInsensitiveCompare(value) == .orderedSame
-                }) || $0.className.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .localizedCaseInsensitiveCompare(value) == .orderedSame
-            }
             export(filtered, filename: "classtrax-class-\(safeValue).csv")
         case .gradeLevel:
-            filtered = profiles.filter {
-                $0.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .localizedCaseInsensitiveCompare(value) == .orderedSame
-            }
             export(filtered, filename: "classtrax-grade-\(safeValue).csv")
         }
     }
 
     private func export(_ profiles: [StudentSupportProfile], filename: String) {
-        guard !profiles.isEmpty else { return }
+        guard !profiles.isEmpty else {
+            errorMessage = "There are no student records in that export scope yet."
+            showErrorAlert = true
+            return
+        }
 
         let header = "name,className,gradeLevel,accommodations,prompts,graduationYear,parentNames,parentPhoneNumbers,parentEmails,studentEmail"
         let rows = profiles.map { profile in
             [
                 profile.name,
-                profile.className,
+                exportClassNames(for: profile),
                 profile.gradeLevel,
                 profile.accommodations,
                 profile.prompts,
@@ -672,14 +866,50 @@ struct StudentDirectoryView: View {
 
         let csv = ([header] + rows).joined(separator: "\n")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        try? csv.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            errorMessage = "Could not create the export file: \(error.localizedDescription)"
+            showErrorAlert = true
+            return
+        }
         exportFileURL = url
         showingExportShareSheet = true
+    }
+
+    private func exportClassNames(for profile: StudentSupportProfile) -> String {
+        let linkedNames = linkedClassNames(for: profile, in: classDefinitions)
+        if !linkedNames.isEmpty {
+            return linkedNames.joined(separator: "; ")
+        }
+
+        return profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func csvEscape(_ value: String) -> String {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
+    }
+
+    private var selectedProfilesForExport: [StudentSupportProfile] {
+        profiles.filter { selection.contains($0.id) }
+    }
+
+    private func filteredProfilesForExport(named value: String, mode: ExportMode) -> [StudentSupportProfile] {
+        switch mode {
+        case .className:
+            return profiles.filter {
+                linkedClassNames(for: $0, in: classDefinitions).contains(where: {
+                    $0.localizedCaseInsensitiveCompare(value) == .orderedSame
+                }) || $0.className.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .localizedCaseInsensitiveCompare(value) == .orderedSame
+            }
+        case .gradeLevel:
+            return profiles.filter {
+                $0.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .localizedCaseInsensitiveCompare(value) == .orderedSame
+            }
+        }
     }
 
     @ViewBuilder
@@ -690,13 +920,30 @@ struct StudentDirectoryView: View {
         buttonTitle: String,
         action: @escaping () -> Void
     ) -> some View {
+        let exportMode: ExportMode = title == "Export Class" ? .className : .gradeLevel
+        let valueCounts = values.map { value in
+            (value: value, count: filteredProfilesForExport(named: value, mode: exportMode).count)
+        }
+        let matchingCount = filteredProfilesForExport(named: selection.wrappedValue, mode: exportMode).count
+
         Form {
             Section(title) {
                 Picker(title, selection: selection) {
-                    ForEach(values, id: \.self) { value in
-                        Text(value).tag(value)
+                    ForEach(valueCounts, id: \.value) { item in
+                        HStack {
+                            Text(item.value)
+                            Spacer()
+                            Text("\(item.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                        .tag(item.value)
                     }
                 }
+            }
+
+            Section("Summary") {
+                LabeledContent("Students Included", value: "\(matchingCount)")
+                    .foregroundStyle(matchingCount == 0 ? .orange : .primary)
             }
 
             Section {
@@ -710,6 +957,7 @@ struct StudentDirectoryView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
+                .disabled(matchingCount == 0)
             }
         }
         .navigationTitle(title)

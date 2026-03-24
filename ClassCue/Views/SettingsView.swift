@@ -14,7 +14,51 @@ import ActivityKit
 import SwiftData
 
 struct SettingsView: View {
+    private enum SettingsDestination: String, Identifiable, CaseIterable {
+        case alerts = "Alerts"
+        case boundaries = "After Hours"
+        case todayLayout = "Today Layout"
+        case classroomSetup = "Classroom Setup"
+        case subPlans = "Sub Plans"
+        case integrations = "Integrations"
+        case cloudSync = "Cloud Sync"
+        case liveActivities = "Live Activities"
+        case data = "Data Management"
+        case diagnostics = "Diagnostics"
+        case about = "About"
+
+        var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .alerts:
+                return "bell.badge"
+            case .boundaries:
+                return "moon.zzz"
+            case .todayLayout:
+                return "rectangle.grid.1x2"
+            case .classroomSetup:
+                return "books.vertical"
+            case .subPlans:
+                return "doc.text"
+            case .integrations:
+                return "square.stack.3d.up"
+            case .cloudSync:
+                return "icloud"
+            case .liveActivities:
+                return "rectangle.and.text.magnifyingglass"
+            case .data:
+                return "tray.and.arrow.down"
+            case .diagnostics:
+                return "wrench.and.screwdriver"
+            case .about:
+                return "info.circle"
+            }
+        }
+    }
+
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("pref_haptic") private var selectedHapticRawValue: String = HapticPattern.doubleThump.rawValue
     @AppStorage("pref_sound") private var selectedSoundRawValue: String = SoundPattern.classicAlarm.rawValue
     @AppStorage("pref_warning_sound_5min") private var warningFiveSoundRawValue: String = SoundPattern.softChime.rawValue
@@ -37,6 +81,8 @@ struct SettingsView: View {
     @AppStorage("school_show_personal_focus_card") private var showPersonalFocusCard = true
     @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
     @AppStorage("live_activities_enabled") private var liveActivitiesEnabledPreference = true
+    @AppStorage("today_dashboard_card_order_v1") private var storedDashboardCardOrder = ""
+    @AppStorage("today_dashboard_hidden_cards_v1") private var storedHiddenDashboardCards = ""
 
     @State private var holidayModeEnabled = false
     @State private var holidayResumeDate = Date().addingTimeInterval(60 * 60 * 24)
@@ -56,28 +102,82 @@ struct SettingsView: View {
     @State private var commitments: [CommitmentItem] = []
     @State private var exportURL: URL?
     @State private var showingShareSheet = false
+    @State private var dashboardCardOrder = TodayView.TodayDashboardCard.defaultOrder
+    @State private var hiddenDashboardCards = Set<TodayView.TodayDashboardCard>()
 
     var body: some View {
+        settingsNavigationStack
+    }
+
+    private var settingsNavigationStack: some View {
         NavigationStack {
-            Form {
-                alertsSection
-                liveActivityStatusSection
-                cloudSyncStatusSection
-                holidaySection
-                schoolBoundariesSection
-                integrationsSection
-                studentContextSection
-                scheduleToolsSection
-                appToolsSection
-                aboutSection
+            settingsContent
+        }
+    }
+
+    private var settingsContent: some View {
+        settingsNotificationContent
+            .sheet(isPresented: $showingShareSheet) {
+                if let exportURL {
+                    ShareSheet(activityItems: [exportURL])
+                }
             }
+            .onChange(of: dashboardCardOrder) { _, _ in
+                persistTodayLayoutSettings()
+            }
+            .onChange(of: hiddenDashboardCards) { _, _ in
+                persistTodayLayoutSettings()
+            }
+    }
+
+    private var settingsNotificationContent: some View {
+        settingsBaseContent
+            .onChange(of: schoolQuietHoursEnabled) { _, _ in
+                syncSchoolQuietStart()
+                refreshNotifications()
+            }
+            .onChange(of: schoolQuietStart) { _, newValue in
+                let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                schoolQuietHour = components.hour ?? 16
+                schoolQuietMinute = components.minute ?? 0
+                refreshNotifications()
+            }
+            .onChange(of: selectedSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+            .onChange(of: warningFiveSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+            .onChange(of: warningTwoSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+            .onChange(of: warningOneSoundRawValue) { _, _ in
+                refreshNotifications()
+            }
+    }
+
+    private var settingsBaseContent: some View {
+        settingsPersistenceContent
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
             .scrollContentBackground(.hidden)
             .background(settingsBackground)
             .onAppear {
+                ignoreUntil = ScheduleSnoozeStore.synchronize()
                 loadData()
+                loadTodayLayoutSettings()
                 configureHolidayMode()
             }
+    }
+
+    private var settingsPersistenceContent: some View {
+        settingsList
             .onChange(of: alarms) { _, newValue in
                 saveAlarms(newValue)
             }
@@ -111,33 +211,197 @@ struct SettingsView: View {
                     $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
                 })) ?? Data()
             }
-            .onChange(of: schoolQuietHoursEnabled) { _, _ in
-                syncSchoolQuietStart()
-                refreshNotifications()
-            }
-            .onChange(of: schoolQuietStart) { _, newValue in
-                let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
-                schoolQuietHour = components.hour ?? 16
-                schoolQuietMinute = components.minute ?? 0
-                refreshNotifications()
-            }
-            .onChange(of: selectedSoundRawValue) { _, _ in
-                refreshNotifications()
-            }
-            .onChange(of: warningFiveSoundRawValue) { _, _ in
-                refreshNotifications()
-            }
-            .onChange(of: warningTwoSoundRawValue) { _, _ in
-                refreshNotifications()
-            }
-            .onChange(of: warningOneSoundRawValue) { _, _ in
-                refreshNotifications()
-            }
-            .sheet(isPresented: $showingShareSheet) {
-                if let exportURL {
-                    ShareSheet(activityItems: [exportURL])
+    }
+
+    private var settingsList: some View {
+        List {
+            controlCenterSection
+            dailyUseSection
+            systemSection
+        }
+    }
+
+    private var controlCenterSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("ClassTrax Control Center")
+                    .font(.headline.weight(.bold))
+
+                Text("Manage alerts, classroom setup, substitute planning, sync, and diagnostics from one place.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    settingsSummaryPill(
+                        title: "Classes",
+                        value: "\(classDefinitions.count)",
+                        accent: .blue
+                    )
+                    settingsSummaryPill(
+                        title: "Students",
+                        value: "\(studentProfiles.count)",
+                        accent: .green
+                    )
+                    settingsSummaryPill(
+                        title: "Alerts",
+                        value: ignoreUntil > Date().timeIntervalSince1970 ? "Snoozed" : "Live",
+                        accent: ignoreUntil > Date().timeIntervalSince1970 ? .orange : .indigo
+                    )
                 }
             }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var dailyUseSection: some View {
+        Section("Daily Use") {
+            settingsLink(.alerts, detail: "Bell sounds, haptics, and snooze")
+            settingsLink(.boundaries, detail: "After-hours behavior and focus")
+            settingsLink(.todayLayout, detail: "\(visibleTodayCardCount) cards visible")
+            settingsLink(.classroomSetup, detail: "\(classDefinitions.count) classes • \(studentProfiles.count) students")
+            settingsLink(.subPlans, detail: "Profiles and substitute prep")
+        }
+    }
+
+    private var systemSection: some View {
+        Section("System") {
+            settingsLink(.integrations, detail: "Calendar and reminders")
+            settingsLink(.cloudSync, detail: ClassTraxPersistence.activeContainerMode.rawValue)
+            settingsLink(.liveActivities, detail: liveActivitiesEnabledPreference ? "Enabled" : "Disabled")
+            settingsLink(.data, detail: "Import and export schedule CSV")
+            settingsLink(.diagnostics, detail: "Launch readiness and debug")
+            settingsLink(.about, detail: "App info")
+        }
+    }
+
+    @ViewBuilder
+    private func settingsLink(_ destination: SettingsDestination, detail: String) -> some View {
+        NavigationLink {
+            settingsDestinationView(destination)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: destination.systemImage)
+                    .font(.headline)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(destination.rawValue)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    private func settingsSummaryPill(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(accent.opacity(0.14), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func settingsDestinationView(_ destination: SettingsDestination) -> some View {
+        if destination == .todayLayout {
+            TodayLayoutCustomizationView(
+                cards: $dashboardCardOrder,
+                hiddenCards: $hiddenDashboardCards
+            )
+            .navigationTitle(destination.rawValue)
+            .scrollContentBackground(.hidden)
+            .background(settingsBackground)
+        } else {
+        Form {
+            Section {
+                Text(destinationDescription(destination))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            switch destination {
+            case .alerts:
+                alertsSection
+            case .boundaries:
+                schoolBoundariesSection
+                holidaySection
+            case .todayLayout:
+                EmptyView()
+            case .classroomSetup:
+                workspaceSetupSection
+            case .subPlans:
+                scheduleToolsSection
+            case .integrations:
+                integrationsSection
+            case .cloudSync:
+                cloudSyncStatusSection
+            case .liveActivities:
+                liveActivityStatusSection
+            case .data:
+                dataManagementSection
+            case .diagnostics:
+                appToolsSection
+            case .about:
+                aboutSection
+            }
+        }
+        .navigationTitle(destination.rawValue)
+        .scrollContentBackground(.hidden)
+        .background(settingsBackground)
+        }
+    }
+
+    private func destinationDescription(_ destination: SettingsDestination) -> String {
+        switch destination {
+        case .alerts:
+            return "Choose the bell, haptic, and warning sounds ClassTrax uses during the school day."
+        case .boundaries:
+            return "Tune after-hours behavior and temporarily snooze alerts when you do not want schedule interruptions."
+        case .todayLayout:
+            return "Choose which cards appear on Today, reorder them, and reset the dashboard when you want a cleaner home screen."
+        case .classroomSetup:
+            return "Manage saved classes, student supports, and the reusable classroom context that powers rosters and notes."
+        case .subPlans:
+            return "Keep substitute handoff details and reusable teacher profile information together."
+        case .integrations:
+            return "Send schedule and task information into other systems without turning ClassTrax into a dependency hub."
+        case .cloudSync:
+            return "Review the current persistence mode and CloudKit container status for sync troubleshooting."
+        case .liveActivities:
+            return "Control live activity behavior and review the current activity state."
+        case .data:
+            return "Import and export the schedule CSV. Student and class roster CSV tools live in Class List."
+        case .diagnostics:
+            return "Open launch readiness and debugging tools when you need to inspect the app state."
+        case .about:
+            return "View app information and general project details."
         }
     }
 
@@ -153,6 +417,33 @@ struct SettingsView: View {
             endPoint: .bottomTrailing
         )
         .ignoresSafeArea()
+    }
+
+    private var visibleTodayCardCount: Int {
+        dashboardCardOrder.filter { !hiddenDashboardCards.contains($0) }.count
+    }
+
+    private func loadTodayLayoutSettings() {
+        let storedOrder = storedDashboardCardOrder
+            .split(separator: ",")
+            .compactMap { TodayView.TodayDashboardCard(rawValue: String($0)) }
+        if storedOrder.isEmpty {
+            dashboardCardOrder = TodayView.TodayDashboardCard.defaultOrder
+        } else {
+            let missingCards = TodayView.TodayDashboardCard.defaultOrder.filter { !storedOrder.contains($0) }
+            dashboardCardOrder = storedOrder + missingCards
+        }
+
+        hiddenDashboardCards = Set(
+            storedHiddenDashboardCards
+                .split(separator: ",")
+                .compactMap { TodayView.TodayDashboardCard(rawValue: String($0)) }
+        )
+    }
+
+    private func persistTodayLayoutSettings() {
+        storedDashboardCardOrder = dashboardCardOrder.map(\.rawValue).joined(separator: ",")
+        storedHiddenDashboardCards = hiddenDashboardCards.map(\.rawValue).sorted().joined(separator: ",")
     }
 
     private var alertsSection: some View {
@@ -223,21 +514,23 @@ struct SettingsView: View {
     }
 
     private var holidaySection: some View {
-        Section("Holiday Mode") {
-            Toggle("Pause Schedule", isOn: $holidayModeEnabled)
+        Section("Alert Snooze") {
+            Toggle("Snooze Alerts", isOn: $holidayModeEnabled)
 
             if holidayModeEnabled {
                 DatePicker(
-                    "Resume On",
+                    "Resume Alerts On",
                     selection: $holidayResumeDate,
                     displayedComponents: [.date, .hourAndMinute]
                 )
 
-                Button("Save Holiday Mode") {
+                Button("Save Snooze") {
+                    ScheduleSnoozeStore.setPause(until: holidayResumeDate)
                     ignoreUntil = holidayResumeDate.timeIntervalSince1970
                 }
 
-                Button("Turn Off Holiday Mode", role: .destructive) {
+                Button("Turn Off Snooze", role: .destructive) {
+                    ScheduleSnoozeStore.setPause(until: nil)
                     ignoreUntil = 0
                     holidayModeEnabled = false
                 }
@@ -248,7 +541,7 @@ struct SettingsView: View {
     }
 
     private var cloudSyncStatusSection: some View {
-        Section("Cloud Sync Status") {
+        Section("Cloud Sync") {
             LabeledContent("Persistence Mode") {
                 Text(ClassTraxPersistence.activeContainerMode.rawValue)
                     .foregroundColor(
@@ -290,7 +583,7 @@ struct SettingsView: View {
     }
 
     private var liveActivityStatusSection: some View {
-        Section("Live Activity Status") {
+        Section("Live Activities") {
 #if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
             Toggle("Enable Live Activities", isOn: $liveActivitiesEnabledPreference)
 
@@ -335,18 +628,18 @@ struct SettingsView: View {
     @ViewBuilder
     private var holidayStatusText: some View {
         if ignoreUntil > Date().timeIntervalSince1970 {
-            Text("Schedule paused until \(Date(timeIntervalSince1970: ignoreUntil).formatted(date: .abbreviated, time: .shortened))")
+            Text("Alerts snoozed until \(Date(timeIntervalSince1970: ignoreUntil).formatted(date: .abbreviated, time: .shortened))")
                 .font(.footnote)
                 .foregroundColor(.secondary)
         } else {
-            Text("Schedule is active.")
+            Text("Alerts are active.")
                 .font(.footnote)
                 .foregroundColor(.secondary)
         }
     }
 
     private var schoolBoundariesSection: some View {
-        Section("School Boundaries") {
+        Section("After Hours") {
             Toggle("Quiet School Alerts After Hours", isOn: $schoolQuietHoursEnabled)
             Toggle("Show End-of-Day Wrap Up", isOn: $showEndOfDayWrapUp)
             Toggle("Offer Task Carryover to Tomorrow", isOn: $offerTaskCarryover)
@@ -393,24 +686,8 @@ struct SettingsView: View {
         }
     }
 
-    private var scheduleToolsSection: some View {
-        Section("Schedule Tools") {
-            NavigationLink("Schedule Profiles") {
-                ProfilesView(alarms: $alarms, profiles: $profiles)
-            }
-
-            NavigationLink("Day Overrides") {
-                DayOverridesView(overrides: $overrides, profiles: $profiles)
-            }
-
-            NavigationLink("Sub Plan Profile") {
-                SubPlanProfileSettingsView()
-            }
-        }
-    }
-
-    private var studentContextSection: some View {
-        Section("Class / Student Context") {
+    private var workspaceSetupSection: some View {
+        Section("Classroom Setup") {
             NavigationLink {
                 StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
             } label: {
@@ -421,7 +698,7 @@ struct SettingsView: View {
             }
 
             NavigationLink {
-                ClassDefinitionsView(classDefinitions: $classDefinitions)
+                ClassDefinitionsView(classDefinitions: $classDefinitions, profiles: $studentProfiles)
             } label: {
                 LabeledContent("Saved Classes") {
                     Text(classDefinitions.isEmpty ? "Not Set" : "\(classDefinitions.count)")
@@ -429,20 +706,50 @@ struct SettingsView: View {
                 }
             }
 
-            if studentProfiles.isEmpty {
-                Text("Open Student Directory to add names, accommodations, and prompts once, then reuse them in tasks and quick capture.")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            } else {
-                Text("Saved student supports now power the student picker and accommodation previews in the task and capture workflows.")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
+            NavigationLink("Schedule Profiles") {
+                ProfilesView(alarms: $alarms, profiles: $profiles)
             }
+
+            NavigationLink("Day Overrides") {
+                DayOverridesView(overrides: $overrides, profiles: $profiles)
+            }
+
+            Text(workspaceSetupSummary)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var scheduleToolsSection: some View {
+        Section("Sub Plans") {
+            NavigationLink("Sub Plan Profile") {
+                SubPlanProfileSettingsView()
+            }
+
+            Text("Keep substitute guidance and reusable classroom handoff details together here.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var dataManagementSection: some View {
+        Section("Data Management") {
+            NavigationLink("Import Schedule CSV") {
+                ImportView(alarms: $alarms)
+            }
+
+            NavigationLink("Export Schedule CSV") {
+                ExportView(alarms: $alarms)
+            }
+
+            Text("These CSV tools apply to the schedule. Student and class roster CSV import lives in Student Directory.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
         }
     }
 
     private var appToolsSection: some View {
-        Section("App Tools") {
+        Section("Diagnostics") {
             NavigationLink("Launch Readiness") {
                 LaunchPrepView()
             }
@@ -459,6 +766,14 @@ struct SettingsView: View {
                 AboutView()
             }
         }
+    }
+
+    private var workspaceSetupSummary: String {
+        if studentProfiles.isEmpty && classDefinitions.isEmpty {
+            return "Open Student Directory and Saved Classes to build the reusable classroom context that powers rosters, tasks, and quick capture."
+        }
+
+        return "ClassTrax currently has \(classDefinitions.count) saved classes and \(studentProfiles.count) students ready to reuse across schedules, rosters, and notes."
     }
 
     private func testBell() {

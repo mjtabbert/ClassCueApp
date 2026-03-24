@@ -35,6 +35,10 @@ struct ClassTraxWidgetSnapshot: Codable, Equatable {
     var isDayWrapped: Bool {
         current == nil && next == nil
     }
+
+    static func == (lhs: ClassTraxWidgetSnapshot, rhs: ClassTraxWidgetSnapshot) -> Bool {
+        lhs.current == rhs.current && lhs.next == rhs.next
+    }
 }
 
 enum WidgetSnapshotStore {

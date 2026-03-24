@@ -18,6 +18,7 @@ final class PersistedAlarmItem: PersistedUUIDModel {
     var gradeLevelValue: String = ""
     var classDefinitionID: UUID?
     var linkedStudentIDsRawValue: String = ""
+    var warningLeadTimesRawValue: String = "5,2,1"
 
     init(from item: AlarmItem) {
         update(from: item)
@@ -36,6 +37,9 @@ final class PersistedAlarmItem: PersistedUUIDModel {
         self.linkedStudentIDsRawValue = item.linkedStudentIDs
             .map(\.uuidString)
             .joined(separator: ",")
+        self.warningLeadTimesRawValue = item.warningLeadTimes
+            .map(String.init)
+            .joined(separator: ",")
     }
 
     func asAlarmItem() -> AlarmItem {
@@ -52,6 +56,10 @@ final class PersistedAlarmItem: PersistedUUIDModel {
             linkedStudentIDs: linkedStudentIDsRawValue
                 .split(separator: ",")
                 .compactMap { UUID(uuidString: String($0)) }
+            ,
+            warningLeadTimes: warningLeadTimesRawValue
+                .split(separator: ",")
+                .compactMap { Int($0) }
         )
     }
 }
@@ -287,11 +295,13 @@ final class PersistedSubPlanItem: PersistedUUIDModel {
     var lessonPlan: String = ""
     var materials: String = ""
     var subNotes: String = ""
+    var returnNotes: String = ""
     var includeRoster: Bool = true
     var includeSupports: Bool = true
     var includeAttendance: Bool = true
     var includeCommitments: Bool = true
     var includeDaySchedule: Bool = true
+    var includeSubProfile: Bool = true
     var createdAt: Date = Date.distantPast
     var updatedAt: Date = Date.distantPast
 
@@ -310,11 +320,13 @@ final class PersistedSubPlanItem: PersistedUUIDModel {
         self.lessonPlan = item.lessonPlan
         self.materials = item.materials
         self.subNotes = item.subNotes
+        self.returnNotes = item.returnNotes
         self.includeRoster = item.includeRoster
         self.includeSupports = item.includeSupports
         self.includeAttendance = item.includeAttendance
         self.includeCommitments = item.includeCommitments
         self.includeDaySchedule = item.includeDaySchedule
+        self.includeSubProfile = item.includeSubProfile
         self.createdAt = item.createdAt
         self.updatedAt = item.updatedAt
     }
@@ -331,11 +343,13 @@ final class PersistedSubPlanItem: PersistedUUIDModel {
             lessonPlan: lessonPlan,
             materials: materials,
             subNotes: subNotes,
+            returnNotes: returnNotes,
             includeRoster: includeRoster,
             includeSupports: includeSupports,
             includeAttendance: includeAttendance,
             includeCommitments: includeCommitments,
             includeDaySchedule: includeDaySchedule,
+            includeSubProfile: includeSubProfile,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
@@ -350,10 +364,12 @@ final class PersistedDailySubPlanItem: PersistedUUIDModel {
     var sharedMaterials: String = ""
     var dismissalNotes: String = ""
     var emergencyNotes: String = ""
+    var returnNotes: String = ""
     var includeAttendance: Bool = true
     var includeRoster: Bool = true
     var includeSupports: Bool = true
     var includeCommitments: Bool = true
+    var includeSubProfile: Bool = true
     var createdAt: Date = Date.distantPast
     var updatedAt: Date = Date.distantPast
 
@@ -368,10 +384,12 @@ final class PersistedDailySubPlanItem: PersistedUUIDModel {
         self.sharedMaterials = item.sharedMaterials
         self.dismissalNotes = item.dismissalNotes
         self.emergencyNotes = item.emergencyNotes
+        self.returnNotes = item.returnNotes
         self.includeAttendance = item.includeAttendance
         self.includeRoster = item.includeRoster
         self.includeSupports = item.includeSupports
         self.includeCommitments = item.includeCommitments
+        self.includeSubProfile = item.includeSubProfile
         self.createdAt = item.createdAt
         self.updatedAt = item.updatedAt
     }
@@ -384,10 +402,12 @@ final class PersistedDailySubPlanItem: PersistedUUIDModel {
             sharedMaterials: sharedMaterials,
             dismissalNotes: dismissalNotes,
             emergencyNotes: emergencyNotes,
+            returnNotes: returnNotes,
             includeAttendance: includeAttendance,
             includeRoster: includeRoster,
             includeSupports: includeSupports,
             includeCommitments: includeCommitments,
+            includeSubProfile: includeSubProfile,
             createdAt: createdAt,
             updatedAt: updatedAt
         )

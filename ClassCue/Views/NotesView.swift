@@ -4,6 +4,7 @@ import UIKit
 
 struct NotesView: View {
     enum NotesMode: String, CaseIterable {
+        case all
         case general
         case personal
         case classNotes
@@ -11,6 +12,8 @@ struct NotesView: View {
 
         var title: String {
             switch self {
+            case .all:
+                return "All"
             case .general:
                 return "School"
             case .personal:
@@ -24,6 +27,8 @@ struct NotesView: View {
 
         var preferredKind: FollowUpNoteItem.Kind {
             switch self {
+            case .all:
+                return .generalNote
             case .general:
                 return .generalNote
             case .personal:
@@ -37,6 +42,8 @@ struct NotesView: View {
 
         var exportTitle: String {
             switch self {
+            case .all:
+                return "Class Trax Notes Overview Export"
             case .general:
                 return "Class Trax School Notes Export"
             case .personal:
@@ -60,6 +67,8 @@ struct NotesView: View {
     @AppStorage("personal_notes_v1") private var personalNotesText: String = ""
     @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
     @AppStorage("notes_v2_migrated") private var didMigrateLegacyTextNotes = false
+    @AppStorage("today_quick_note_draft_v1") private var todayQuickNoteDraft = ""
+    @AppStorage("today_quick_note_draft_token_v1") private var todayQuickNoteDraftToken: Double = 0
 
     @State private var showingShareSheet = false
     @State private var shareItems: [Any] = []
@@ -72,6 +81,10 @@ struct NotesView: View {
     @State private var editingFollowUp: FollowUpNoteItem?
     @State private var showingStudentDirectory = false
     @State private var showingExportComposer = false
+    @State private var expandedClassSections = Set<String>()
+    @State private var expandedStudentSections = Set<String>()
+    @State private var pendingInitialNoteText = ""
+    @State private var handledQuickNoteDraftToken: Double = 0
 
     init(
         studentProfiles: Binding<[StudentSupportProfile]>,
@@ -99,15 +112,15 @@ struct NotesView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
 
                 currentModeView
             }
             .navigationTitle("Notes")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
-                    if !currentModeNotes.isEmpty {
+                    if notesMode != .all && !currentModeNotes.isEmpty {
                         Button("Clear") {
                             showClearConfirm = true
                         }
@@ -116,9 +129,15 @@ struct NotesView: View {
                 }
 
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Menu("Actions") {
+                    Menu {
                         Button("Add Note", systemImage: "square.and.pencil") {
                             presentAddNote()
+                        }
+
+                        if !currentModeNotes.isEmpty {
+                            Button("Export", systemImage: "square.and.arrow.up") {
+                                showingExportComposer = true
+                            }
                         }
 
                         Button("Students", systemImage: "person.3") {
@@ -132,18 +151,14 @@ struct NotesView: View {
                         Button("Daily Sub Plan", systemImage: "doc.text") {
                             openTodayTab()
                         }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
 
                     Button {
                         presentAddNote()
                     } label: {
                         Image(systemName: "plus")
-                    }
-
-                    if !currentModeNotes.isEmpty {
-                        Button("Export") {
-                            showingExportComposer = true
-                        }
                     }
                 }
             }
@@ -166,7 +181,8 @@ struct NotesView: View {
                     notes: followUpNotesBinding,
                     suggestedContexts: suggestedContexts,
                     suggestedStudents: suggestedStudents,
-                    preferredKind: addPreferredKind
+                    preferredKind: addPreferredKind,
+                    initialNoteText: pendingInitialNoteText
                 )
             }
             .sheet(item: $editingFollowUp) { note in
@@ -194,6 +210,10 @@ struct NotesView: View {
             }
             .onAppear {
                 migrateLegacyTextNotesIfNeeded()
+                consumeTodayQuickNoteDraftIfNeeded()
+            }
+            .onChange(of: todayQuickNoteDraftToken) { _, _ in
+                consumeTodayQuickNoteDraftIfNeeded()
             }
         }
     }
@@ -201,6 +221,8 @@ struct NotesView: View {
     @ViewBuilder
     private var currentModeView: some View {
         switch notesMode {
+        case .all:
+            allNotesOverviewView
         case .general:
             basicNotesView(
                 notes: notes(for: .generalNote),
@@ -229,6 +251,14 @@ struct NotesView: View {
         emptyDescription: String
     ) -> some View {
         List {
+            Section {
+                Color.clear
+                    .frame(height: 2)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .accessibilityHidden(true)
+            }
+
             if notes.isEmpty {
                 Section {
                     ContentUnavailableView(
@@ -277,6 +307,8 @@ struct NotesView: View {
 
     private var currentModeNotes: [FollowUpNoteItem] {
         switch notesMode {
+        case .all:
+            return followUpNotes.sorted { $0.createdAt > $1.createdAt }
         case .general:
             return notes(for: .generalNote)
         case .personal:
@@ -319,13 +351,149 @@ struct NotesView: View {
     }
 
     private func presentAddNote() {
-        addPreferredKind = notesMode.preferredKind
+        addPreferredKind = notesMode == .all ? nil : notesMode.preferredKind
+        pendingInitialNoteText = ""
         showingAddFollowUp = true
+    }
+
+    private func presentAddNote(kind: FollowUpNoteItem.Kind) {
+        addPreferredKind = kind
+        pendingInitialNoteText = ""
+        showingAddFollowUp = true
+    }
+
+    private var allNotesOverviewView: some View {
+        List {
+            Section("Quick Actions") {
+                Button {
+                    presentAddNote(kind: .generalNote)
+                } label: {
+                    quickActionRow(
+                        title: "New School Note",
+                        detail: "Capture a building-wide or general follow-up",
+                        systemImage: "building.2"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    presentAddNote(kind: .personalNote)
+                } label: {
+                    quickActionRow(
+                        title: "New Personal Note",
+                        detail: "Save a private reminder that stays separate from school notes",
+                        systemImage: "person"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    presentAddNote(kind: .classNote)
+                } label: {
+                    quickActionRow(
+                        title: "New Class Note",
+                        detail: "Attach a note to one class period or section",
+                        systemImage: "text.book.closed"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    presentAddNote(kind: .studentNote)
+                } label: {
+                    quickActionRow(
+                        title: "New Student Note",
+                        detail: "Capture a student-specific note or parent contact",
+                        systemImage: "person.text.rectangle"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    openTodayTab()
+                } label: {
+                    quickActionRow(
+                        title: "Open Daily Sub Plan",
+                        detail: "Jump back to Today and continue building the sub packet",
+                        systemImage: "doc.text"
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Section("Overview") {
+                overviewModeRow(
+                    title: "All Notes",
+                    value: "\(followUpNotes.count)",
+                    systemImage: "tray.full",
+                    targetMode: .all
+                )
+                overviewModeRow(
+                    title: "School",
+                    value: "\(notes(for: .generalNote).count)",
+                    systemImage: "building.2",
+                    targetMode: .general
+                )
+                overviewModeRow(
+                    title: "Personal",
+                    value: "\(notes(for: .personalNote).count)",
+                    systemImage: "person",
+                    targetMode: .personal
+                )
+                overviewModeRow(
+                    title: "Class",
+                    value: "\(followUpNotes.filter { $0.kind == .classNote }.count)",
+                    systemImage: "text.book.closed",
+                    targetMode: .classNotes
+                )
+                overviewModeRow(
+                    title: "Student / Contact",
+                    value: "\(followUpNotes.filter { $0.kind == .studentNote || $0.kind == .parentContact }.count)",
+                    systemImage: "person.text.rectangle",
+                    targetMode: .studentNotes
+                )
+            }
+
+            if followUpNotes.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "No Notes Yet",
+                        systemImage: "note.text",
+                        description: Text("Tap + to create a note, or submit a quick school note from Today.")
+                    )
+                }
+            } else {
+                Section("Recent Notes") {
+                    ForEach(followUpNotes.sorted { $0.createdAt > $1.createdAt }) { note in
+                        overviewNoteRow(note)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    private func consumeTodayQuickNoteDraftIfNeeded() {
+        let trimmedDraft = todayQuickNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard todayQuickNoteDraftToken > handledQuickNoteDraftToken else { return }
+        guard !trimmedDraft.isEmpty else {
+            handledQuickNoteDraftToken = todayQuickNoteDraftToken
+            return
+        }
+
+        handledQuickNoteDraftToken = todayQuickNoteDraftToken
+        notesMode = .general
+        addPreferredKind = nil
+        pendingInitialNoteText = trimmedDraft
+        showingAddFollowUp = true
+        todayQuickNoteDraft = ""
     }
 
     private func clearCurrentNotes() {
         let kindsToRemove: Set<FollowUpNoteItem.Kind>
         switch notesMode {
+        case .all:
+            kindsToRemove = Set(FollowUpNoteItem.Kind.allCases)
         case .general:
             kindsToRemove = [.generalNote]
         case .personal:
@@ -341,10 +509,126 @@ struct NotesView: View {
         persistFollowUpNotes(updated)
     }
 
+    private func overviewNoteRow(_ note: FollowUpNoteItem) -> some View {
+        Button {
+            jumpToNote(note)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(note.kind.title)
+                        .font(.subheadline.weight(.semibold))
+
+                    Text(note.note)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+
+                    let metadata = noteMetadata(note)
+                    if !metadata.isEmpty {
+                        Text(metadata)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func jumpToNote(_ note: FollowUpNoteItem) {
+        switch note.kind {
+        case .generalNote:
+            notesMode = .general
+            selectedContextFilter = ""
+            selectedStudentFilter = ""
+        case .personalNote:
+            notesMode = .personal
+            selectedContextFilter = ""
+            selectedStudentFilter = ""
+        case .classNote:
+            notesMode = .classNotes
+            selectedContextFilter = note.context
+            selectedStudentFilter = ""
+            if !note.context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                expandedClassSections.insert(note.context)
+            }
+        case .studentNote, .parentContact:
+            notesMode = .studentNotes
+            selectedStudentFilter = note.studentOrGroup
+            selectedContextFilter = ""
+            if !note.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                expandedStudentSections.insert(note.studentOrGroup)
+            }
+        }
+    }
+
     private var classFollowUpView: some View {
         let groups = followUpGroups
 
         return List {
+            Section("Overview") {
+                noteOverviewRow(
+                    title: "Classes with Notes",
+                    value: "\(groups.count)",
+                    systemImage: "building.2"
+                )
+                noteOverviewRow(
+                    title: "Visible Notes",
+                    value: "\(groups.reduce(0) { $0 + $1.notes.count })",
+                    systemImage: "note.text"
+                )
+
+                HStack {
+                    Button("Expand All") {
+                        expandedClassSections = Set(groups.map(\.context))
+                    }
+                    .disabled(groups.isEmpty)
+
+                    Spacer()
+
+                    Button("Collapse All") {
+                        expandedClassSections.removeAll()
+                    }
+                    .disabled(groups.isEmpty)
+                }
+
+                if !selectedContextFilter.isEmpty {
+                    Button("Clear Class Filter") {
+                        selectedContextFilter = ""
+                    }
+                }
+            }
+
+            if !groups.isEmpty {
+                Section("Snapshot") {
+                    let densestGroup = groups.max { $0.notes.count < $1.notes.count }
+                    let activeFilter = selectedContextFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if let densestGroup {
+                        LabeledContent("Most Notes") {
+                            Text(densestGroup.context)
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+
+                    if !activeFilter.isEmpty {
+                        LabeledContent("Active Filter") {
+                            Text(activeFilter)
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                }
+            }
+
             if !suggestedContexts.isEmpty {
                 Section("Filter") {
                     Picker("Class or Commitment", selection: $selectedContextFilter) {
@@ -366,13 +650,43 @@ struct NotesView: View {
                 }
             } else {
                 ForEach(groups, id: \.context) { group in
-                    Section(group.context) {
-                        if !group.notes.isEmpty {
-                            ForEach(group.notes) { note in
-                                noteRow(note)
+                    Section {
+                        DisclosureGroup(
+                            isExpanded: Binding(
+                                get: { expandedClassSections.contains(group.context) },
+                                set: { isExpanded in
+                                    if isExpanded {
+                                        expandedClassSections.insert(group.context)
+                                    } else {
+                                        expandedClassSections.remove(group.context)
+                                    }
+                                }
+                            )
+                        ) {
+                            if !group.notes.isEmpty {
+                                ForEach(group.notes) { note in
+                                    noteRow(note)
+                                }
+                                .onDelete { offsets in
+                                    deleteFollowUpNotes(at: offsets, from: group.notes)
+                                }
                             }
-                            .onDelete { offsets in
-                                deleteFollowUpNotes(at: offsets, from: group.notes)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(group.context)
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                    Text("\(group.notes.count)")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let latest = group.notes.first?.createdAt {
+                                    Text("Latest note: \(latest.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -386,6 +700,60 @@ struct NotesView: View {
         let groups = studentNoteGroups
 
         return List {
+            Section("Overview") {
+                noteOverviewRow(
+                    title: "Students with Notes",
+                    value: "\(groups.count)",
+                    systemImage: "person.2"
+                )
+                noteOverviewRow(
+                    title: "Visible Notes",
+                    value: "\(groups.reduce(0) { $0 + $1.notes.count })",
+                    systemImage: "text.bubble"
+                )
+
+                HStack {
+                    Button("Expand All") {
+                        expandedStudentSections = Set(groups.map(\.student))
+                    }
+                    .disabled(groups.isEmpty)
+
+                    Spacer()
+
+                    Button("Collapse All") {
+                        expandedStudentSections.removeAll()
+                    }
+                    .disabled(groups.isEmpty)
+                }
+
+                if !selectedStudentFilter.isEmpty {
+                    Button("Clear Student Filter") {
+                        selectedStudentFilter = ""
+                    }
+                }
+            }
+
+            if !groups.isEmpty {
+                Section("Snapshot") {
+                    let densestGroup = groups.max { $0.notes.count < $1.notes.count }
+                    let activeFilter = selectedStudentFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if let densestGroup {
+                        LabeledContent("Most Notes") {
+                            Text(densestGroup.student)
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+
+                    if !activeFilter.isEmpty {
+                        LabeledContent("Active Filter") {
+                            Text(activeFilter)
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                }
+            }
+
             if !suggestedStudents.isEmpty {
                 Section("Filter") {
                     Picker("Student or Group", selection: $selectedStudentFilter) {
@@ -408,24 +776,52 @@ struct NotesView: View {
             } else {
                 ForEach(groups, id: \.student) { group in
                     Section {
-                        if let context = group.context, !context.isEmpty {
-                            Text(context)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        DisclosureGroup(
+                            isExpanded: Binding(
+                                get: { expandedStudentSections.contains(group.student) },
+                                set: { isExpanded in
+                                    if isExpanded {
+                                        expandedStudentSections.insert(group.student)
+                                    } else {
+                                        expandedStudentSections.remove(group.student)
+                                    }
+                                }
+                            )
+                        ) {
+                            if let context = group.context, !context.isEmpty {
+                                Text(context)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
 
-                        ForEach(group.notes) { note in
-                            noteRow(note)
-                        }
-                        .onDelete { offsets in
-                            deleteFollowUpNotes(at: offsets, from: group.notes)
-                        }
-                    } header: {
-                        HStack(spacing: 6) {
-                            Text(group.student)
+                            ForEach(group.notes) { note in
+                                noteRow(note)
+                            }
+                            .onDelete { offsets in
+                                deleteFollowUpNotes(at: offsets, from: group.notes)
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(group.student)
+                                        .fontWeight(.semibold)
 
-                            if let matchedStudent = studentProfile(named: group.student) {
-                                gradePill(matchedStudent.gradeLevel)
+                                    if let matchedStudent = studentProfile(named: group.student) {
+                                        gradePill(matchedStudent.gradeLevel)
+                                    }
+
+                                    Spacer()
+
+                                    Text("\(group.notes.count)")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let latest = group.notes.first?.createdAt {
+                                    Text("Latest note: \(latest.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -488,6 +884,66 @@ struct NotesView: View {
         var updated = followUpNotes
         updated.removeAll { ids.contains($0.id) }
         persistFollowUpNotes(updated)
+    }
+
+    private func noteOverviewRow(title: String, value: String, systemImage: String) -> some View {
+        LabeledContent {
+            Text(value)
+                .font(.headline)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    private func overviewModeRow(title: String, value: String, systemImage: String, targetMode: NotesMode) -> some View {
+        Button {
+            notesMode = targetMode
+            selectedContextFilter = ""
+            selectedStudentFilter = ""
+        } label: {
+            HStack(spacing: 12) {
+                Label(title, systemImage: systemImage)
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 8)
+
+                Text(value)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func quickActionRow(title: String, detail: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 4)
+        }
+        .padding(.vertical, 4)
     }
 
     private func persistFollowUpNotes(_ notes: [FollowUpNoteItem]) {

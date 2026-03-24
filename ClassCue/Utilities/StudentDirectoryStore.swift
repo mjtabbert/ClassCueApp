@@ -110,7 +110,9 @@ func linkedClassNames(
     for profile: StudentSupportProfile,
     in definitions: [ClassDefinitionItem]
 ) -> [String] {
-    let namesFromDefinitions = linkedClassDefinitions(for: profile, in: definitions).map(\.displayName)
+    let namesFromDefinitions = linkedClassDefinitions(for: profile, in: definitions)
+        .map(\.displayName)
+        .compactMap(sanitizedClassLabel)
     if !namesFromDefinitions.isEmpty {
         return namesFromDefinitions
     }
@@ -119,7 +121,7 @@ func linkedClassNames(
     return profile.className
         .components(separatedBy: separators)
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
+        .compactMap(sanitizedClassLabel)
         .reduce(into: [String]()) { result, value in
             if !result.contains(where: { $0.localizedCaseInsensitiveCompare(value) == .orderedSame }) {
                 result.append(value)
@@ -137,7 +139,33 @@ func classSummary(
         return names.joined(separator: ", ")
     }
 
-    return profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
+    return sanitizedClassLabel(profile.className) ?? ""
+}
+
+func mergedClassSummary(current: String, adding newValue: String) -> String {
+    let values = (current.components(separatedBy: CharacterSet(charactersIn: ",;/|\n")) + [newValue])
+        .compactMap(sanitizedClassLabel)
+
+    var seen = Set<String>()
+    let unique = values.filter { value in
+        let key = normalizedClassKey(value)
+        guard !key.isEmpty else { return false }
+        return seen.insert(key).inserted
+    }
+
+    return unique.joined(separator: ", ")
+}
+
+func removingClassSummary(current: String, removing valueToRemove: String) -> String {
+    let removalKey = normalizedClassKey(valueToRemove)
+    guard !removalKey.isEmpty else { return current }
+
+    let remaining = current
+        .components(separatedBy: CharacterSet(charactersIn: ",;/|\n"))
+        .compactMap(sanitizedClassLabel)
+        .filter { normalizedClassKey($0) != removalKey }
+
+    return remaining.joined(separator: ", ")
 }
 
 func updatingProfile(
@@ -305,7 +333,7 @@ func mergedStudentProfile(existing: StudentSupportProfile, incoming: StudentSupp
     return StudentSupportProfile(
         id: existing.id,
         name: preferred(existing.name, incoming.name),
-        className: preferred(existing.className, incoming.className),
+        className: sanitizedClassLabel(preferred(existing.className, incoming.className)) ?? "",
         gradeLevel: preferred(existing.gradeLevel, incoming.gradeLevel),
         classDefinitionID: incoming.classDefinitionID ?? existing.classDefinitionID,
         classDefinitionIDs: Array(Set(existing.classDefinitionIDs + incoming.classDefinitionIDs + [existing.classDefinitionID, incoming.classDefinitionID].compactMap { $0 })),
@@ -324,4 +352,20 @@ func mergedStudentProfile(existing: StudentSupportProfile, incoming: StudentSupp
         accommodations: preferred(existing.accommodations, incoming.accommodations),
         prompts: preferred(existing.prompts, incoming.prompts)
     )
+}
+
+private func sanitizedClassLabel(_ rawValue: String) -> String? {
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    let normalized = trimmed
+        .lowercased()
+        .replacingOccurrences(of: "_", with: "")
+        .replacingOccurrences(of: " ", with: "")
+
+    if normalized == "nsmanagedobject" || normalized == "managedobject" {
+        return nil
+    }
+
+    return trimmed
 }

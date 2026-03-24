@@ -179,11 +179,7 @@ struct TodoListView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack {
-                        Menu("Actions") {
-                            Button("Quick Add", systemImage: "square.and.pencil") {
-                                showingQuickCapture = true
-                            }
-
+                        Menu {
                             Button("Students", systemImage: "person.3") {
                                 showingStudentDirectory = true
                             }
@@ -195,6 +191,8 @@ struct TodoListView: View {
                             Button("Daily Sub Plan", systemImage: "doc.text") {
                                 openTodayTab()
                             }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
                         }
 
                         Menu {

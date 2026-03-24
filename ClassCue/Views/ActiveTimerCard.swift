@@ -64,8 +64,12 @@ struct ActiveTimerCard: View {
             return .green
         case .socialStudies:
             return .mint
+        case .assembly:
+            return .pink
         case .prep:
             return .cyan
+        case .studyTime:
+            return .blue
         case .recess:
             return .teal
         case .lunch:
@@ -85,17 +89,7 @@ struct ActiveTimerCard: View {
 
     private var warningStage: WarningStage? {
         guard remaining > 10 else { return nil }
-
-        switch remaining {
-        case ...60:
-            return .oneMinute
-        case ...120:
-            return .twoMinutes
-        case ...300:
-            return .fiveMinutes
-        default:
-            return nil
-        }
+        return WarningStage(minutesRemaining: Int(remaining), configuredMinutes: item.warningLeadTimes)
     }
 
     // MARK: - View
@@ -455,40 +449,38 @@ struct ActiveTimerCard: View {
 
 private extension ActiveTimerCard {
     enum WarningStage {
-        case fiveMinutes
-        case twoMinutes
-        case oneMinute
+        case configured(minutes: Int, rank: Int)
+
+        init?(minutesRemaining: Int, configuredMinutes: [Int]) {
+            let sorted = configuredMinutes.filter { $0 > 0 }.sorted(by: >)
+            guard let index = sorted.firstIndex(where: { minutesRemaining <= $0 * 60 && minutesRemaining > max(($0 - 1) * 60, 10) }) else {
+                return nil
+            }
+            self = .configured(minutes: sorted[index], rank: index)
+        }
 
         var label: String {
             switch self {
-            case .fiveMinutes:
-                return "5 MIN"
-            case .twoMinutes:
-                return "2 MIN"
-            case .oneMinute:
-                return "1 MIN"
+            case .configured(let minutes, _):
+                return "\(minutes) MIN"
             }
         }
 
         var tint: Color {
             switch self {
-            case .fiveMinutes:
+            case .configured(_, let rank) where rank == 0:
                 return .yellow
-            case .twoMinutes:
+            case .configured(_, let rank) where rank == 1:
                 return .orange
-            case .oneMinute:
+            default:
                 return .red
             }
         }
 
         var prominentLabel: String {
             switch self {
-            case .fiveMinutes:
-                return "5 MINUTES REMAINING"
-            case .twoMinutes:
-                return "2 MINUTES REMAINING"
-            case .oneMinute:
-                return "1 MINUTE REMAINING"
+            case .configured(let minutes, _):
+                return minutes == 1 ? "1 MINUTE REMAINING" : "\(minutes) MINUTES REMAINING"
             }
         }
     }

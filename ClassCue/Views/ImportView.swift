@@ -429,6 +429,10 @@ struct ImportView: View {
             return .lunch
         case "transition", "passing", "passingperiod":
             return .transition
+        case "assembly":
+            return .assembly
+        case "studytime", "studyhall", "study":
+            return .studyTime
         case "blank", "none", "clear":
             return .blank
         case "other", "":

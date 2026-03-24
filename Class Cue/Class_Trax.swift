@@ -25,14 +25,16 @@ struct ClassTraxHomeProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<ClassTraxHomeEntry>) -> Void) {
         let currentDate = Date()
         let snapshot = WidgetSnapshotStore.load()
-        let entries = (0..<12).map { minuteOffset in
+        let timelineDates = timelineDates(for: snapshot, from: currentDate)
+        let entries = timelineDates.map { entryDate in
             ClassTraxHomeEntry(
-                date: Calendar.current.date(byAdding: .minute, value: minuteOffset * 15, to: currentDate) ?? currentDate,
-                snapshot: snapshot
+                date: entryDate,
+                snapshot: snapshotState(snapshot, at: entryDate)
             )
         }
 
-        completion(Timeline(entries: entries, policy: .after(currentDate.addingTimeInterval(15 * 60))))
+        let refreshDate = timelineDates.last?.addingTimeInterval(60 * 5) ?? currentDate.addingTimeInterval(60 * 15)
+        completion(Timeline(entries: entries, policy: .after(refreshDate)))
     }
 
     private var sampleSnapshot: ClassTraxWidgetSnapshot {
@@ -61,11 +63,67 @@ struct ClassTraxHomeProvider: TimelineProvider {
             )
         )
     }
+
+    private func timelineDates(for snapshot: ClassTraxWidgetSnapshot?, from now: Date) -> [Date] {
+        var dates: [Date] = [now]
+
+        if let current = snapshot?.current {
+            dates.append(current.endTime)
+        }
+
+        if let next = snapshot?.next {
+            dates.append(next.startTime)
+            dates.append(next.endTime)
+        }
+
+        let periodicDates = stride(from: 15, through: 90, by: 15).compactMap {
+            Calendar.current.date(byAdding: .minute, value: $0, to: now)
+        }
+        dates.append(contentsOf: periodicDates)
+
+        return Array(
+            Set(dates.map { Calendar.current.dateInterval(of: .minute, for: $0)?.start ?? $0 })
+        )
+        .sorted()
+    }
+
+    private func snapshotState(_ snapshot: ClassTraxWidgetSnapshot?, at date: Date) -> ClassTraxWidgetSnapshot? {
+        guard let snapshot else { return nil }
+
+        let current = snapshot.current.flatMap { block -> ClassTraxWidgetSnapshot.BlockSummary? in
+            guard date >= block.startTime, date < block.endTime else { return nil }
+            return block
+        }
+
+        let next = snapshot.next.flatMap { block -> ClassTraxWidgetSnapshot.BlockSummary? in
+            guard date < block.endTime else { return nil }
+            return block
+        }
+
+        if let current {
+            let normalizedNext = next?.id == current.id ? nil : next
+            return ClassTraxWidgetSnapshot(updatedAt: date, current: current, next: normalizedNext)
+        }
+
+        if let next {
+            if date >= next.startTime {
+                return ClassTraxWidgetSnapshot(updatedAt: date, current: next, next: nil)
+            }
+
+            return ClassTraxWidgetSnapshot(updatedAt: date, current: nil, next: next)
+        }
+
+        return ClassTraxWidgetSnapshot(updatedAt: date, current: nil, next: nil)
+    }
 }
 
 struct ClassTraxHomeEntryView: View {
     let entry: ClassTraxHomeEntry
     @Environment(\.widgetFamily) private var family
+
+    private var snapshot: ClassTraxWidgetSnapshot? {
+        entry.snapshot
+    }
 
     var body: some View {
         ZStack {
@@ -90,7 +148,7 @@ struct ClassTraxHomeEntryView: View {
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [accentColor(for: entry.snapshot?.current ?? entry.snapshot?.next).opacity(0.08), .clear],
+                                colors: [accentColor(for: snapshot?.current ?? snapshot?.next).opacity(0.08), .clear],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -118,12 +176,12 @@ struct ClassTraxHomeEntryView: View {
         VStack(alignment: .leading, spacing: 6) {
             headerRow
 
-            if let current = entry.snapshot?.current {
+            if let current = snapshot?.current {
                 compactHero(title: "Now", block: current, timerDate: current.endTime)
-                if let next = entry.snapshot?.next {
+                if let next = snapshot?.next {
                     compactNextRow(next)
                 }
-            } else if let next = entry.snapshot?.next {
+            } else if let next = snapshot?.next {
                 compactHero(title: "Up Next", block: next, timerDate: next.startTime)
             } else {
                 emptyState
@@ -138,13 +196,13 @@ struct ClassTraxHomeEntryView: View {
         VStack(alignment: .leading, spacing: 6) {
             headerRow
 
-            if let current = entry.snapshot?.current {
+            if let current = snapshot?.current {
                 compactHero(title: "Now", block: current, timerDate: current.endTime)
             } else {
                 emptyState
             }
 
-            if let next = entry.snapshot?.next {
+            if let next = snapshot?.next {
                 compactNextRow(next)
             }
 
@@ -166,7 +224,7 @@ struct ClassTraxHomeEntryView: View {
 
             Spacer()
 
-            Text(entry.snapshot?.current == nil && entry.snapshot?.next == nil ? "Wrapped" : "Now")
+            Text(snapshot?.current == nil && snapshot?.next == nil ? "Wrapped" : "Now")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
         }

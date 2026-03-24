@@ -2,6 +2,7 @@ import SwiftUI
 
 struct EditClassDefinitionView: View {
     @Binding var classDefinitions: [ClassDefinitionItem]
+    @Binding var studentProfiles: [StudentSupportProfile]
     let existing: ClassDefinitionItem?
 
     @Environment(\.dismiss) private var dismiss
@@ -10,6 +11,7 @@ struct EditClassDefinitionView: View {
     @State private var scheduleType: ClassDefinitionItem.ScheduleKind = .other
     @State private var gradeLevel = ""
     @State private var defaultLocation = ""
+    @State private var selectedStudentIDs = Set<UUID>()
 
     var body: some View {
         NavigationStack {
@@ -31,6 +33,17 @@ struct EditClassDefinitionView: View {
                     }
 
                     TextField("Default Room / Location", text: $defaultLocation)
+                }
+
+                Section("Linked Students") {
+                    if sortedStudentProfiles.isEmpty {
+                        Text("No students saved yet. Add students in Class List, then link them here.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(sortedStudentProfiles) { profile in
+                            linkedStudentRow(profile)
+                        }
+                    }
                 }
             }
             .navigationTitle(existing == nil ? "Add Class" : "Edit Class")
@@ -55,6 +68,11 @@ struct EditClassDefinitionView: View {
                 scheduleType = existing.scheduleKind
                 gradeLevel = GradeLevelOption.normalized(existing.gradeLevel)
                 defaultLocation = existing.defaultLocation
+                selectedStudentIDs = Set(
+                    studentProfiles
+                        .filter { profileMatches(classDefinitionID: existing.id, profile: $0) }
+                        .map(\.id)
+                )
             }
         }
     }
@@ -75,6 +93,80 @@ struct EditClassDefinitionView: View {
         }
 
         classDefinitions.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        syncLinkedStudents(for: item)
         dismiss()
+    }
+
+    private var sortedStudentProfiles: [StudentSupportProfile] {
+        studentProfiles.sorted { lhs, rhs in
+            let lhsSelected = selectedStudentIDs.contains(lhs.id)
+            let rhsSelected = selectedStudentIDs.contains(rhs.id)
+            if lhsSelected != rhsSelected {
+                return lhsSelected && !rhsSelected
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    @ViewBuilder
+    private func linkedStudentRow(_ profile: StudentSupportProfile) -> some View {
+        let isSelected = selectedStudentIDs.contains(profile.id)
+
+        Button {
+            if isSelected {
+                selectedStudentIDs.remove(profile.id)
+            } else {
+                selectedStudentIDs.insert(profile.id)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.name)
+                        .foregroundStyle(.primary)
+
+                    let detail = [profile.gradeLevel, classSummary(for: profile, in: classDefinitions)]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " • ")
+
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func syncLinkedStudents(for definition: ClassDefinitionItem) {
+        let updatedDefinitions = classDefinitions
+
+        for index in studentProfiles.indices {
+            let isSelected = selectedStudentIDs.contains(studentProfiles[index].id)
+            let linkedIDs = linkedClassDefinitionIDs(for: studentProfiles[index])
+            let alreadyLinked = linkedIDs.contains(definition.id)
+
+            if isSelected && !alreadyLinked {
+                studentProfiles[index] = updatingProfile(
+                    studentProfiles[index],
+                    linkedTo: linkedIDs + [definition.id],
+                    definitions: updatedDefinitions
+                )
+            } else if !isSelected && alreadyLinked {
+                studentProfiles[index] = updatingProfile(
+                    studentProfiles[index],
+                    linkedTo: linkedIDs.filter { $0 != definition.id },
+                    definitions: updatedDefinitions
+                )
+            }
+        }
     }
 }

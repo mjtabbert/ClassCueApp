@@ -30,6 +30,12 @@ final class NotificationManager {
         UserDefaults.standard.integer(forKey: "school_quiet_minute")
     }
 
+    private var schedulePauseUntil: Date? {
+        let rawValue = UserDefaults.standard.double(forKey: "ignore_until_v1")
+        guard rawValue > Date().timeIntervalSince1970 else { return nil }
+        return Date(timeIntervalSince1970: rawValue)
+    }
+
     private var warningFiveSoundPreference: String {
         UserDefaults.standard.string(forKey: "pref_warning_sound_5min") ?? SoundPattern.softChime.rawValue
     }
@@ -66,6 +72,8 @@ final class NotificationManager {
     ) {
 
         removeClassTraxNotifications {
+            guard self.schedulePauseUntil == nil else { return }
+
             let regularAlarms: [AlarmItem]
 
             if let activeOverrideDate {
@@ -105,9 +113,9 @@ final class NotificationManager {
 
         for alarm in alarms {
 
-            scheduleWarning(for: alarm, minutesBefore: 5)
-            scheduleWarning(for: alarm, minutesBefore: 2)
-            scheduleWarning(for: alarm, minutesBefore: 1)
+            for (index, minutesBefore) in alarm.warningLeadTimes.enumerated() {
+                scheduleWarning(for: alarm, minutesBefore: minutesBefore, warningIndex: index)
+            }
             scheduleStartNotification(for: alarm)
             scheduleEndNotification(for: alarm)
         }
@@ -115,9 +123,9 @@ final class NotificationManager {
 
     private func scheduleOverrideNotifications(for alarms: [AlarmItem], on date: Date) {
         for alarm in alarms {
-            scheduleOneOffWarning(for: alarm, minutesBefore: 5, on: date)
-            scheduleOneOffWarning(for: alarm, minutesBefore: 2, on: date)
-            scheduleOneOffWarning(for: alarm, minutesBefore: 1, on: date)
+            for (index, minutesBefore) in alarm.warningLeadTimes.enumerated() {
+                scheduleOneOffWarning(for: alarm, minutesBefore: minutesBefore, warningIndex: index, on: date)
+            }
             scheduleOneOffStartNotification(for: alarm, on: date)
             scheduleOneOffEndNotification(for: alarm, on: date)
         }
@@ -144,12 +152,12 @@ final class NotificationManager {
 
     // MARK: Warning
 
-    private func scheduleWarning(for alarm: AlarmItem, minutesBefore: Int) {
+    private func scheduleWarning(for alarm: AlarmItem, minutesBefore: Int, warningIndex: Int) {
 
         guard alarm.type != .transition else { return }
         guard alarm.type != .blank else { return }
 
-        guard let date = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: alarm.startTime) else { return }
+        guard let date = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: alarm.endTime) else { return }
         guard !shouldSuppressForQuietHours(date) else { return }
 
         var components = Calendar.current.dateComponents([.hour,.minute], from: date)
@@ -161,9 +169,9 @@ final class NotificationManager {
         content.title = warningTitle(minutesBefore: minutesBefore)
         content.subtitle = warningSubtitle(for: alarm, minutesBefore: minutesBefore)
 
-        content.body = warningBody(for: alarm, minutesBefore: minutesBefore)
+        content.body = warningBody(for: alarm)
 
-        content.sound = selectedWarningSound(minutesBefore: minutesBefore)
+        content.sound = selectedWarningSound(warningIndex: warningIndex)
 
         content.categoryIdentifier = "CLASSTRAX_BELL"
         content.interruptionLevel = .timeSensitive
@@ -183,10 +191,10 @@ final class NotificationManager {
         center.add(request)
     }
 
-    private func scheduleOneOffWarning(for alarm: AlarmItem, minutesBefore: Int, on date: Date) {
+    private func scheduleOneOffWarning(for alarm: AlarmItem, minutesBefore: Int, warningIndex: Int, on date: Date) {
         guard alarm.type != .transition else { return }
         guard alarm.type != .blank else { return }
-        guard let warningDate = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: anchoredDate(alarm.startTime, on: date)) else {
+        guard let warningDate = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: anchoredDate(alarm.endTime, on: date)) else {
             return
         }
         guard warningDate > Date() else { return }
@@ -195,8 +203,8 @@ final class NotificationManager {
         let content = UNMutableNotificationContent()
         content.title = warningTitle(minutesBefore: minutesBefore)
         content.subtitle = warningSubtitle(for: alarm, minutesBefore: minutesBefore)
-        content.body = warningBody(for: alarm, minutesBefore: minutesBefore)
-        content.sound = selectedWarningSound(minutesBefore: minutesBefore)
+        content.body = warningBody(for: alarm)
+        content.sound = selectedWarningSound(warningIndex: warningIndex)
         content.categoryIdentifier = "CLASSTRAX_BELL"
         content.interruptionLevel = .timeSensitive
         content.relevanceScore = 1.0
@@ -344,12 +352,12 @@ final class NotificationManager {
         return BellSound.fromStoredPreference(raw).notificationSound
     }
 
-    private func selectedWarningSound(minutesBefore: Int) -> UNNotificationSound? {
+    private func selectedWarningSound(warningIndex: Int) -> UNNotificationSound? {
         let rawValue: String
-        switch minutesBefore {
-        case 5:
+        switch warningIndex {
+        case 0:
             rawValue = warningFiveSoundPreference
-        case 2:
+        case 1:
             rawValue = warningTwoSoundPreference
         default:
             rawValue = warningOneSoundPreference
@@ -370,21 +378,14 @@ final class NotificationManager {
     }
 
     private func warningTitle(minutesBefore: Int) -> String {
-        switch minutesBefore {
-        case 5:
-            return "🟡 5 Minute Warning"
-        case 2:
-            return "🟠 2 Minute Warning"
-        default:
-            return "🔴 1 Minute Warning"
-        }
+        "\(minutesBefore) Minute Warning"
     }
 
     private func warningSubtitle(for alarm: AlarmItem, minutesBefore: Int) -> String {
-        "\(alarm.className) starts in \(minutesBefore) minute\(minutesBefore == 1 ? "" : "s")"
+        "\(alarm.className) ends in \(minutesBefore) minute\(minutesBefore == 1 ? "" : "s")"
     }
 
-    private func warningBody(for alarm: AlarmItem, minutesBefore: Int) -> String {
+    private func warningBody(for alarm: AlarmItem) -> String {
         let roomText = alarm.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ""
             : " • \(alarm.location)"
@@ -393,19 +394,8 @@ final class NotificationManager {
     }
 
     private func systemWeekday(from appDay: Int) -> Int {
-
-        switch appDay {
-
-        case 1: return 2
-        case 2: return 3
-        case 3: return 4
-        case 4: return 5
-        case 5: return 6
-        case 6: return 7
-        case 7: return 1
-
-        default: return 2
-        }
+        guard (1...7).contains(appDay) else { return 1 }
+        return appDay
     }
 
     private func anchoredDate(_ time: Date, on day: Date) -> Date {

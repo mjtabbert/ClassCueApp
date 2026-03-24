@@ -40,12 +40,12 @@ struct DebugView: View {
 
                     if ignoreUntil > Date().timeIntervalSince1970 {
                         LabeledContent(
-                            "Holiday Mode",
+                            "Alert Snooze",
                             value: Date(timeIntervalSince1970: ignoreUntil)
                                 .formatted(date: .abbreviated, time: .shortened)
                         )
                     } else {
-                        LabeledContent("Holiday Mode", value: "Off")
+                        LabeledContent("Alert Snooze", value: "Off")
                     }
                 }
 

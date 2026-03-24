@@ -28,7 +28,7 @@ enum GradeLevelOption: String, CaseIterable, Codable, Identifiable {
 
     var id: String { rawValue }
 
-    static func normalized(_ value: String) -> String {
+    nonisolated static func normalized(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 

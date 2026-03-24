@@ -9,11 +9,83 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
 
 struct TodayView: View {
+    enum TodayDashboardCard: String, CaseIterable, Identifiable {
+        case teacherContext
+        case currentClass
+        case commitments
+        case upcoming
+        case tasks
+        case support
+        case notes
+        case endOfDay
+        case subPlan
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .teacherContext:
+                return "Teacher Context"
+            case .currentClass:
+                return "Current / Next Class"
+            case .commitments:
+                return "Commitments"
+            case .upcoming:
+                return "Upcoming"
+            case .tasks:
+                return "Tasks"
+            case .support:
+                return "Class Support"
+            case .notes:
+                return "Notes Snapshot"
+            case .endOfDay:
+                return "End of Day"
+            case .subPlan:
+                return "Sub Plan"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .teacherContext:
+                return "sparkles"
+            case .currentClass:
+                return "studentdesk"
+            case .commitments:
+                return "briefcase"
+            case .upcoming:
+                return "calendar.badge.clock"
+            case .tasks:
+                return "checklist"
+            case .support:
+                return "person.crop.circle.badge.checkmark"
+            case .notes:
+                return "note.text"
+            case .endOfDay:
+                return "sun.max"
+            case .subPlan:
+                return "doc.text"
+            }
+        }
+
+        static let defaultOrder: [TodayDashboardCard] = [
+            .teacherContext,
+            .currentClass,
+            .commitments,
+            .upcoming,
+            .tasks,
+            .support,
+            .notes,
+            .endOfDay,
+            .subPlan
+        ]
+    }
 
     @Binding var alarms: [AlarmItem]
     @Binding var todos: [TodoItem]
@@ -30,12 +102,15 @@ struct TodayView: View {
     let ignoreDate: Date?
     let onRefresh: @MainActor () -> Void
     let openScheduleTab: () -> Void
+    let openStudentsTab: () -> Void
     let openTodoTab: () -> Void
     let openNotesTab: () -> Void
     let openSettingsTab: () -> Void
 
     @AppStorage("notes_v1") private var notesText: String = ""
     @AppStorage("personal_notes_v1") private var personalNotesText: String = ""
+    @AppStorage("today_quick_note_draft_v1") private var todayQuickNoteDraft = ""
+    @AppStorage("today_quick_note_draft_token_v1") private var todayQuickNoteDraftToken: Double = 0
     @AppStorage("school_quiet_hours_enabled") private var schoolQuietHoursEnabled = false
     @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
     @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
@@ -44,6 +119,8 @@ struct TodayView: View {
     @AppStorage("school_hide_dashboard_after_hours") private var hideSchoolDashboardAfterHours = true
     @AppStorage("school_show_personal_focus_card") private var showPersonalFocusCard = true
     @AppStorage("live_activities_enabled") private var liveActivitiesEnabled = true
+    @AppStorage("today_dashboard_card_order_v1") private var storedDashboardCardOrder = ""
+    @AppStorage("today_dashboard_hidden_cards_v1") private var storedHiddenDashboardCards = ""
 
     @State private var activeWarning: InAppWarning?
     @State private var lastWarningKey: String?
@@ -63,7 +140,10 @@ struct TodayView: View {
     @State private var attendanceItem: AlarmItem?
     @State private var subPlanItem: AlarmItem?
     @State private var showingDailySubPlan = false
+    @State private var quickSchoolNoteText = ""
     @State private var pendingLiveActivityStopTask: Task<Void, Never>?
+    @State private var dashboardCardOrder = TodayDashboardCard.defaultOrder
+    @State private var hiddenDashboardCards = Set<TodayDashboardCard>()
 
     private var extraTimeByItemID: [UUID: TimeInterval] {
         SessionControlStore.extraTimeByItemID()
@@ -75,7 +155,7 @@ struct TodayView: View {
 
     var body: some View {
 
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
+        TimelineView(.periodic(from: .now, by: 1.0)) { context in
 
             let now = context.date
             let schedule = adjustedTodaySchedule(for: now)
@@ -151,38 +231,12 @@ struct TodayView: View {
             .onChange(of: now) {
                 processBellIfNeeded(activeItem, now: now)
             }
-            .onChange(of: liveActivityState(for: activeItem, now: now)) { _, newValue in
-                syncLiveActivity(with: newValue)
-            }
-            .onChange(of: widgetSnapshot(activeItem: activeItem, nextItem: nextItem, now: now)) { _, newValue in
-                syncWidgetSnapshot(newValue)
-            }
-            .task {
-                syncLiveActivity(with: liveActivityState(for: activeItem, now: now))
-                syncWidgetSnapshot(widgetSnapshot(activeItem: activeItem, nextItem: nextItem, now: now))
-            }
             .confirmationDialog(
                 activeItem == nil ? "Class Controls" : "\(activeItem?.className ?? "Class") Controls",
                 isPresented: $showingSessionActions,
                 titleVisibility: .visible
             ) {
                 if let activeItem {
-                    Button(isHeld(activeItem) ? "Resume Class" : "Hold Class") {
-                        toggleHold(for: activeItem, now: now)
-                    }
-
-                    Button("Extend 1 Minute") {
-                        extend(activeItem, byMinutes: 1)
-                    }
-
-                    Button("Extend 2 Minutes") {
-                        extend(activeItem, byMinutes: 2)
-                    }
-
-                    Button("Extend 5 Minutes") {
-                        extend(activeItem, byMinutes: 5)
-                    }
-
                     Button(
                         skippedBellItemIDs.contains(activeItem.id) ? "Bell Already Skipped" : "Skip Bell",
                         role: skippedBellItemIDs.contains(activeItem.id) ? .cancel : nil
@@ -233,6 +287,7 @@ struct TodayView: View {
                 NavigationStack {
                     TodayClassRosterView(
                         item: item,
+                        alarms: $alarms,
                         profiles: $studentSupportProfiles,
                         classDefinitions: classDefinitions
                     )
@@ -254,8 +309,8 @@ struct TodayView: View {
                         item: item,
                         date: now,
                         students: rosterStudents(for: item),
-                        schedule: adjustedTodaySchedule(for: now),
-                        commitments: commitmentsForToday(now: now),
+                        alarms: alarms,
+                        commitments: commitments,
                         activeOverrideName: activeOverrideName,
                         attendanceRecords: attendanceRecords,
                         subPlans: $subPlans
@@ -266,8 +321,8 @@ struct TodayView: View {
                 NavigationStack {
                     TodayDailySubPlanView(
                         date: now,
-                        schedule: adjustedTodaySchedule(for: now),
-                        commitments: commitmentsForToday(now: now),
+                        alarms: alarms,
+                        commitments: commitments,
                         activeOverrideName: activeOverrideName,
                         students: studentSupportProfiles,
                         attendanceRecords: attendanceRecords,
@@ -276,6 +331,15 @@ struct TodayView: View {
                     )
                 }
             }
+            .onAppear {
+                loadDashboardCardOrderIfNeeded()
+            }
+            .onChange(of: dashboardCardOrder) { _, newValue in
+                persistDashboardCardOrder(newValue)
+            }
+            .onChange(of: hiddenDashboardCards) { _, newValue in
+                persistHiddenDashboardCards(newValue)
+            }
         }
     }
 
@@ -283,7 +347,7 @@ struct TodayView: View {
 
     func header(now: Date) -> some View {
 
-        VStack(spacing: 4) {
+        VStack(spacing: 1) {
 
             Text(now.formatted(.dateTime.weekday(.wide)))
                 .font(.caption)
@@ -294,26 +358,12 @@ struct TodayView: View {
             Text(now.formatted(.dateTime.month().day()))
                 .font(.largeTitle)
                 .fontWeight(.bold)
+
+            if let ignoreDate, ignoreDate > now {
+                notificationPauseBadge(until: ignoreDate)
+            }
         }
-        .padding(.top)
-    }
-
-    private func holidayModeBanner(until date: Date) -> some View {
-
-        HStack(spacing: 10) {
-            Image(systemName: "bell.slash.fill")
-                .foregroundColor(.orange)
-
-            Text("Holiday mode is on until \(date.formatted(date: .abbreviated, time: .shortened)).")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.orange.opacity(0.12))
-        )
+        .padding(.top, -8)
     }
 
     @ViewBuilder
@@ -383,14 +433,9 @@ struct TodayView: View {
     ) -> some View {
 
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: 10) {
 
                 header(now: now)
-
-                if let ignoreDate, ignoreDate > now {
-                    holidayModeBanner(until: ignoreDate)
-                        .padding(.horizontal)
-                }
 
                 if let activeOverrideName {
                     overrideBanner(name: activeOverrideName)
@@ -436,6 +481,7 @@ struct TodayView: View {
                 }
             }
             .padding(.bottom, 96)
+            .padding(.top, -6)
         }
         .refreshable {
             onRefresh()
@@ -451,12 +497,10 @@ struct TodayView: View {
         todayCommitments: [CommitmentItem]
     ) -> some View {
 
-        VStack(spacing: 12) {
+        VStack(spacing: 4) {
 
-            landscapeHeader(now: now)
-
-            if let ignoreDate, ignoreDate > now {
-                holidayModeBanner(until: ignoreDate)
+            if ignoreDate != nil {
+                landscapeHeader(now: now)
             }
 
             if let activeOverrideName {
@@ -510,7 +554,7 @@ struct TodayView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.top, 18)
+        .padding(.top, 0)
         .padding(.bottom, 12)
     }
 
@@ -532,24 +576,14 @@ struct TodayView: View {
                     endOfDayCard(now: now, schedule: schedule)
                 }
             } else {
-                teacherContextRibbon(
+                orderedDashboardCards(
                     now: now,
                     schedule: schedule,
                     activeItem: activeItem,
-                    nextItem: nextItem
+                    nextItem: nextItem,
+                    todayCommitments: todayCommitments,
+                    compact: false
                 )
-                .padding(.top, 6)
-                classSectionCard(activeItem: activeItem, nextItem: nextItem, compact: false)
-                commitmentsCard(todayCommitments: todayCommitments, compact: false)
-                upcomingStrip(schedule: schedule, now: now, nextItem: nextItem)
-                topTasksCard(now: now)
-                studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: false)
-                notesSnapshotCard(compact: false)
-                schoolBoundaryCard(now: now, schedule: schedule)
-                if showEndOfDayWrapUp {
-                    endOfDayCard(now: now, schedule: schedule)
-                }
-                subPlanCard(schedule: schedule, compact: false)
             }
         }
     }
@@ -580,43 +614,125 @@ struct TodayView: View {
                     }), compact: true)
                 }
 
-                teacherContextRibbon(
+                orderedDashboardCards(
                     now: now,
                     schedule: schedule,
                     activeItem: activeItem,
                     nextItem: nextItem,
+                    todayCommitments: todayCommitments,
                     compact: true
                 )
-                .padding(.top, 6)
-                classSectionCard(activeItem: activeItem, nextItem: nextItem, compact: true)
-                commitmentsCard(todayCommitments: todayCommitments, compact: true)
-                upcomingStrip(schedule: schedule, now: now, nextItem: nextItem, compact: true)
-                topTasksCard(now: now, compact: true)
-                studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: true)
-                notesSnapshotCard(compact: true)
-                schoolBoundaryCard(now: now, schedule: schedule, compact: true)
-                if showEndOfDayWrapUp {
-                    endOfDayCard(now: now, schedule: schedule, compact: true)
-                }
-                subPlanCard(schedule: schedule, compact: true)
             }
         }
     }
 
     @ViewBuilder
-    private func classSectionCard(activeItem: AlarmItem?, nextItem: AlarmItem?, compact: Bool) -> some View {
-        if let item = activeItem ?? nextItem {
+    private func orderedDashboardCards(
+        now: Date,
+        schedule: [AlarmItem],
+        activeItem: AlarmItem?,
+        nextItem: AlarmItem?,
+        todayCommitments: [CommitmentItem],
+        compact: Bool
+    ) -> some View {
+        ForEach(visibleDashboardCards, id: \.self) { card in
+            dashboardCardView(
+                card,
+                now: now,
+                schedule: schedule,
+                activeItem: activeItem,
+                nextItem: nextItem,
+                todayCommitments: todayCommitments,
+                compact: compact
+            )
+        }
+    }
+
+    private var visibleDashboardCards: [TodayDashboardCard] {
+        dashboardCardOrder.filter { card in
+            guard !hiddenDashboardCards.contains(card) else { return false }
+            if card == .endOfDay {
+                return showEndOfDayWrapUp
+            }
+            return true
+        }
+    }
+
+    @ViewBuilder
+    private func dashboardCardView(
+        _ card: TodayDashboardCard,
+        now: Date,
+        schedule: [AlarmItem],
+        activeItem: AlarmItem?,
+        nextItem: AlarmItem?,
+        todayCommitments: [CommitmentItem],
+        compact: Bool
+    ) -> some View {
+        switch card {
+        case .teacherContext:
+            teacherContextRibbon(
+                now: now,
+                schedule: schedule,
+                activeItem: activeItem,
+                nextItem: nextItem,
+                compact: compact
+            )
+            .padding(.top, 6)
+        case .currentClass:
+            classSectionCard(activeItem: activeItem, nextItem: nextItem, schedule: schedule, now: now, compact: compact)
+        case .commitments:
+            commitmentsCard(todayCommitments: todayCommitments, compact: compact)
+        case .upcoming:
+            upcomingStrip(schedule: schedule, now: now, nextItem: nextItem, compact: compact)
+        case .tasks:
+            topTasksCard(now: now, compact: compact)
+        case .support:
+            studentSupportCard(activeItem: activeItem, nextItem: nextItem, compact: compact)
+        case .notes:
+            notesSnapshotCard(compact: compact)
+        case .endOfDay:
+            if showEndOfDayWrapUp {
+                endOfDayCard(now: now, schedule: schedule, compact: compact)
+            }
+        case .subPlan:
+            subPlanCard(schedule: schedule, compact: compact)
+        }
+    }
+
+    @ViewBuilder
+    private func classSectionCard(activeItem: AlarmItem?, nextItem: AlarmItem?, schedule: [AlarmItem], now: Date, compact: Bool) -> some View {
+        let completedItem = schedule.last(where: {
+            endDateToday(for: $0, now: now) < now
+        })
+
+        if let item = activeItem ?? nextItem ?? completedItem {
             let linkedTasks = todos.filter {
                 !$0.isCompleted &&
                 $0.linkedContext.trimmingCharacters(in: .whitespacesAndNewlines)
                     .localizedCaseInsensitiveCompare(item.className.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
             }
             let roster = rosterStudents(for: item)
-            let supportCount = roster.count
+            let previousItem = schedule.last(where: {
+                endDateToday(for: $0, now: now) < now && $0.id != item.id
+            })
+            let sectionTitle: String = {
+                if activeItem?.id == item.id {
+                    return "Current Class"
+                }
+                if nextItem?.id == item.id {
+                    return "Next Class"
+                }
+                return "Last Class"
+            }()
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label(activeItem != nil ? "Current Class" : "Next Class", systemImage: activeItem != nil ? "studentdesk" : "calendar.badge.clock")
+                    Label(
+                        sectionTitle,
+                        systemImage: activeItem?.id == item.id
+                            ? "studentdesk"
+                            : (nextItem?.id == item.id ? "calendar.badge.clock" : "clock.arrow.circlepath")
+                    )
                         .font((compact ? Font.subheadline : .headline).weight(.bold))
 
                     Spacer()
@@ -638,20 +754,8 @@ struct TodayView: View {
                 }
 
                 HStack(spacing: 10) {
-                    if !roster.isEmpty {
-                        Label("\(roster.count) student\(roster.count == 1 ? "" : "s")", systemImage: "person.3.sequence.fill")
-                            .font(compact ? .caption2 : .caption)
-                            .foregroundStyle(.secondary)
-                    }
-
                     if !linkedTasks.isEmpty {
                         Label("\(linkedTasks.count) task\(linkedTasks.count == 1 ? "" : "s")", systemImage: "checklist")
-                            .font(compact ? .caption2 : .caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if supportCount > 0 {
-                        Label("\(supportCount) support\(supportCount == 1 ? "" : "s")", systemImage: "person.crop.circle.badge.checkmark")
                             .font(compact ? .caption2 : .caption)
                             .foregroundStyle(.secondary)
                     }
@@ -674,6 +778,16 @@ struct TodayView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(roster.isEmpty)
+                }
+
+                if let previousItem, activeItem != nil || nextItem != nil {
+                    Button {
+                        attendanceItem = previousItem
+                    } label: {
+                        Label("Take Attendance for Previous Block", systemImage: "clock.arrow.circlepath")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
             .modifier(DashboardCardStyle(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor, compact: compact))
@@ -717,7 +831,7 @@ struct TodayView: View {
         if let activeItem, !activeSupports.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label("Current Class Support", systemImage: "person.crop.circle.badge.checkmark")
+                    Label("Class Support", systemImage: "person.crop.circle.badge.checkmark")
                         .font((compact ? Font.subheadline : .headline).weight(.bold))
 
                     Spacer()
@@ -731,7 +845,9 @@ struct TodayView: View {
                 Text(activeItem.className)
                     .font((compact ? Font.caption : .subheadline).weight(.semibold))
 
-                supportSummaryList(activeSupports, compact: compact)
+                Text("Student details stay private until you open the roster.")
+                    .font(compact ? .caption2 : .caption)
+                    .foregroundStyle(.secondary)
             }
             .modifier(DashboardCardStyle(accent: activeItem.type.themeColor == .clear ? .blue : activeItem.type.themeColor, compact: compact))
         } else if let nextItem, !nextSupports.isEmpty {
@@ -746,7 +862,9 @@ struct TodayView: View {
                 Text(nextItem.className)
                     .font((compact ? Font.caption : .subheadline).weight(.semibold))
 
-                supportSummaryList(nextSupports, compact: compact)
+                Text("Open the class to review roster details when you need them.")
+                    .font(compact ? .caption2 : .caption)
+                    .foregroundStyle(.secondary)
             }
             .modifier(DashboardCardStyle(accent: nextItem.type.themeColor == .clear ? .blue : nextItem.type.themeColor, compact: compact))
         } else if let support = relevantTasks.compactMap({ task in
@@ -768,19 +886,9 @@ struct TodayView: View {
                 Text(support.name)
                     .font((compact ? Font.caption : .subheadline).weight(.semibold))
 
-                if !support.accommodations.isEmpty {
-                    Text(support.accommodations)
-                        .font(compact ? .caption2 : .caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(compact ? 3 : 4)
-                }
-
-                if !support.prompts.isEmpty {
-                    Text(support.prompts)
-                        .font(compact ? .caption2 : .caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(compact ? 2 : 3)
-                }
+                Text("Open the linked class or student record to review details.")
+                    .font(compact ? .caption2 : .caption)
+                    .foregroundStyle(.secondary)
             }
             .modifier(DashboardCardStyle(accent: .mint, compact: compact))
         }
@@ -821,32 +929,6 @@ struct TodayView: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    @ViewBuilder
-    private func supportSummaryList(_ supports: [StudentSupportProfile], compact: Bool) -> some View {
-        ForEach(Array(supports.prefix(compact ? 2 : 3))) { support in
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(support.name)
-                        .font((compact ? Font.caption : .subheadline).weight(.semibold))
-
-                    studentGradePill(support.gradeLevel)
-                }
-
-                let detail = [support.gradeLevel, support.accommodations, support.prompts]
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " • ")
-
-                if !detail.isEmpty {
-                    Text(detail)
-                        .font(compact ? .caption2 : .caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(compact ? 3 : 4)
-                }
-            }
-        }
-    }
-
     private func dayStatusCard(
         now: Date,
         schedule: [AlarmItem],
@@ -860,8 +942,8 @@ struct TodayView: View {
         let tint: Color
 
         if let ignoreDate, ignoreDate > now {
-            statusTitle = "Holiday Mode Active"
-            statusDetail = "Notifications are paused until \(ignoreDate.formatted(date: .abbreviated, time: .shortened))."
+            statusTitle = "Alerts Snoozed"
+            statusDetail = "Notifications are snoozed until \(ignoreDate.formatted(date: .abbreviated, time: .shortened))."
             tint = .orange
         } else if let activeItem {
             statusTitle = "School Day In Motion"
@@ -1167,8 +1249,8 @@ struct TodayView: View {
                 openSettingsTab()
             }
 
-            Button("Students", systemImage: "person.3") {
-                showingStudentDirectory = true
+            Button("Class List", systemImage: "person.3") {
+                openStudentsTab()
             }
 
             Button("Sub Plan", systemImage: "doc.text") {
@@ -1187,22 +1269,6 @@ struct TodayView: View {
 
             if let activeItem {
                 Divider()
-
-                Button(isHeld(activeItem) ? "Resume Class" : "Hold Class", systemImage: isHeld(activeItem) ? "play.fill" : "pause.fill") {
-                    toggleHold(for: activeItem, now: now)
-                }
-
-                Button("Extend 1 Minute", systemImage: "plus") {
-                    extend(activeItem, byMinutes: 1)
-                }
-
-                Button("Extend 2 Minutes", systemImage: "plus") {
-                    extend(activeItem, byMinutes: 2)
-                }
-
-                Button("Extend 5 Minutes", systemImage: "plus") {
-                    extend(activeItem, byMinutes: 5)
-                }
 
                 Button(
                     skippedBellItemIDs.contains(activeItem.id) ? "Bell Already Skipped" : "Skip Bell",
@@ -1399,8 +1465,32 @@ struct TodayView: View {
                     .font(compact ? .caption : .subheadline)
                     .foregroundStyle(.secondary)
             }
+
+            HStack(spacing: 8) {
+                TextField("Quick school note", text: $quickSchoolNoteText)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        submitQuickSchoolNote()
+                    }
+
+                Button("Submit") {
+                    submitQuickSchoolNote()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(quickSchoolNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
         .modifier(DashboardCardStyle(accent: .teal, compact: compact))
+    }
+
+    private func submitQuickSchoolNote() {
+        let trimmed = quickSchoolNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        todayQuickNoteDraft = trimmed
+        todayQuickNoteDraftToken = Date().timeIntervalSince1970
+        quickSchoolNoteText = ""
+        openNotesTab()
     }
 
     private func schoolBoundaryCard(
@@ -1427,7 +1517,7 @@ struct TodayView: View {
             message = "Routine school alerts quiet at \(quietStart.formatted(date: .omitted, time: .shortened)). \(remainingBlocks) block\(remainingBlocks == 1 ? "" : "s") remain in today's school flow."
             tint = .teal
         } else {
-            title = "Protect Personal Time"
+            title = "After Hours Boundary"
             message = "Set an after-hours quiet time so school reminders stop following you home."
             tint = .secondary
         }
@@ -1708,6 +1798,58 @@ struct TodayView: View {
             }
     }
 
+    private func loadDashboardCardOrderIfNeeded() {
+        let stored = decodeDashboardCardOrder(from: storedDashboardCardOrder)
+        dashboardCardOrder = stored.isEmpty ? TodayDashboardCard.defaultOrder : stored
+        hiddenDashboardCards = decodeHiddenDashboardCards(from: storedHiddenDashboardCards)
+    }
+
+    private func persistDashboardCardOrder(_ cards: [TodayDashboardCard]) {
+        storedDashboardCardOrder = cards.map(\.rawValue).joined(separator: ",")
+    }
+
+    private func persistHiddenDashboardCards(_ cards: Set<TodayDashboardCard>) {
+        storedHiddenDashboardCards = cards.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    private func decodeDashboardCardOrder(from string: String) -> [TodayDashboardCard] {
+        let keys = string
+            .split(separator: ",")
+            .map(String.init)
+
+        guard !keys.isEmpty else {
+            return TodayDashboardCard.defaultOrder
+        }
+
+        var seen = Set<TodayDashboardCard>()
+        var resolved: [TodayDashboardCard] = []
+
+        for key in keys {
+            guard let card = TodayDashboardCard(rawValue: key), !seen.contains(card) else { continue }
+            resolved.append(card)
+            seen.insert(card)
+        }
+
+        for card in TodayDashboardCard.defaultOrder where !seen.contains(card) {
+            resolved.append(card)
+        }
+
+        return resolved
+    }
+
+    private func decodeHiddenDashboardCards(from string: String) -> Set<TodayDashboardCard> {
+        Set(
+            string
+                .split(separator: ",")
+                .compactMap { TodayDashboardCard(rawValue: String($0)) }
+        )
+    }
+
+    private func resetDashboardLayout() {
+        dashboardCardOrder = TodayDashboardCard.defaultOrder
+        hiddenDashboardCards.removeAll()
+    }
+
     private func topTasks(for now: Date, workspace: TodoItem.Workspace = .school) -> [TodoItem] {
         todos
             .filter { !$0.isCompleted && $0.workspace == workspace }
@@ -1876,8 +2018,12 @@ struct TodayView: View {
         switch item.type {
         case .math, .ela, .science, .socialStudies:
             return .prep
+        case .assembly:
+            return .meetingFollowUp
         case .prep:
             return .admin
+        case .studyTime:
+            return .prep
         case .recess, .lunch, .transition:
             return .classroom
         case .other, .blank:
@@ -1958,17 +2104,8 @@ struct TodayView: View {
 
         let start = startDateToday(for: item, now: now)
         let secondsRemaining = Int(start.timeIntervalSince(now))
-
-        switch secondsRemaining {
-        case 300:
-            return InAppWarning(item: item, minutesRemaining: 5)
-        case 120:
-            return InAppWarning(item: item, minutesRemaining: 2)
-        case 60:
-            return InAppWarning(item: item, minutesRemaining: 1)
-        default:
-            return nil
-        }
+        let matchingWarning = item.warningLeadTimes.first { secondsRemaining == $0 * 60 }
+        return matchingWarning.map { InAppWarning(item: item, minutesRemaining: $0) }
     }
 
     private func secondaryBackgroundColor(for item: AlarmItem?) -> Color {
@@ -1984,8 +2121,12 @@ struct TodayView: View {
             return .green
         case .socialStudies:
             return .mint
+        case .assembly:
+            return .pink
         case .prep:
             return .cyan
+        case .studyTime:
+            return .blue
         case .recess:
             return .teal
         case .lunch:
@@ -2152,26 +2293,32 @@ struct TodayView: View {
     }
 
     private func landscapeHeader(now: Date) -> some View {
-
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(now.formatted(.dateTime.weekday(.wide)).uppercased())
-                    .font(.caption.weight(.bold))
-                    .tracking(2.4)
-                    .foregroundStyle(.orange)
-
-                Text(now.formatted(.dateTime.month().day()))
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+        HStack(alignment: .center, spacing: 12) {
+            if let ignoreDate, ignoreDate > now {
+                notificationPauseBadge(until: ignoreDate, compact: true)
             }
 
-            Spacer()
-
-            Text(now.formatted(.dateTime.hour().minute().second()))
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func notificationPauseBadge(until date: Date, compact: Bool = false) -> some View {
+        Label(
+            compact
+                ? "Snoozed Until \(date.formatted(date: .omitted, time: .shortened))"
+                : "Alerts Snoozed Until \(date.formatted(date: .abbreviated, time: .shortened))",
+            systemImage: "bell.slash.fill"
+        )
+        .font((compact ? Font.caption2 : .caption).weight(.semibold))
+        .foregroundStyle(.orange)
+        .padding(.horizontal, compact ? 8 : 10)
+        .padding(.vertical, compact ? 4 : 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.orange.opacity(0.14))
+        )
     }
 }
 
@@ -2227,11 +2374,14 @@ private struct LiveActivitySnapshot: Equatable {
 
 private struct TodayClassRosterView: View {
     let item: AlarmItem
+    @Binding var alarms: [AlarmItem]
     @Binding var profiles: [StudentSupportProfile]
     let classDefinitions: [ClassDefinitionItem]
 
+    @Environment(\.dismiss) private var dismiss
     @State private var showingAddExisting = false
     @State private var showingAddNew = false
+    @State private var showingLinkClassSheet = false
     @State private var editingStudent: StudentSupportProfile?
     @State private var editingClassContextStudent: StudentSupportProfile?
 
@@ -2268,6 +2418,34 @@ private struct TodayClassRosterView: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    private var linkedClassDefinition: ClassDefinitionItem? {
+        guard let classDefinitionID = item.classDefinitionID else { return nil }
+        return classDefinitions.first { $0.id == classDefinitionID }
+    }
+
+    private var rosterLinkSummary: String {
+        if let linkedClassDefinition {
+            return "This roster is linked to the saved class \(linkedClassDefinition.displayName). Student links, class-specific notes, and roster edits will stay attached to that saved class."
+        }
+
+        return "This block is using text and grade matching only. Students added here will attach to the class name shown on this block, but class-specific notes work best after linking the block to a saved class."
+    }
+
+    private var suggestedClassDefinitions: [ClassDefinitionItem] {
+        classDefinitionCandidates(
+            name: item.className,
+            gradeLevel: item.gradeLevel,
+            in: classDefinitions
+        )
+    }
+
+    private var remainingClassDefinitions: [ClassDefinitionItem] {
+        let suggestedIDs = Set(suggestedClassDefinitions.map(\.id))
+        return classDefinitions
+            .filter { !suggestedIDs.contains($0.id) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
     var body: some View {
         List {
             Section {
@@ -2288,6 +2466,30 @@ private struct TodayClassRosterView: View {
                 }
                 .padding(.vertical, 6)
                 .listRowBackground(rosterCardBackground(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor))
+            }
+
+            Section("Link Status") {
+                if let linkedClassDefinition {
+                    LabeledContent("Saved Class") {
+                        Text(linkedClassDefinition.displayName)
+                            .foregroundStyle(.primary)
+                    }
+                } else {
+                    LabeledContent("Saved Class") {
+                        Text("Not linked")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(rosterLinkSummary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                if !classDefinitions.isEmpty {
+                    Button(linkedClassDefinition == nil ? "Link to Saved Class" : "Change Saved Class") {
+                        showingLinkClassSheet = true
+                    }
+                }
             }
 
             Section("Roster") {
@@ -2399,6 +2601,11 @@ private struct TodayClassRosterView: View {
                 rosterAddSheet
             }
         }
+        .sheet(isPresented: $showingLinkClassSheet) {
+            NavigationStack {
+                linkClassSheet
+            }
+        }
         .sheet(isPresented: $showingAddNew) {
             EditStudentSupportView(
                 profiles: $profiles,
@@ -2436,6 +2643,10 @@ private struct TodayClassRosterView: View {
                 Text("Add existing students to \(item.className) without creating duplicate student records.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+
+                Text(rosterLinkSummary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Available Students") {
@@ -2471,20 +2682,114 @@ private struct TodayClassRosterView: View {
         }
     }
 
+    private var linkClassSheet: some View {
+        List {
+            Section {
+                Text("Link this schedule block to a saved class so roster edits, class-specific notes, and supports all attach to the same class definition.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !suggestedClassDefinitions.isEmpty {
+                Section("Suggested Matches") {
+                    ForEach(suggestedClassDefinitions) { definition in
+                        Button {
+                            applyClassDefinitionLink(definition)
+                        } label: {
+                            classDefinitionRow(definition)
+                        }
+                    }
+                }
+            }
+
+            Section(suggestedClassDefinitions.isEmpty ? "Saved Classes" : "All Saved Classes") {
+                ForEach(remainingClassDefinitions) { definition in
+                    Button {
+                        applyClassDefinitionLink(definition)
+                    } label: {
+                        classDefinitionRow(definition)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Link Saved Class")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    showingLinkClassSheet = false
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func classDefinitionRow(_ definition: ClassDefinitionItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(definition.displayName)
+                .foregroundStyle(.primary)
+
+            let detail = [definition.typeDisplayName, definition.defaultLocation]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " • ")
+
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func addStudentToClass(_ student: StudentSupportProfile) {
         guard let index = profiles.firstIndex(where: { $0.id == student.id }) else { return }
 
-        let currentIDs = linkedClassDefinitionIDs(for: profiles[index])
-        let updatedIDs = item.classDefinitionID.map { currentIDs + [$0] } ?? currentIDs
-        profiles[index] = updatingProfile(profiles[index], linkedTo: updatedIDs, definitions: classDefinitions)
+        if let classDefinitionID = item.classDefinitionID {
+            let currentIDs = linkedClassDefinitionIDs(for: profiles[index])
+            let updatedIDs = currentIDs + [classDefinitionID]
+            profiles[index] = updatingProfile(profiles[index], linkedTo: updatedIDs, definitions: classDefinitions)
+        } else {
+            var updated = profiles[index]
+            updated.className = mergedClassSummary(current: updated.className, adding: item.className)
+            if updated.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                updated.gradeLevel = GradeLevelOption.normalized(item.gradeLevel)
+            }
+            profiles[index] = updated
+        }
     }
 
     private func removeStudentFromClass(_ student: StudentSupportProfile) {
-        guard let classDefinitionID = item.classDefinitionID else { return }
         guard let index = profiles.firstIndex(where: { $0.id == student.id }) else { return }
 
-        let updatedIDs = linkedClassDefinitionIDs(for: profiles[index]).filter { $0 != classDefinitionID }
-        profiles[index] = updatingProfile(profiles[index], linkedTo: updatedIDs, definitions: classDefinitions)
+        if let classDefinitionID = item.classDefinitionID {
+            let updatedIDs = linkedClassDefinitionIDs(for: profiles[index]).filter { $0 != classDefinitionID }
+            profiles[index] = updatingProfile(profiles[index], linkedTo: updatedIDs, definitions: classDefinitions)
+        } else {
+            var updated = profiles[index]
+            updated.className = removingClassSummary(current: updated.className, removing: item.className)
+            profiles[index] = updated
+        }
+    }
+
+    private func applyClassDefinitionLink(_ definition: ClassDefinitionItem) {
+        guard let index = alarms.firstIndex(where: { $0.id == item.id }) else { return }
+
+        alarms[index].classDefinitionID = definition.id
+        alarms[index].name = definition.name
+
+        let normalizedGrade = GradeLevelOption.normalized(definition.gradeLevel)
+        if !normalizedGrade.isEmpty {
+            alarms[index].gradeLevelValue = normalizedGrade
+        }
+
+        if alarms[index].location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            alarms[index].location = definition.defaultLocation
+        }
+
+        showingLinkClassSheet = false
+        dismiss()
     }
 
     private func rosterCardBackground(accent: Color) -> some View {
@@ -2861,10 +3166,18 @@ private struct TodayClassAttendanceView: View {
 }
 
 private struct TodayClassSubPlanView: View {
+    private enum Field: Hashable {
+        case overview
+        case lessonPlan
+        case materials
+        case subNotes
+        case returnNotes
+    }
+
     let item: AlarmItem
     let date: Date
     let students: [StudentSupportProfile]
-    let schedule: [AlarmItem]
+    let alarms: [AlarmItem]
     let commitments: [CommitmentItem]
     let activeOverrideName: String?
     let attendanceRecords: [AttendanceRecord]
@@ -2877,22 +3190,89 @@ private struct TodayClassSubPlanView: View {
     @State private var lessonPlan = ""
     @State private var materials = ""
     @State private var subNotes = ""
+    @State private var returnNotes = ""
     @State private var includeRoster = true
     @State private var includeSupports = true
     @State private var includeAttendance = true
     @State private var includeCommitments = true
     @State private var includeDaySchedule = true
+    @State private var includeSubProfile = true
     @State private var exportURL: URL?
     @State private var showingShareSheet = false
+    @State private var selectedDate: Date
+    @FocusState private var focusedField: Field?
+
+    init(
+        item: AlarmItem,
+        date: Date,
+        students: [StudentSupportProfile],
+        alarms: [AlarmItem],
+        commitments: [CommitmentItem],
+        activeOverrideName: String?,
+        attendanceRecords: [AttendanceRecord],
+        subPlans: Binding<[SubPlanItem]>
+    ) {
+        self.item = item
+        self.date = date
+        self.students = students
+        self.alarms = alarms
+        self.commitments = commitments
+        self.activeOverrideName = activeOverrideName
+        self.attendanceRecords = attendanceRecords
+        _subPlans = subPlans
+        _selectedDate = State(initialValue: date)
+    }
 
     private var dateKey: String {
-        AttendanceRecord.dateKey(for: date)
+        AttendanceRecord.dateKey(for: selectedDate)
+    }
+
+    private var selectedWeekday: Int {
+        Calendar.current.component(.weekday, from: selectedDate)
+    }
+
+    private var schedule: [AlarmItem] {
+        alarms
+            .filter { $0.dayOfWeek == selectedWeekday }
+            .sorted {
+                if $0.startTime != $1.startTime {
+                    return $0.startTime < $1.startTime
+                }
+                return $0.endTime < $1.endTime
+            }
+    }
+
+    private var commitmentsForSelectedDate: [CommitmentItem] {
+        commitments
+            .filter { $0.dayOfWeek == selectedWeekday }
+            .sorted {
+                if $0.startTime != $1.startTime {
+                    return $0.startTime < $1.startTime
+                }
+                return $0.endTime < $1.endTime
+            }
+    }
+
+    private var displayedOverrideName: String? {
+        Calendar.current.isDate(selectedDate, inSameDayAs: date) ? activeOverrideName : nil
+    }
+
+    private var linkedAlarmForSelectedDate: AlarmItem? {
+        schedule.first { block in
+            if let classDefinitionID = item.classDefinitionID, block.classDefinitionID == classDefinitionID {
+                return true
+            }
+
+            return classNamesMatch(scheduleClassName: block.className, profileClassName: item.className) &&
+                normalizedStudentKey(GradeLevelOption.normalized(block.gradeLevel)) ==
+                normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+        }
     }
 
     private var existingPlan: SubPlanItem? {
         subPlans.first {
             $0.dateKey == dateKey &&
-            ($0.linkedAlarmID == item.id || (
+            ($0.linkedAlarmID == (linkedAlarmForSelectedDate?.id ?? item.id) || (
                 classNamesMatch(scheduleClassName: $0.className, profileClassName: item.className) &&
                 normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
             ))
@@ -2947,7 +3327,7 @@ private struct TodayClassSubPlanView: View {
                         .font(.headline.weight(.bold))
 
                     let meta = [
-                        date.formatted(date: .abbreviated, time: .omitted),
+                        selectedDate.formatted(date: .abbreviated, time: .omitted),
                         item.gradeLevel,
                         item.location
                     ]
@@ -2960,23 +3340,91 @@ private struct TodayClassSubPlanView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
+
+                    Text(displayedOverrideName ?? "Regular Day")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+                        .padding(.vertical, 2)
+
+                    infoRow(
+                        title: "Selected Date",
+                        value: selectedDate.formatted(date: .abbreviated, time: .omitted),
+                        systemImage: "calendar"
+                    )
+
+                    infoRow(
+                        title: "Linked Block",
+                        value: linkedBlockSummaryText,
+                        systemImage: linkedAlarmForSelectedDate == nil ? "exclamationmark.triangle" : "checkmark.circle"
+                    )
+
+                    infoRow(
+                        title: "Saved Draft",
+                        value: existingPlan == nil ? "No saved class packet yet" : "Existing class packet found",
+                        systemImage: existingPlan == nil ? "tray" : "tray.full"
+                    )
                 }
                 .padding(.vertical, 8)
                 .listRowBackground(subPlanCardBackground(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor))
             }
 
+            Section("Plan Date") {
+                DatePicker(
+                    "Date",
+                    selection: $selectedDate,
+                    displayedComponents: .date
+                )
+
+                Text(
+                    linkedAlarmForSelectedDate == nil
+                    ? "No matching class block is scheduled on that date yet. You can still prep the packet now and link it to the saved class when that block exists."
+                    : "Choose the day first so this class sub plan saves against the correct class block."
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+
             Section("Sub Overview") {
                 TextField("Quick summary for the substitute", text: $overview, axis: .vertical)
                     .lineLimit(2...4)
+                    .focused($focusedField, equals: .overview)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .lessonPlan
+                    }
                 TextField("Lesson plan or class flow", text: $lessonPlan, axis: .vertical)
                     .lineLimit(4...8)
+                    .focused($focusedField, equals: .lessonPlan)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .materials
+                    }
             }
 
             Section("Materials & Notes") {
                 TextField("Materials, copies, links, devices", text: $materials, axis: .vertical)
                     .lineLimit(3...6)
+                    .focused($focusedField, equals: .materials)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .subNotes
+                    }
                 TextField("Sub notes, routines, dismissal reminders", text: $subNotes, axis: .vertical)
                     .lineLimit(4...8)
+                    .focused($focusedField, equals: .subNotes)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .returnNotes
+                    }
+                TextField("Notes the substitute can leave for you", text: $returnNotes, axis: .vertical)
+                    .lineLimit(3...6)
+                    .focused($focusedField, equals: .returnNotes)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        focusedField = nil
+                    }
             }
 
             Section("Include in Export") {
@@ -2985,6 +3433,7 @@ private struct TodayClassSubPlanView: View {
                 Toggle("Include attendance snapshot", isOn: $includeAttendance)
                 Toggle("Include commitments", isOn: $includeCommitments)
                 Toggle("Include day schedule", isOn: $includeDaySchedule)
+                Toggle("Include Sub Plan Profile", isOn: $includeSubProfile)
             }
 
             Section("Packet Preview") {
@@ -3103,29 +3552,33 @@ private struct TodayClassSubPlanView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button("Export") {
-                    save()
-                    exportPlan()
+                Menu("Export") {
+                    Button("Text") {
+                        focusedField = nil
+                        save()
+                        exportTextPlan()
+                    }
+
+                    Button("PDF") {
+                        focusedField = nil
+                        save()
+                        exportPDFPlan()
+                    }
                 }
 
                 Button("Save") {
+                    focusedField = nil
                     save()
                     dismiss()
                 }
             }
         }
         .onAppear {
-            if let existingPlan {
-                overview = existingPlan.overview
-                lessonPlan = existingPlan.lessonPlan
-                materials = existingPlan.materials
-                subNotes = existingPlan.subNotes
-                includeRoster = existingPlan.includeRoster
-                includeSupports = existingPlan.includeSupports
-                includeAttendance = existingPlan.includeAttendance
-                includeCommitments = existingPlan.includeCommitments
-                includeDaySchedule = existingPlan.includeDaySchedule
-            }
+            loadExisting()
+        }
+        .onChange(of: selectedDate) { _, _ in
+            focusedField = nil
+            loadExisting()
         }
         .sheet(isPresented: $showingShareSheet) {
             if let exportURL {
@@ -3134,11 +3587,39 @@ private struct TodayClassSubPlanView: View {
         }
     }
 
+    private func loadExisting() {
+        overview = ""
+        lessonPlan = ""
+        materials = ""
+        subNotes = ""
+        returnNotes = ""
+        includeRoster = true
+        includeSupports = true
+        includeAttendance = true
+        includeCommitments = true
+        includeDaySchedule = true
+        includeSubProfile = true
+
+        if let existingPlan {
+            overview = existingPlan.overview
+            lessonPlan = existingPlan.lessonPlan
+            materials = existingPlan.materials
+            subNotes = existingPlan.subNotes
+            returnNotes = existingPlan.returnNotes
+            includeRoster = existingPlan.includeRoster
+            includeSupports = existingPlan.includeSupports
+            includeAttendance = existingPlan.includeAttendance
+            includeCommitments = existingPlan.includeCommitments
+            includeDaySchedule = existingPlan.includeDaySchedule
+            includeSubProfile = existingPlan.includeSubProfile
+        }
+    }
+
     private func save() {
         let updated = SubPlanItem(
             id: existingPlan?.id ?? UUID(),
             dateKey: dateKey,
-            linkedAlarmID: item.id,
+            linkedAlarmID: linkedAlarmForSelectedDate?.id ?? item.id,
             className: item.className,
             gradeLevel: GradeLevelOption.normalized(item.gradeLevel),
             location: item.location,
@@ -3146,11 +3627,13 @@ private struct TodayClassSubPlanView: View {
             lessonPlan: lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines),
             materials: materials.trimmingCharacters(in: .whitespacesAndNewlines),
             subNotes: subNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            returnNotes: returnNotes.trimmingCharacters(in: .whitespacesAndNewlines),
             includeRoster: includeRoster,
             includeSupports: includeSupports,
             includeAttendance: includeAttendance,
             includeCommitments: includeCommitments,
             includeDaySchedule: includeDaySchedule,
+            includeSubProfile: includeSubProfile,
             createdAt: existingPlan?.createdAt ?? Date(),
             updatedAt: Date()
         )
@@ -3162,7 +3645,7 @@ private struct TodayClassSubPlanView: View {
         }
     }
 
-    private func exportPlan() {
+    private func exportTextPlan() {
         let filename = "classtrax-sub-plan-\(dateKey)-\(item.className.replacingOccurrences(of: " ", with: "-")).txt"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         try? exportText().write(to: url, atomically: true, encoding: .utf8)
@@ -3170,15 +3653,33 @@ private struct TodayClassSubPlanView: View {
         showingShareSheet = true
     }
 
+    private func exportPDFPlan() {
+        exportURL = makeSubPlanPDF(
+            title: "ClassTrax Sub Plan",
+            filename: "classtrax-sub-plan-\(dateKey)-\(item.className.replacingOccurrences(of: " ", with: "-"))",
+            body: exportText()
+        )
+        showingShareSheet = exportURL != nil
+    }
+
     private func exportText() -> String {
         let timeFormatter = DateFormatter()
         timeFormatter.timeStyle = .short
         timeFormatter.dateStyle = .none
 
-        let teacherContactText = teacherContactBlock()
-        let emergencyText = emergencyDrillBlock()
-        let classroomAccessText = classroomAccessBlock()
-        let staticNotesText = staticNotesBlock()
+        let profileText = includeSubProfile ? """
+        Teacher Contact
+        \(teacherContactBlock())
+
+        Emergency / Drill
+        \(emergencyDrillBlock())
+
+        Classroom Access
+        \(classroomAccessBlock())
+
+        Static Notes
+        \(staticNotesBlock())
+        """ : ""
 
         let classNotesText = relevantClassNotes.isEmpty ? "None" : relevantClassNotes.map {
             "- \($0.note)"
@@ -3247,27 +3748,17 @@ private struct TodayClassSubPlanView: View {
 
         return """
         ClassTrax Sub Plan
-        \(date.formatted(date: .complete, time: .omitted))
+        \(selectedDate.formatted(date: .complete, time: .omitted))
 
         Active Schedule
-        \(activeOverrideName ?? "Regular Day")
+        \(displayedOverrideName ?? "Regular Day")
 
-        Teacher Contact
-        \(teacherContactText)
-
-        Emergency / Drill
-        \(emergencyText)
-
-        Classroom Access
-        \(classroomAccessText)
-
-        Static Notes
-        \(staticNotesText)
+        \(profileText)
 
         Class
         \(item.className)
         \(GradeLevelOption.normalized(item.gradeLevel)) • \(resolvedRoomText())
-        \(timeFormatter.string(from: item.startTime)) - \(timeFormatter.string(from: item.endTime))
+        \(timeRangeText(using: timeFormatter))
 
         Overview
         \(overview.isEmpty ? "None added" : overview)
@@ -3280,6 +3771,9 @@ private struct TodayClassSubPlanView: View {
 
         Sub Notes
         \(subNotes.isEmpty ? "None added" : subNotes)
+
+        Return Notes
+        \(returnNotes.isEmpty ? "None added" : returnNotes)
 
         Roster
         \(rosterText)
@@ -3306,6 +3800,37 @@ private struct TodayClassSubPlanView: View {
         if !room.isEmpty { return room }
         let fallback = subPlanProfile.room.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback.isEmpty ? "Room not set" : fallback
+    }
+
+    private var linkedBlockSummaryText: String {
+        guard let block = linkedAlarmForSelectedDate else {
+            return "No matching block scheduled"
+        }
+
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return "\(formatter.string(from: block.startTime)) - \(formatter.string(from: block.endTime))"
+    }
+
+    private func timeRangeText(using formatter: DateFormatter) -> String {
+        let block = linkedAlarmForSelectedDate ?? item
+        return "\(formatter.string(from: block.startTime)) - \(formatter.string(from: block.endTime))"
+    }
+
+    private func infoRow(title: String, value: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 8)
+
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.trailing)
+        }
     }
 
     private func teacherContactBlock() -> String {
@@ -3368,11 +3893,12 @@ private struct TodayClassSubPlanView: View {
     }
 
     private var relevantCommitments: [CommitmentItem] {
-        commitments.filter { commitment in
-            let start = anchoredDate(commitment.startTime, on: date)
-            let end = anchoredDate(commitment.endTime, on: date)
-            let classStart = anchoredDate(item.startTime, on: date)
-            let classEnd = anchoredDate(item.endTime, on: date)
+        let block = linkedAlarmForSelectedDate ?? item
+        return commitmentsForSelectedDate.filter { commitment in
+            let start = anchoredDate(commitment.startTime, on: selectedDate)
+            let end = anchoredDate(commitment.endTime, on: selectedDate)
+            let classStart = anchoredDate(block.startTime, on: selectedDate)
+            let classEnd = anchoredDate(block.endTime, on: selectedDate)
             return start < classEnd && end > classStart
         }
     }
@@ -3411,8 +3937,16 @@ private struct TodayClassSubPlanView: View {
 }
 
 private struct TodayDailySubPlanView: View {
+    private enum Field: Hashable {
+        case morningNotes
+        case sharedMaterials
+        case dismissalNotes
+        case emergencyNotes
+        case returnNotes
+    }
+
     let date: Date
-    let schedule: [AlarmItem]
+    let alarms: [AlarmItem]
     let commitments: [CommitmentItem]
     let activeOverrideName: String?
     let students: [StudentSupportProfile]
@@ -3427,13 +3961,17 @@ private struct TodayDailySubPlanView: View {
     @State private var sharedMaterials = ""
     @State private var dismissalNotes = ""
     @State private var emergencyNotes = ""
+    @State private var returnNotes = ""
     @State private var includeAttendance = true
     @State private var includeRoster = true
     @State private var includeSupports = true
     @State private var includeCommitments = true
+    @State private var includeSubProfile = true
     @State private var blockPlans: [UUID: BlockSubPlanDraft] = [:]
     @State private var exportURL: URL?
     @State private var showingShareSheet = false
+    @State private var selectedDate: Date
+    @FocusState private var focusedField: Field?
 
     private struct BlockSubPlanDraft {
         var overview: String = ""
@@ -3442,12 +3980,63 @@ private struct TodayDailySubPlanView: View {
         var subNotes: String = ""
     }
 
+    init(
+        date: Date,
+        alarms: [AlarmItem],
+        commitments: [CommitmentItem],
+        activeOverrideName: String?,
+        students: [StudentSupportProfile],
+        attendanceRecords: [AttendanceRecord],
+        subPlans: Binding<[SubPlanItem]>,
+        dailySubPlans: Binding<[DailySubPlanItem]>
+    ) {
+        self.date = date
+        self.alarms = alarms
+        self.commitments = commitments
+        self.activeOverrideName = activeOverrideName
+        self.students = students
+        self.attendanceRecords = attendanceRecords
+        _subPlans = subPlans
+        _dailySubPlans = dailySubPlans
+        _selectedDate = State(initialValue: date)
+    }
+
     private var dateKey: String {
-        AttendanceRecord.dateKey(for: date)
+        AttendanceRecord.dateKey(for: selectedDate)
     }
 
     private var existingDailyPlan: DailySubPlanItem? {
         dailySubPlans.first { $0.dateKey == dateKey }
+    }
+
+    private var selectedWeekday: Int {
+        Calendar.current.component(.weekday, from: selectedDate)
+    }
+
+    private var schedule: [AlarmItem] {
+        alarms
+            .filter { $0.dayOfWeek == selectedWeekday }
+            .sorted {
+                if $0.startTime != $1.startTime {
+                    return $0.startTime < $1.startTime
+                }
+                return $0.endTime < $1.endTime
+            }
+    }
+
+    private var commitmentsForSelectedDate: [CommitmentItem] {
+        commitments
+            .filter { $0.dayOfWeek == selectedWeekday }
+            .sorted {
+                if $0.startTime != $1.startTime {
+                    return $0.startTime < $1.startTime
+                }
+                return $0.endTime < $1.endTime
+            }
+    }
+
+    private var displayedOverrideName: String? {
+        Calendar.current.isDate(selectedDate, inSameDayAs: date) ? activeOverrideName : nil
     }
 
     private var followUpNotes: [FollowUpNoteItem] {
@@ -3462,17 +4051,50 @@ private struct TodayDailySubPlanView: View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(date.formatted(date: .complete, time: .omitted))
+                    Text(selectedDate.formatted(date: .complete, time: .omitted))
                         .font(.headline.weight(.bold))
                     Text("\(schedule.count) block\(schedule.count == 1 ? "" : "s") prepared for the day")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text(activeOverrideName ?? "Regular Day")
+                    Text(displayedOverrideName ?? "Regular Day")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+
+                    Divider()
+                        .padding(.vertical, 2)
+
+                    dailyInfoRow(
+                        title: "Selected Date",
+                        value: selectedDate.formatted(date: .abbreviated, time: .omitted),
+                        systemImage: "calendar"
+                    )
+
+                    dailyInfoRow(
+                        title: "Saved Draft",
+                        value: existingDailyPlan == nil ? "No saved daily packet yet" : "Existing daily packet found",
+                        systemImage: existingDailyPlan == nil ? "tray" : "tray.full"
+                    )
+
+                    dailyInfoRow(
+                        title: "Class Blocks",
+                        value: "\(schedule.count) total • \(savedBlockCount) saved • \(draftBlockCount) draft",
+                        systemImage: "square.stack.3d.up"
+                    )
                 }
                 .padding(.vertical, 8)
                 .listRowBackground(dailySubPlanCardBackground(accent: .blue))
+            }
+
+            Section("Plan Date") {
+                DatePicker(
+                    "Date",
+                    selection: $selectedDate,
+                    displayedComponents: .date
+                )
+
+                Text("Choose the day first so the correct class blocks load into this sub plan.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -3490,12 +4112,39 @@ private struct TodayDailySubPlanView: View {
             Section("Day-Wide Notes") {
                 TextField("Morning notes for the substitute", text: $morningNotes, axis: .vertical)
                     .lineLimit(2...4)
+                    .focused($focusedField, equals: .morningNotes)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .sharedMaterials
+                    }
                 TextField("Shared materials, links, copies, devices", text: $sharedMaterials, axis: .vertical)
                     .lineLimit(2...4)
+                    .focused($focusedField, equals: .sharedMaterials)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .dismissalNotes
+                    }
                 TextField("Dismissal notes and end-of-day reminders", text: $dismissalNotes, axis: .vertical)
                     .lineLimit(2...4)
+                    .focused($focusedField, equals: .dismissalNotes)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .emergencyNotes
+                    }
                 TextField("Emergency / important alerts", text: $emergencyNotes, axis: .vertical)
                     .lineLimit(2...4)
+                    .focused($focusedField, equals: .emergencyNotes)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        focusedField = .returnNotes
+                    }
+                TextField("Notes the substitute can leave for you", text: $returnNotes, axis: .vertical)
+                    .lineLimit(2...4)
+                    .focused($focusedField, equals: .returnNotes)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        focusedField = nil
+                    }
             }
 
             Section("Include in Export") {
@@ -3503,30 +4152,55 @@ private struct TodayDailySubPlanView: View {
                 Toggle("Include rosters", isOn: $includeRoster)
                 Toggle("Include accommodations and prompts", isOn: $includeSupports)
                 Toggle("Include commitments", isOn: $includeCommitments)
+                Toggle("Include Sub Plan Profile", isOn: $includeSubProfile)
             }
 
             Section("Class Blocks") {
-                ForEach(schedule) { block in
-                    let draft = binding(for: block)
-                    DisclosureGroup {
-                        VStack(spacing: 10) {
-                            TextField("Overview", text: draft.overview, axis: .vertical)
-                                .lineLimit(2...4)
-                            TextField("Lesson plan", text: draft.lessonPlan, axis: .vertical)
-                                .lineLimit(3...6)
-                            TextField("Materials", text: draft.materials, axis: .vertical)
-                                .lineLimit(2...4)
-                            TextField("Sub notes", text: draft.subNotes, axis: .vertical)
-                                .lineLimit(3...6)
-                        }
-                        .padding(.top, 6)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(block.className)
-                                .fontWeight(.semibold)
-                            Text("\(block.startTime.formatted(date: .omitted, time: .shortened)) - \(block.endTime.formatted(date: .omitted, time: .shortened))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                if schedule.isEmpty {
+                    ContentUnavailableView(
+                        "No Class Blocks for This Date",
+                        systemImage: "calendar.badge.exclamationmark",
+                        description: Text("Pick another day or add schedule blocks for this weekday to prepare a full daily sub plan.")
+                    )
+                } else {
+                    ForEach(schedule) { block in
+                        let draft = binding(for: block)
+                        DisclosureGroup {
+                            VStack(spacing: 10) {
+                                TextField("Overview", text: draft.overview, axis: .vertical)
+                                    .lineLimit(2...4)
+                                TextField("Lesson plan", text: draft.lessonPlan, axis: .vertical)
+                                    .lineLimit(3...6)
+                                TextField("Materials", text: draft.materials, axis: .vertical)
+                                    .lineLimit(2...4)
+                                TextField("Sub notes", text: draft.subNotes, axis: .vertical)
+                                    .lineLimit(3...6)
+                            }
+                            .padding(.top, 6)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(block.className)
+                                            .fontWeight(.semibold)
+                                        Text("\(block.startTime.formatted(date: .omitted, time: .shortened)) - \(block.endTime.formatted(date: .omitted, time: .shortened))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer(minLength: 8)
+
+                                    Text(blockDraftStatus(for: block))
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(blockHasSavedDraft(block) ? .green : .secondary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill((blockHasSavedDraft(block) ? Color.green : Color.secondary).opacity(0.12))
+                                        )
+                                }
+                            }
                         }
                     }
                 }
@@ -3554,18 +4228,61 @@ private struct TodayDailySubPlanView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button("Export") {
-                    save()
-                    exportPlan()
+                Menu("Export") {
+                    Menu("Whole Day") {
+                        Button("Text") {
+                            focusedField = nil
+                            save()
+                            exportTextPlan()
+                        }
+
+                        Button("PDF") {
+                            focusedField = nil
+                            save()
+                            exportPDFPlan()
+                        }
+                    }
+
+                    Menu("Specific Class") {
+                        if schedule.isEmpty {
+                            Text("No Class Blocks")
+                        } else {
+                            ForEach(schedule) { block in
+                                Menu(block.className) {
+                                    Button("Text Packet") {
+                                        focusedField = nil
+                                        save()
+                                        exportSingleBlockTextPlan(for: block)
+                                    }
+
+                                    Button("PDF Packet") {
+                                        focusedField = nil
+                                        save()
+                                        exportSingleBlockPDFPlan(for: block)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Button("Missing Work (CSV)") {
+                        focusedField = nil
+                        exportMissingWork()
+                    }
                 }
 
                 Button("Save") {
+                    focusedField = nil
                     save()
                     dismiss()
                 }
             }
         }
         .onAppear {
+            loadExisting()
+        }
+        .onChange(of: selectedDate) { _, _ in
+            focusedField = nil
             loadExisting()
         }
         .sheet(isPresented: $showingShareSheet) {
@@ -3576,15 +4293,29 @@ private struct TodayDailySubPlanView: View {
     }
 
     private func loadExisting() {
+        morningNotes = ""
+        sharedMaterials = ""
+        dismissalNotes = ""
+        emergencyNotes = ""
+        returnNotes = ""
+        includeAttendance = true
+        includeRoster = true
+        includeSupports = true
+        includeCommitments = true
+        includeSubProfile = true
+        blockPlans = [:]
+
         if let existingDailyPlan {
             morningNotes = existingDailyPlan.morningNotes
             sharedMaterials = existingDailyPlan.sharedMaterials
             dismissalNotes = existingDailyPlan.dismissalNotes
             emergencyNotes = existingDailyPlan.emergencyNotes
+            returnNotes = existingDailyPlan.returnNotes
             includeAttendance = existingDailyPlan.includeAttendance
             includeRoster = existingDailyPlan.includeRoster
             includeSupports = existingDailyPlan.includeSupports
             includeCommitments = existingDailyPlan.includeCommitments
+            includeSubProfile = existingDailyPlan.includeSubProfile
         }
 
         for block in schedule {
@@ -3627,6 +4358,39 @@ private struct TodayDailySubPlanView: View {
         )
     }
 
+    private func blockHasSavedDraft(_ block: AlarmItem) -> Bool {
+        subPlans.contains { $0.dateKey == dateKey && $0.linkedAlarmID == block.id }
+    }
+
+    private var savedBlockCount: Int {
+        schedule.filter(blockHasSavedDraft).count
+    }
+
+    private var draftBlockCount: Int {
+        schedule.filter { block in
+            let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
+            let hasTypedContent = !draft.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !draft.materials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !draft.subNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return hasTypedContent && !blockHasSavedDraft(block)
+        }.count
+    }
+
+    private func blockDraftStatus(for block: AlarmItem) -> String {
+        let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
+        let hasTypedContent = !draft.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !draft.materials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !draft.subNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if hasTypedContent {
+            return blockHasSavedDraft(block) ? "Saved" : "Draft"
+        }
+
+        return blockHasSavedDraft(block) ? "Saved" : "Empty"
+    }
+
     private func save() {
         let updatedDaily = DailySubPlanItem(
             id: existingDailyPlan?.id ?? UUID(),
@@ -3635,10 +4399,12 @@ private struct TodayDailySubPlanView: View {
             sharedMaterials: sharedMaterials.trimmingCharacters(in: .whitespacesAndNewlines),
             dismissalNotes: dismissalNotes.trimmingCharacters(in: .whitespacesAndNewlines),
             emergencyNotes: emergencyNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            returnNotes: returnNotes.trimmingCharacters(in: .whitespacesAndNewlines),
             includeAttendance: includeAttendance,
             includeRoster: includeRoster,
             includeSupports: includeSupports,
             includeCommitments: includeCommitments,
+            includeSubProfile: includeSubProfile,
             createdAt: existingDailyPlan?.createdAt ?? Date(),
             updatedAt: Date()
         )
@@ -3663,11 +4429,13 @@ private struct TodayDailySubPlanView: View {
                 lessonPlan: draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines),
                 materials: draft.materials.trimmingCharacters(in: .whitespacesAndNewlines),
                 subNotes: draft.subNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+                returnNotes: returnNotes.trimmingCharacters(in: .whitespacesAndNewlines),
                 includeRoster: includeRoster,
                 includeSupports: includeSupports,
                 includeAttendance: includeAttendance,
                 includeCommitments: includeCommitments,
                 includeDaySchedule: true,
+                includeSubProfile: includeSubProfile,
                 createdAt: existing?.createdAt ?? Date(),
                 updatedAt: Date()
             )
@@ -3680,10 +4448,46 @@ private struct TodayDailySubPlanView: View {
         }
     }
 
-    private func exportPlan() {
+    private func exportTextPlan() {
         let filename = "classtrax-daily-sub-plan-\(dateKey).txt"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         try? exportText().write(to: url, atomically: true, encoding: .utf8)
+        exportURL = url
+        showingShareSheet = true
+    }
+
+    private func exportPDFPlan() {
+        exportURL = makeSubPlanPDF(
+            title: "ClassTrax Daily Sub Plan",
+            filename: "classtrax-daily-sub-plan-\(dateKey)",
+            body: exportText()
+        )
+        showingShareSheet = exportURL != nil
+    }
+
+    private func exportSingleBlockTextPlan(for block: AlarmItem) {
+        let safeName = block.className.replacingOccurrences(of: " ", with: "-")
+        let filename = "classtrax-sub-plan-\(dateKey)-\(safeName).txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? singleBlockExportText(for: block).write(to: url, atomically: true, encoding: .utf8)
+        exportURL = url
+        showingShareSheet = true
+    }
+
+    private func exportSingleBlockPDFPlan(for block: AlarmItem) {
+        let safeName = block.className.replacingOccurrences(of: " ", with: "-")
+        exportURL = makeSubPlanPDF(
+            title: "ClassTrax Sub Plan",
+            filename: "classtrax-sub-plan-\(dateKey)-\(safeName)",
+            body: singleBlockExportText(for: block)
+        )
+        showingShareSheet = exportURL != nil
+    }
+
+    private func exportMissingWork() {
+        let filename = "classtrax-missing-work-\(dateKey).csv"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? missingWorkCSV().write(to: url, atomically: true, encoding: .utf8)
         exportURL = url
         showingShareSheet = true
     }
@@ -3693,10 +4497,19 @@ private struct TodayDailySubPlanView: View {
         timeFormatter.timeStyle = .short
         timeFormatter.dateStyle = .none
 
-        let teacherContactText = teacherContactBlock()
-        let emergencyText = emergencyDrillBlock()
-        let classroomAccessText = classroomAccessBlock()
-        let staticNotesText = staticNotesBlock()
+        let profileText = includeSubProfile ? """
+        Teacher Contact
+        \(teacherContactBlock())
+
+        Emergency / Drill
+        \(emergencyDrillBlock())
+
+        Classroom Access
+        \(classroomAccessBlock())
+
+        Static Notes
+        \(staticNotesBlock())
+        """ : ""
 
         let blockText = schedule.map { block in
             let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
@@ -3782,24 +4595,18 @@ private struct TodayDailySubPlanView: View {
             """
         }.joined(separator: "\n\n--------------------\n\n")
 
+        let renderedBlockText = blockText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "No class blocks are scheduled for this date."
+            : blockText
+
         return """
         ClassTrax Daily Sub Plan
-        \(date.formatted(date: .complete, time: .omitted))
+        \(selectedDate.formatted(date: .complete, time: .omitted))
 
         Active Schedule
-        \(activeOverrideName ?? "Regular Day")
+        \(displayedOverrideName ?? "Regular Day")
 
-        Teacher Contact
-        \(teacherContactText)
-
-        Emergency / Drill
-        \(emergencyText)
-
-        Classroom Access
-        \(classroomAccessText)
-
-        Static Notes
-        \(staticNotesText)
+        \(profileText)
 
         Morning Notes
         \(morningNotes.isEmpty ? "None added" : morningNotes)
@@ -3813,8 +4620,157 @@ private struct TodayDailySubPlanView: View {
         Emergency Notes
         \(emergencyNotes.isEmpty ? "None added" : emergencyNotes)
 
+        Return Notes
+        \(returnNotes.isEmpty ? "None added" : returnNotes)
+
         Day Schedule and Block Plans
-        \(blockText)
+        \(renderedBlockText)
+        """
+    }
+
+    private func missingWorkCSV() -> String {
+        let header = "date,className,gradeLevel,studentName,status,absentHomework"
+        let rows = schedule.flatMap { block in
+            attendanceForBlock(block)
+                .filter { $0.status == .absent && !$0.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map { record in
+                    [
+                        dateKey,
+                        block.className,
+                        GradeLevelOption.normalized(block.gradeLevel),
+                        record.studentName,
+                        record.status.rawValue,
+                        record.absentHomework
+                    ]
+                    .map(csvEscape)
+                    .joined(separator: ",")
+                }
+        }
+
+        if rows.isEmpty {
+            let fallbackRow = [
+                dateKey,
+                "No absent work recorded",
+                "",
+                "",
+                "",
+                ""
+            ]
+            .map(csvEscape)
+            .joined(separator: ",")
+
+            return ([header, fallbackRow]).joined(separator: "\n")
+        }
+
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    private func singleBlockExportText(for block: AlarmItem) -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
+        timeFormatter.dateStyle = .none
+
+        let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
+        let roster = rosterForBlock(block)
+        let attendance = attendanceForBlock(block)
+        let classNotes = classNotesForBlock(block)
+        let studentNotes = studentNotesForBlock(block, roster: roster)
+        let blockCommitments = commitmentsForBlock(block)
+
+        let profileText = includeSubProfile ? """
+        Teacher Contact
+        \(teacherContactBlock())
+
+        Emergency / Drill
+        \(emergencyDrillBlock())
+
+        Classroom Access
+        \(classroomAccessBlock())
+
+        Static Notes
+        \(staticNotesBlock())
+        """ : ""
+
+        let rosterText = includeRoster
+            ? (roster.isEmpty ? "None" : roster.map { student in
+                var lines = ["- \(student.name) [\(GradeLevelOption.pillLabel(for: student.gradeLevel))]"]
+                if includeSupports {
+                    let supports = [student.accommodations, student.prompts]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if !supports.isEmpty {
+                        lines.append("  Supports: \(supports.joined(separator: "; "))")
+                    }
+                }
+                return lines.joined(separator: "\n")
+            }.joined(separator: "\n"))
+            : "Not included"
+
+        let attendanceText = includeAttendance
+            ? (attendance.isEmpty ? "None" : attendance.map {
+                "- \($0.studentName): \($0.status.rawValue)\($0.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : " | Missing work: \($0.absentHomework)")"
+            }.joined(separator: "\n"))
+            : "Not included"
+
+        let classNotesText = classNotes.isEmpty ? "None" : classNotes.map { "- \($0.note)" }.joined(separator: "\n")
+        let studentNotesText = studentNotes.isEmpty ? "None" : studentNotes.map { note in
+            "- \(note.studentOrGroup): \(note.note)"
+        }.joined(separator: "\n")
+        let commitmentsText = includeCommitments
+            ? (blockCommitments.isEmpty ? "None" : blockCommitments.map { commitment in
+                let start = anchoredDate(commitment.startTime, on: selectedDate)
+                let end = anchoredDate(commitment.endTime, on: selectedDate)
+                return "- \(commitment.title) (\(timeFormatter.string(from: start)) - \(timeFormatter.string(from: end)))"
+            }.joined(separator: "\n"))
+            : "Not included"
+
+        return """
+        ClassTrax Sub Plan
+        \(selectedDate.formatted(date: .complete, time: .omitted))
+
+        Class
+        \(block.className)
+
+        Time
+        \(timeFormatter.string(from: anchoredDate(block.startTime, on: selectedDate))) - \(timeFormatter.string(from: anchoredDate(block.endTime, on: selectedDate)))
+
+        Active Schedule
+        \(displayedOverrideName ?? "Regular Day")
+
+        \(profileText)
+
+        Shared Materials
+        \(sharedMaterials.isEmpty ? "None added" : sharedMaterials)
+
+        Overview
+        \(draft.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None added" : draft.overview)
+
+        Lesson Plan
+        \(draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None added" : draft.lessonPlan)
+
+        Materials
+        \(draft.materials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None added" : draft.materials)
+
+        Sub Notes
+        \(draft.subNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None added" : draft.subNotes)
+
+        Return Notes
+        \(returnNotes.isEmpty ? "None added" : returnNotes)
+
+        Roster
+        \(rosterText)
+
+        Attendance
+        \(attendanceText)
+
+        Class Notes
+        \(classNotesText)
+
+        Student Notes
+        \(studentNotesText)
+
+        Commitments
+        \(commitmentsText)
         """
     }
 
@@ -3905,6 +4861,11 @@ private struct TodayDailySubPlanView: View {
         .sorted { $0.studentName.localizedCaseInsensitiveCompare($1.studentName) == .orderedAscending }
     }
 
+    private func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
+
     private func classNotesForBlock(_ block: AlarmItem) -> [FollowUpNoteItem] {
         followUpNotes.filter {
             $0.kind == .classNote &&
@@ -3921,11 +4882,11 @@ private struct TodayDailySubPlanView: View {
     }
 
     private func commitmentsForBlock(_ block: AlarmItem) -> [CommitmentItem] {
-        commitments.filter { commitment in
-            let start = anchoredDate(commitment.startTime, on: date)
-            let end = anchoredDate(commitment.endTime, on: date)
-            let blockStart = anchoredDate(block.startTime, on: date)
-            let blockEnd = anchoredDate(block.endTime, on: date)
+        commitmentsForSelectedDate.filter { commitment in
+            let start = anchoredDate(commitment.startTime, on: selectedDate)
+            let end = anchoredDate(commitment.endTime, on: selectedDate)
+            let blockStart = anchoredDate(block.startTime, on: selectedDate)
+            let blockEnd = anchoredDate(block.endTime, on: selectedDate)
             return start < blockEnd && end > blockStart
         }
     }
@@ -3960,6 +4921,185 @@ private struct TodayDailySubPlanView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(accent.opacity(0.12), lineWidth: 1)
             )
+    }
+
+    private func dailyInfoRow(title: String, value: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 8)
+
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+private func makeSubPlanPDF(title: String, filename: String, body: String) -> URL? {
+    let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(filename)-\(UUID().uuidString).pdf")
+
+    let text = "\(title)\n\n\(body)"
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.lineBreakMode = .byWordWrapping
+
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 14),
+        .paragraphStyle: paragraph
+    ]
+
+    let attributed = NSAttributedString(string: text, attributes: attributes)
+    let printableRect = CGRect(x: 36, y: 36, width: 540, height: 720)
+
+    do {
+        try renderer.writePDF(to: url) { context in
+            var range = NSRange(location: 0, length: attributed.length)
+
+            while range.location < attributed.length {
+                context.beginPage()
+                range = drawSubPlanAttributedString(attributed, in: printableRect, range: range)
+            }
+        }
+        return url
+    } catch {
+        return nil
+    }
+}
+
+private func drawSubPlanAttributedString(_ string: NSAttributedString, in rect: CGRect, range: NSRange) -> NSRange {
+    let framesetter = CTFramesetterCreateWithAttributedString(string)
+    let path = CGPath(rect: rect, transform: nil)
+    let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(range.location, range.length), path, nil)
+    guard let context = UIGraphicsGetCurrentContext() else {
+        return range
+    }
+
+    context.saveGState()
+    context.textMatrix = .identity
+    context.translateBy(x: 0, y: rect.maxY * 2)
+    context.scaleBy(x: 1, y: -1)
+    CTFrameDraw(frame, context)
+    context.restoreGState()
+
+    let visibleRange = CTFrameGetVisibleStringRange(frame)
+    return NSRange(location: range.location + visibleRange.length, length: string.length - range.location - visibleRange.length)
+}
+
+struct TodayLayoutCustomizationView: View {
+    @Binding var cards: [TodayView.TodayDashboardCard]
+    @Binding var hiddenCards: Set<TodayView.TodayDashboardCard>
+    @Environment(\.dismiss) private var dismiss
+
+    private var orderedCards: [TodayView.TodayDashboardCard] {
+        cards
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Text("Current Block and Next Up stay fixed at the top. Choose which cards appear below, then drag them into the order that fits your routine.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Shown on Today") {
+                ForEach(orderedCards, id: \.id) { card in
+                    visibilityRow(for: card)
+                }
+            }
+
+            Section("Card Order") {
+                ForEach(orderedCards, id: \.id) { card in
+                    orderingRow(for: card)
+                }
+                .onMove(perform: moveCards)
+            }
+        }
+        .navigationTitle("Customize Today")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Reset") {
+                    cards = TodayView.TodayDashboardCard.defaultOrder
+                }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                EditButton()
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func moveCards(from source: IndexSet, to destination: Int) {
+        cards.move(fromOffsets: source, toOffset: destination)
+    }
+
+    private func visibilityBinding(for card: TodayView.TodayDashboardCard) -> Binding<Bool> {
+        Binding(
+            get: { !hiddenCards.contains(card) },
+            set: { isVisible in
+                if isVisible {
+                    hiddenCards.remove(card)
+                } else {
+                    hiddenCards.insert(card)
+                }
+            }
+        )
+    }
+
+    private func visibilityRow(for card: TodayView.TodayDashboardCard) -> some View {
+        let isHidden = hiddenCards.contains(card)
+
+        return Toggle(isOn: visibilityBinding(for: card)) {
+            HStack {
+                Label(card.title, systemImage: card.systemImage)
+
+                Spacer()
+
+                Text(isHidden ? "Hidden" : "Shown")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isHidden ? Color.secondary : Color.green)
+            }
+            .opacity(isHidden ? 0.62 : 1.0)
+        }
+    }
+
+    private func orderingRow(for card: TodayView.TodayDashboardCard) -> some View {
+        let isHidden = hiddenCards.contains(card)
+
+        return HStack {
+            Label(card.title, systemImage: card.systemImage)
+                .opacity(isHidden ? 0.62 : 1.0)
+
+            Spacer()
+
+            if isHidden {
+                Text("Hidden")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color(.tertiarySystemFill))
+                    )
+            } else {
+                Image(systemName: "line.3.horizontal")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 }
 

@@ -14,10 +14,12 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
     var sharedMaterials: String
     var dismissalNotes: String
     var emergencyNotes: String
+    var returnNotes: String
     var includeAttendance: Bool = true
     var includeRoster: Bool = true
     var includeSupports: Bool = true
     var includeCommitments: Bool = true
+    var includeSubProfile: Bool = true
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -28,10 +30,12 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
         sharedMaterials: String,
         dismissalNotes: String,
         emergencyNotes: String,
+        returnNotes: String = "",
         includeAttendance: Bool = true,
         includeRoster: Bool = true,
         includeSupports: Bool = true,
         includeCommitments: Bool = true,
+        includeSubProfile: Bool = true,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -41,10 +45,12 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
         self.sharedMaterials = sharedMaterials
         self.dismissalNotes = dismissalNotes
         self.emergencyNotes = emergencyNotes
+        self.returnNotes = returnNotes
         self.includeAttendance = includeAttendance
         self.includeRoster = includeRoster
         self.includeSupports = includeSupports
         self.includeCommitments = includeCommitments
+        self.includeSubProfile = includeSubProfile
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -57,10 +63,12 @@ struct DailySubPlanItem: Identifiable, Codable, Equatable {
         sharedMaterials = try container.decodeIfPresent(String.self, forKey: .sharedMaterials) ?? ""
         dismissalNotes = try container.decodeIfPresent(String.self, forKey: .dismissalNotes) ?? ""
         emergencyNotes = try container.decodeIfPresent(String.self, forKey: .emergencyNotes) ?? ""
+        returnNotes = try container.decodeIfPresent(String.self, forKey: .returnNotes) ?? ""
         includeAttendance = try container.decodeIfPresent(Bool.self, forKey: .includeAttendance) ?? true
         includeRoster = try container.decodeIfPresent(Bool.self, forKey: .includeRoster) ?? true
         includeSupports = try container.decodeIfPresent(Bool.self, forKey: .includeSupports) ?? true
         includeCommitments = try container.decodeIfPresent(Bool.self, forKey: .includeCommitments) ?? true
+        includeSubProfile = try container.decodeIfPresent(Bool.self, forKey: .includeSubProfile) ?? true
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

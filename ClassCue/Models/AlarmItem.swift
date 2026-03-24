@@ -20,7 +20,9 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         case ela
         case science
         case socialStudies
+        case assembly
         case prep
+        case studyTime
         case recess
         case lunch
         case transition
@@ -38,8 +40,12 @@ struct AlarmItem: Identifiable, Codable, Hashable {
                 return .yellow
             case .socialStudies:
                 return .green
+            case .assembly:
+                return .pink
             case .prep:
                 return .blue
+            case .studyTime:
+                return .teal
             case .recess:
                 return .indigo
             case .lunch:
@@ -63,8 +69,12 @@ struct AlarmItem: Identifiable, Codable, Hashable {
                 return "Science"
             case .socialStudies:
                 return "Social Studies"
+            case .assembly:
+                return "Assembly"
             case .prep:
                 return "Prep"
+            case .studyTime:
+                return "Study Time"
             case .recess:
                 return "Recess"
             case .lunch:
@@ -88,8 +98,12 @@ struct AlarmItem: Identifiable, Codable, Hashable {
                 return "atom"
             case .socialStudies:
                 return "globe.americas.fill"
+            case .assembly:
+                return "person.3.fill"
             case .prep:
                 return "pencil.and.ruler.fill"
+            case .studyTime:
+                return "book.closed.fill"
             case .recess:
                 return "figure.run"
             case .lunch:
@@ -116,8 +130,12 @@ struct AlarmItem: Identifiable, Codable, Hashable {
                 self = .science
             case "socialStudies":
                 self = .socialStudies
+            case "assembly":
+                self = .assembly
             case "prep":
                 self = .prep
+            case "studyTime":
+                self = .studyTime
             case "recess":
                 self = .recess
             case "lunch":
@@ -152,6 +170,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
     var gradeLevelValue: String = ""
     var classDefinitionID: UUID? = nil
     var linkedStudentIDs: [UUID] = []
+    var warningLeadTimesValue: [Int] = [5, 2, 1]
 
     init(
         id: UUID = UUID(),
@@ -163,7 +182,8 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         dayOfWeek: Int? = nil,
         gradeLevel: String = "",
         classDefinitionID: UUID? = nil,
-        linkedStudentIDs: [UUID] = []
+        linkedStudentIDs: [UUID] = [],
+        warningLeadTimes: [Int] = [5, 2, 1]
     ) {
         self.id = id
         self.name = name
@@ -175,6 +195,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         self.gradeLevelValue = gradeLevel
         self.classDefinitionID = classDefinitionID
         self.linkedStudentIDs = linkedStudentIDs
+        self.warningLeadTimesValue = AlarmItem.normalizedWarningLeadTimes(warningLeadTimes)
     }
 
     init(
@@ -187,7 +208,8 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         endTime: Date,
         type: ScheduleType = .other,
         classDefinitionID: UUID? = nil,
-        linkedStudentIDs: [UUID] = []
+        linkedStudentIDs: [UUID] = [],
+        warningLeadTimes: [Int] = [5, 2, 1]
     ) {
         self.init(
             id: id,
@@ -199,7 +221,8 @@ struct AlarmItem: Identifiable, Codable, Hashable {
             dayOfWeek: dayOfWeek,
             gradeLevel: gradeLevel,
             classDefinitionID: classDefinitionID,
-            linkedStudentIDs: linkedStudentIDs
+            linkedStudentIDs: linkedStudentIDs,
+            warningLeadTimes: warningLeadTimes
         )
     }
 
@@ -231,6 +254,10 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         scheduleType.themeColor
     }
 
+    var warningLeadTimes: [Int] {
+        AlarmItem.normalizedWarningLeadTimes(warningLeadTimesValue)
+    }
+
     // MARK: - Timing Helpers
 
     var isHappeningNow: Bool {
@@ -244,5 +271,13 @@ struct AlarmItem: Identifiable, Codable, Hashable {
 
     var timeRemaining: TimeInterval {
         max(0, end.timeIntervalSince(Date()))
+    }
+
+    private static func normalizedWarningLeadTimes(_ values: [Int]) -> [Int] {
+        let cleaned = values
+            .filter { $0 > 0 }
+            .map { min($0, 180) }
+        let unique = Array(Set(cleaned)).sorted(by: >)
+        return unique.isEmpty ? [5, 2, 1] : unique
     }
 }

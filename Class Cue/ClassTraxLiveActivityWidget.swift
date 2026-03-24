@@ -20,25 +20,13 @@ struct ClassTraxLiveActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 8) {
-                        ZStack {
-                            Circle()
-                                .fill(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName).opacity(0.14))
-                                .frame(width: 34, height: 34)
-                            Image(systemName: context.state.iconName)
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName))
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(context.state.className)
-                                .font(.headline.weight(.semibold))
-                                .lineLimit(2)
-                            if !context.state.room.isEmpty {
-                                Text(context.state.room)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                    HStack(spacing: 6) {
+                        Image(systemName: context.state.iconName)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(ClassTraxLiveActivityWidget.accentColor(for: context.state.iconName))
+                        Text(context.state.className)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
                     }
                 }
 
@@ -48,32 +36,17 @@ struct ClassTraxLiveActivityWidget: Widget {
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                     } else {
-                        Text(context.state.endTime, style: .timer)
-                            .font(.title2.weight(.black))
+                        Text(timerInterval: Date()...context.state.endTime, countsDown: true, showsHours: false)
+                            .font(.headline.weight(.black))
                             .monospacedDigit()
                     }
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack {
-                        if !context.state.nextClassName.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: context.state.nextIconName)
-                                    .foregroundStyle(ClassTraxLiveActivityWidget.accentColor(for: context.state.nextIconName))
-                                Text("Up Next")
-                                    .fontWeight(.bold)
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            Text(context.state.nextClassName)
-                                .font(.caption)
-                                .lineLimit(1)
-                        } else {
-                            Text("Class Trax")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
+                    if !context.state.nextClassName.isEmpty {
+                        Text("Next Up \(context.state.nextClassName)")
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
                     }
                 }
             } compactLeading: {
@@ -86,9 +59,9 @@ struct ClassTraxLiveActivityWidget: Widget {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.orange)
                 } else {
-                    Text(context.state.endTime, style: .timer)
+                    Image(systemName: "timer")
                         .font(.caption2.weight(.bold))
-                        .monospacedDigit()
+                        .foregroundStyle(.white)
                 }
             } minimal: {
                 Image(systemName: context.state.iconName)

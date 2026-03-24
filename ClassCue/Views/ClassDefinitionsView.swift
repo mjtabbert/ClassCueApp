@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ClassDefinitionsView: View {
     @Binding var classDefinitions: [ClassDefinitionItem]
+    @Binding var profiles: [StudentSupportProfile]
 
     @State private var showingAdd = false
     @State private var editingDefinition: ClassDefinitionItem?
@@ -81,10 +82,10 @@ struct ClassDefinitionsView: View {
             }
         }
         .sheet(isPresented: $showingAdd) {
-            EditClassDefinitionView(classDefinitions: $classDefinitions, existing: nil)
+            EditClassDefinitionView(classDefinitions: $classDefinitions, studentProfiles: $profiles, existing: nil)
         }
         .sheet(item: $editingDefinition) { definition in
-            EditClassDefinitionView(classDefinitions: $classDefinitions, existing: definition)
+            EditClassDefinitionView(classDefinitions: $classDefinitions, studentProfiles: $profiles, existing: definition)
         }
     }
 

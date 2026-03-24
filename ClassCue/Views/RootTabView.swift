@@ -17,9 +17,17 @@ import WidgetKit
 enum AppTab: Hashable {
     case today
     case schedule
+    case students
     case todo
     case notes
+}
+
+enum SecondaryDestination: String, Identifiable {
     case settings
+    case importCSV
+    case exportCSV
+
+    var id: String { rawValue }
 }
 
 // MARK: - Root Tab View
@@ -28,11 +36,13 @@ struct RootTabView: View {
 
     private static let cloudSyncRefreshInterval: Duration = .seconds(8)
     private static let localMutationRefreshPauseSeconds: TimeInterval = 4
+    private static let runtimeSyncHeartbeatInterval: Duration = .seconds(5)
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .today
     @State private var selectedScheduleDay: WeekdayTab = .today
+    @State private var secondaryDestination: SecondaryDestination?
 
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
     @AppStorage("todo_v6_data") private var savedTodos: Data = Data()
@@ -46,6 +56,7 @@ struct RootTabView: View {
     @AppStorage("profiles_v1_data") private var savedProfiles: Data = Data()
     @AppStorage("day_overrides_v1_data") private var savedOverrides: Data = Data()
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
+    @AppStorage("live_activities_enabled") private var liveActivitiesEnabled = true
 
     @State private var alarms: [AlarmItem] = []
     @State private var todos: [TodoItem] = []
@@ -59,6 +70,11 @@ struct RootTabView: View {
     @State private var overrides: [DayOverride] = []
     @State private var lastLocalMutationAt = Date.distantPast
     @State private var isRefreshingFromPersistence = false
+    @State private var pendingLiveActivityStopTask: Task<Void, Never>?
+    @State private var pendingNotificationRefreshTask: Task<Void, Never>?
+    @State private var lastSyncedWidgetSnapshot: ClassTraxWidgetSnapshot?
+    @State private var lastSyncedLiveActivitySnapshot: RootLiveActivitySnapshot?
+    @State private var lastNotificationRefreshSignature: NotificationRefreshSignature?
 
     private var ignoreDate: Date? {
         ignoreUntil > 0 ? Date(timeIntervalSince1970: ignoreUntil) : nil
@@ -103,9 +119,9 @@ struct RootTabView: View {
         TabView(selection: $selectedTab) {
             todayTab
             scheduleTab
+            studentsTab
             todoTab
             notesTab
-            settingsTab
         }
     }
 
@@ -121,6 +137,9 @@ struct RootTabView: View {
                     recordLocalMutation()
                     handleAlarmsChange(newValue)
                     syncSharedSnapshot()
+                }
+                .onChange(of: ignoreUntil) { _, _ in
+                    refreshNotifications(immediate: true)
                 }
                 .onChange(of: todos) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
@@ -176,8 +195,19 @@ struct RootTabView: View {
             syncView
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .active {
+                        ignoreUntil = ScheduleSnoozeStore.synchronize()
                         refreshFromCloudBackedStore()
                         syncSharedSnapshot()
+                    }
+                }
+                .task {
+                    for await _ in NotificationCenter.default.notifications(
+                        named: NSUbiquitousKeyValueStore.didChangeExternallyNotification
+                    ) {
+                        let resolvedIgnoreUntil = ScheduleSnoozeStore.synchronize()
+                        await MainActor.run {
+                            ignoreUntil = resolvedIgnoreUntil
+                        }
                     }
                 }
                 .task(id: scenePhase) {
@@ -187,9 +217,17 @@ struct RootTabView: View {
                 .task(id: scenePhase) {
                     guard scenePhase == .active else { return }
                     while scenePhase == .active && !Task.isCancelled {
-                        syncSharedSnapshot()
-                        try? await Task.sleep(for: .seconds(1))
+                        syncRuntimeState(now: Date())
+                        try? await Task.sleep(for: Self.runtimeSyncHeartbeatInterval)
                     }
+                }
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase != .active {
+                        syncLiveActivity(now: Date())
+                    }
+                }
+                .onAppear {
+                    syncLiveActivity(now: Date())
                 }
                 .onChange(of: attendanceRecords) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
@@ -233,13 +271,26 @@ struct RootTabView: View {
 
     var body: some View {
         makeObservedTabView()
+            .sheet(item: $secondaryDestination) { destination in
+                NavigationStack {
+                    switch destination {
+                    case .settings:
+                        SettingsView()
+                    case .importCSV:
+                        ImportView(alarms: $alarms)
+                    case .exportCSV:
+                        ExportView(alarms: $alarms)
+                    }
+                }
+            }
     }
 
     private func handleOnAppear() {
+        ignoreUntil = ScheduleSnoozeStore.synchronize()
         loadSavedData()
         selectedScheduleDay = .today
-        refreshNotifications()
-        syncSharedSnapshot()
+        refreshNotifications(immediate: true)
+        syncRuntimeState(now: Date())
     }
 
     private func handleSelectedTabChange(_ newTab: AppTab) {
@@ -249,17 +300,63 @@ struct RootTabView: View {
     }
 
     private func handleAlarmsChange(_ newValue: [AlarmItem]) {
-        saveAlarms(newValue)
+        let normalized = normalizedAlarms(newValue)
+        if normalized != newValue {
+            alarms = normalized
+            return
+        }
+
+        saveAlarms(normalized)
         refreshNotifications()
     }
 
     private func syncSharedSnapshot(now: Date = Date()) {
         let snapshot = watchSnapshot(now: now)
+        guard snapshot != lastSyncedWidgetSnapshot else { return }
+        lastSyncedWidgetSnapshot = snapshot
         WidgetSnapshotStore.save(snapshot)
         WatchSessionSyncManager.shared.sync(snapshot: snapshot)
 #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "ClassTraxHomeWidget")
 #endif
+    }
+
+    private func syncLiveActivity(now: Date) {
+        pendingLiveActivityStopTask?.cancel()
+
+        guard liveActivitiesEnabled else {
+            LiveActivityManager.stop()
+            return
+        }
+
+        let snapshot = liveActivitySnapshot(now: now)
+        guard let snapshot else {
+            lastSyncedLiveActivitySnapshot = nil
+            pendingLiveActivityStopTask = Task {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled else { return }
+                LiveActivityManager.stop()
+            }
+            return
+        }
+
+        guard snapshot != lastSyncedLiveActivitySnapshot else { return }
+        lastSyncedLiveActivitySnapshot = snapshot
+
+        LiveActivityManager.sync(
+            className: snapshot.className,
+            room: snapshot.room,
+            endTime: snapshot.endTime,
+            isHeld: snapshot.isHeld,
+            iconName: snapshot.iconName,
+            nextClassName: snapshot.nextClassName,
+            nextIconName: snapshot.nextIconName
+        )
+    }
+
+    private func syncRuntimeState(now: Date) {
+        syncSharedSnapshot(now: now)
+        syncLiveActivity(now: now)
     }
 
     private func watchSnapshot(now: Date) -> ClassTraxWidgetSnapshot {
@@ -288,6 +385,32 @@ struct RootTabView: View {
             updatedAt: now,
             current: activeItem.map(summary),
             next: nextItem.map(summary)
+        )
+    }
+
+    private func liveActivitySnapshot(now: Date) -> RootLiveActivitySnapshot? {
+        let schedule = adjustedTodaySchedule(for: now)
+        guard let activeItem = schedule.first(where: {
+            now >= startDateToday(for: $0, now: now) && now <= endDateToday(for: $0, now: now)
+        }) else {
+            return nil
+        }
+
+        let nextItem = displayableNextItem(schedule.first {
+            startDateToday(for: $0, now: now) > now
+        }, now: now)
+
+        let liveHold = liveHoldDuration(for: activeItem, now: now)
+        let stableEndTime = endDateToday(for: activeItem, now: now).addingTimeInterval(-liveHold)
+
+        return RootLiveActivitySnapshot(
+            className: activeItem.className,
+            room: activeItem.location.trimmingCharacters(in: .whitespacesAndNewlines),
+            endTime: stableEndTime,
+            isHeld: SessionControlStore.isHeld(itemID: activeItem.id),
+            iconName: activeItem.scheduleType.symbolName,
+            nextClassName: nextItem?.className ?? "",
+            nextIconName: nextItem?.scheduleType.symbolName ?? ""
         )
     }
 
@@ -352,36 +475,46 @@ struct RootTabView: View {
     }
 
     private var todayTab: some View {
-        TodayView(
-            alarms: $alarms,
-            todos: $todos,
-            commitments: $commitments,
-            studentSupportProfiles: $studentProfiles,
-            classDefinitions: $classDefinitions,
-            attendanceRecords: $attendanceRecords,
-            subPlans: $subPlans,
-            dailySubPlans: $dailySubPlans,
-            suggestedStudents: suggestedStudents,
-            studentSupportsByName: studentSupportsByName,
-            activeOverrideName: activeDayOverride?.displayName,
-            overrideSchedule: activeDayOverride?.alarms,
-            ignoreDate: ignoreDate,
-            onRefresh: {
-                manuallyRefreshSyncedData()
-            },
-            openScheduleTab: {
-            selectedTab = .schedule
-        }, openTodoTab: {
-            selectedTab = .todo
-        }, openNotesTab: {
-            selectedTab = .notes
-        }, openSettingsTab: {
-            selectedTab = .settings
-        })
-        .toolbar(.hidden, for: .tabBar)
-        .tabItem {
-            Label("Home", systemImage: "house")
+        NavigationStack {
+            TodayView(
+                alarms: $alarms,
+                todos: $todos,
+                commitments: $commitments,
+                studentSupportProfiles: $studentProfiles,
+                classDefinitions: $classDefinitions,
+                attendanceRecords: $attendanceRecords,
+                subPlans: $subPlans,
+                dailySubPlans: $dailySubPlans,
+                suggestedStudents: suggestedStudents,
+                studentSupportsByName: studentSupportsByName,
+                activeOverrideName: activeDayOverride?.displayName,
+                overrideSchedule: activeDayOverride?.alarms,
+                ignoreDate: ignoreDate,
+                onRefresh: {
+                    manuallyRefreshSyncedData()
+                },
+                openScheduleTab: {
+                    selectedTab = .schedule
+                }, openStudentsTab: {
+                    selectedTab = .students
+                }, openTodoTab: {
+                    selectedTab = .todo
+                }, openNotesTab: {
+                    selectedTab = .notes
+                }, openSettingsTab: {
+                    secondaryDestination = .settings
+                })
+            .toolbar(.hidden, for: .tabBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    overflowMenu
+                }
+            }
         }
+        .tabItem {
+            Image(systemName: "house")
+        }
+        .accessibilityLabel("Home")
         .tag(AppTab.today)
     }
 
@@ -398,54 +531,109 @@ struct RootTabView: View {
             },
             openTodayTab: { selectedTab = .today }
         )
-        .tabItem {
-            Label("Schedule", systemImage: "calendar")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                overflowMenu
+            }
         }
+        .tabItem {
+            Image(systemName: "calendar")
+        }
+        .accessibilityLabel("Schedule")
         .tag(AppTab.schedule)
     }
 
-    private var todoTab: some View {
-        TodoListView(
-            todos: $todos,
-            studentProfiles: $studentProfiles,
-            classDefinitions: $classDefinitions,
-            suggestedContexts: suggestedTaskContexts,
-            suggestedStudents: suggestedStudents,
-            studentSupportsByName: studentSupportsByName,
-            onRefresh: {
-                manuallyRefreshSyncedData()
-            },
-            openTodayTab: { selectedTab = .today }
-        )
-        .tabItem {
-            Label("To Do", systemImage: "checklist")
+    private var studentsTab: some View {
+        NavigationStack {
+            StudentsHubView(
+                profiles: $studentProfiles,
+                classDefinitions: $classDefinitions
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    overflowMenu
+                }
+            }
         }
+        .tabItem {
+            Image(systemName: "person.3")
+        }
+        .accessibilityLabel("Classes and Students")
+        .tag(AppTab.students)
+    }
+
+    private var todoTab: some View {
+        NavigationStack {
+            TodoListView(
+                todos: $todos,
+                studentProfiles: $studentProfiles,
+                classDefinitions: $classDefinitions,
+                suggestedContexts: suggestedTaskContexts,
+                suggestedStudents: suggestedStudents,
+                studentSupportsByName: studentSupportsByName,
+                onRefresh: {
+                    manuallyRefreshSyncedData()
+                },
+                openTodayTab: { selectedTab = .today }
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    overflowMenu
+                }
+            }
+        }
+        .tabItem {
+            Image(systemName: "checklist")
+        }
+        .accessibilityLabel("To Do")
         .tag(AppTab.todo)
     }
 
     private var notesTab: some View {
-        NotesView(
-            studentProfiles: $studentProfiles,
-            classDefinitions: $classDefinitions,
-            suggestedContexts: suggestedTaskContexts,
-            suggestedStudents: suggestedStudents,
-            onRefresh: {
-                manuallyRefreshSyncedData()
-            },
-            openTodayTab: { selectedTab = .today }
-        )
-            .tabItem {
-                Label("Notes", systemImage: "note.text")
+        NavigationStack {
+            NotesView(
+                studentProfiles: $studentProfiles,
+                classDefinitions: $classDefinitions,
+                suggestedContexts: suggestedTaskContexts,
+                suggestedStudents: suggestedStudents,
+                onRefresh: {
+                    manuallyRefreshSyncedData()
+                },
+                openTodayTab: { selectedTab = .today }
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    overflowMenu
+                }
             }
+        }
+            .tabItem {
+                Image(systemName: "note.text")
+            }
+            .accessibilityLabel("Notes")
             .tag(AppTab.notes)
     }
 
-    private var settingsTab: some View {
-        SettingsView()
-            .tabItem {
-                Label("Settings", systemImage: "gearshape")
+    private var overflowMenu: some View {
+        Menu {
+            Button("Settings", systemImage: "gearshape") {
+                secondaryDestination = .settings
             }
-            .tag(AppTab.settings)
+
+            Divider()
+
+            Button("Import CSV", systemImage: "square.and.arrow.down") {
+                secondaryDestination = .importCSV
+            }
+
+            Button("Export CSV", systemImage: "square.and.arrow.up") {
+                secondaryDestination = .exportCSV
+            }
+            .disabled(alarms.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Actions")
     }
 
     // MARK: - Data Loading
@@ -574,9 +762,22 @@ struct RootTabView: View {
     // MARK: - Save Alarms
 
     private func saveAlarms(_ alarms: [AlarmItem]) {
-        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: studentProfiles, classDefinitions: classDefinitions, commitments: commitments)
-        if let encoded = try? JSONEncoder().encode(alarms) {
+        let normalized = normalizedAlarms(alarms)
+        saveFirstPersistenceSlice(alarms: normalized, studentProfiles: studentProfiles, classDefinitions: classDefinitions, commitments: commitments)
+        if let encoded = try? JSONEncoder().encode(normalized) {
             savedAlarms = encoded
+        }
+    }
+
+    private func normalizedAlarms(_ alarms: [AlarmItem]) -> [AlarmItem] {
+        alarms.sorted { lhs, rhs in
+            if lhs.dayOfWeek == rhs.dayOfWeek {
+                if lhs.startTime == rhs.startTime {
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+                return lhs.startTime < rhs.startTime
+            }
+            return lhs.dayOfWeek < rhs.dayOfWeek
         }
     }
 
@@ -791,14 +992,42 @@ struct RootTabView: View {
         overrides = decodedOverrides
     }
 
-    private func refreshNotifications() {
-        NotificationManager.shared.refreshNotifications(
-            for: alarms,
-            activeOverrideSchedule: activeDayOverride?.alarms,
-            activeOverrideDate: activeDayOverride?.date,
+    private func refreshNotifications(immediate: Bool = false) {
+        let signature = NotificationRefreshSignature(
+            alarms: alarms,
+            activeOverride: activeDayOverride,
             overrides: overrides,
-            profiles: profiles
+            profiles: profiles,
+            ignoreUntil: ignoreUntil
         )
+
+        guard signature != lastNotificationRefreshSignature else { return }
+
+        pendingNotificationRefreshTask?.cancel()
+
+        let applyRefresh = { @MainActor in
+            lastNotificationRefreshSignature = signature
+            NotificationManager.shared.refreshNotifications(
+                for: alarms,
+                activeOverrideSchedule: activeDayOverride?.alarms,
+                activeOverrideDate: activeDayOverride?.date,
+                overrides: overrides,
+                profiles: profiles
+            )
+        }
+
+        if immediate {
+            Task { @MainActor in
+                applyRefresh()
+            }
+            return
+        }
+
+        pendingNotificationRefreshTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard !Task.isCancelled else { return }
+            applyRefresh()
+        }
     }
 
     private func saveThirdPersistenceSlice(
@@ -824,5 +1053,155 @@ struct RootTabView: View {
 
     private func decodeLegacyOverrides() -> [DayOverride] {
         (try? JSONDecoder().decode([DayOverride].self, from: savedOverrides)) ?? []
+    }
+}
+
+private struct RootLiveActivitySnapshot: Equatable {
+    let className: String
+    let room: String
+    let endTime: Date
+    let isHeld: Bool
+    let iconName: String
+    let nextClassName: String
+    let nextIconName: String
+}
+
+private struct NotificationRefreshSignature: Equatable {
+    struct AlarmSignature: Equatable {
+        let id: UUID
+        let dayOfWeek: Int
+        let startTime: Date
+        let endTime: Date
+        let type: AlarmItem.ScheduleType
+        let warningLeadTimes: [Int]
+    }
+
+    struct OverrideSignature: Equatable {
+        let id: UUID
+        let date: Date
+        let profileID: UUID
+    }
+
+    struct ProfileSignature: Equatable {
+        let id: UUID
+        let name: String
+        let alarms: [AlarmSignature]
+    }
+
+    struct ActiveOverrideSignature: Equatable {
+        let date: Date
+        let alarms: [AlarmSignature]
+    }
+
+    let alarms: [AlarmSignature]
+    let activeOverride: ActiveOverrideSignature?
+    let overrides: [OverrideSignature]
+    let profiles: [ProfileSignature]
+    let ignoreUntil: Double
+
+    init(
+        alarms: [AlarmItem],
+        activeOverride: ActiveDayOverride?,
+        overrides: [DayOverride],
+        profiles: [ScheduleProfile],
+        ignoreUntil: Double
+    ) {
+        self.ignoreUntil = ignoreUntil
+        self.alarms = alarms
+            .map {
+                AlarmSignature(
+                    id: $0.id,
+                    dayOfWeek: $0.dayOfWeek,
+                    startTime: $0.startTime,
+                    endTime: $0.endTime,
+                    type: $0.type,
+                    warningLeadTimes: $0.warningLeadTimes
+                )
+            }
+            .sorted {
+                ($0.dayOfWeek, $0.startTime, $0.id.uuidString) < ($1.dayOfWeek, $1.startTime, $1.id.uuidString)
+            }
+
+        self.activeOverride = activeOverride.map { override in
+            ActiveOverrideSignature(
+                date: override.date,
+                alarms: override.alarms
+                    .map {
+                        AlarmSignature(
+                            id: $0.id,
+                            dayOfWeek: $0.dayOfWeek,
+                            startTime: $0.startTime,
+                            endTime: $0.endTime,
+                            type: $0.type,
+                            warningLeadTimes: $0.warningLeadTimes
+                        )
+                    }
+                    .sorted {
+                        ($0.dayOfWeek, $0.startTime, $0.id.uuidString) < ($1.dayOfWeek, $1.startTime, $1.id.uuidString)
+                    }
+            )
+        }
+
+        self.overrides = overrides
+            .map { OverrideSignature(id: $0.id, date: $0.date, profileID: $0.profileID) }
+            .sorted { ($0.date, $0.id.uuidString) < ($1.date, $1.id.uuidString) }
+
+        self.profiles = profiles
+            .map {
+                ProfileSignature(
+                    id: $0.id,
+                    name: $0.name,
+                    alarms: $0.alarms
+                        .map {
+                            AlarmSignature(
+                                id: $0.id,
+                                dayOfWeek: $0.dayOfWeek,
+                                startTime: $0.startTime,
+                                endTime: $0.endTime,
+                                type: $0.type,
+                                warningLeadTimes: $0.warningLeadTimes
+                            )
+                        }
+                        .sorted {
+                            ($0.dayOfWeek, $0.startTime, $0.id.uuidString) < ($1.dayOfWeek, $1.startTime, $1.id.uuidString)
+                        }
+                )
+            }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+    }
+}
+
+private struct StudentsHubView: View {
+    @Binding var profiles: [StudentSupportProfile]
+    @Binding var classDefinitions: [ClassDefinitionItem]
+    @State private var mode: Mode = .students
+
+    private enum Mode: String, CaseIterable, Identifiable {
+        case students = "Students"
+        case classes = "Classes"
+
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Directory", selection: $mode) {
+                ForEach(Mode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding([.horizontal, .top])
+
+            Group {
+                switch mode {
+                case .students:
+                    StudentDirectoryView(profiles: $profiles, classDefinitions: $classDefinitions)
+                case .classes:
+                    ClassDefinitionsView(classDefinitions: $classDefinitions, profiles: $profiles)
+                }
+            }
+        }
+        .navigationTitle(mode == .students ? "Students" : "Classes")
     }
 }

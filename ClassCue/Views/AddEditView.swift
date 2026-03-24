@@ -31,6 +31,10 @@ struct AddEditView: View {
     @State private var start = Date()
     @State private var end = Date().addingTimeInterval(60 * 30)
     @State private var linkedStudentIDs: Set<UUID> = []
+    @State private var selectedDays: Set<Int> = []
+    @State private var firstWarningMinutes = 5
+    @State private var secondWarningMinutes = 2
+    @State private var thirdWarningMinutes = 1
 
     @State private var showDeleteConfirm = false
     @State private var showValidationAlert = false
@@ -71,7 +75,8 @@ struct AddEditView: View {
             endTime: end,
             type: type,
             classDefinitionID: selectedClassDefinitionID,
-            linkedStudentIDs: Array(linkedStudentIDs)
+            linkedStudentIDs: Array(linkedStudentIDs),
+            warningLeadTimes: currentWarningLeadTimes
         )
     }
 
@@ -136,6 +141,30 @@ struct AddEditView: View {
                         selection: $end,
                         displayedComponents: .hourAndMinute
                     )
+                }
+
+                if !isEditing {
+                    Section("Days") {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                            ForEach(WeekdayTab.allCases, id: \.rawValue) { weekday in
+                                weekdayToggleButton(for: weekday)
+                            }
+                        }
+
+                        Text("Choose one or more days for this block.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Alerts") {
+                    Stepper("First warning: \(warningLabel(for: firstWarningMinutes))", value: $firstWarningMinutes, in: 0...120)
+                    Stepper("Second warning: \(warningLabel(for: secondWarningMinutes))", value: $secondWarningMinutes, in: 0...120)
+                    Stepper("Third warning: \(warningLabel(for: thirdWarningMinutes))", value: $thirdWarningMinutes, in: 0...120)
+
+                    Text("Set a warning to 0 to disable it for this block. Defaults are 5, 2, and 1 minutes.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 if !sortedStudentProfiles.isEmpty {
@@ -260,12 +289,16 @@ struct AddEditView: View {
             start = existing.startTime
             end = existing.endTime
             linkedStudentIDs = Set(existing.linkedStudentIDs)
+            selectedDays = [existing.dayOfWeek]
+            applyWarningLeadTimes(existing.warningLeadTimes)
         } else {
             let roundedStart = roundedDate(from: Date())
             let defaultEnd = Calendar.current.date(byAdding: .minute, value: 30, to: roundedStart) ?? roundedStart.addingTimeInterval(1800)
 
             start = roundedStart
             end = defaultEnd
+            selectedDays = [day]
+            applyWarningLeadTimes([5, 2, 1])
         }
     }
 
@@ -286,26 +319,49 @@ struct AddEditView: View {
             return
         }
 
-        let newItem = AlarmItem(
-            id: existing?.id ?? UUID(),
-            dayOfWeek: day,
-            className: trimmedName,
-            location: trimmedRoom,
-            gradeLevel: trimmedGrade,
-            startTime: start,
-            endTime: end,
-            type: type,
-            classDefinitionID: resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade),
-            linkedStudentIDs: Array(linkedStudentIDs)
-        )
+        let warningLeadTimes = currentWarningLeadTimes
+
+        guard !selectedDays.isEmpty || isEditing else {
+            validationMessage = "Choose at least one day before saving."
+            showValidationAlert = true
+            return
+        }
 
         if let existing,
            let index = alarms.firstIndex(where: { $0.id == existing.id }) {
+            let newItem = AlarmItem(
+                id: existing.id,
+                dayOfWeek: existing.dayOfWeek,
+                className: trimmedName,
+                location: trimmedRoom,
+                gradeLevel: trimmedGrade,
+                startTime: start,
+                endTime: end,
+                type: type,
+                classDefinitionID: resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade),
+                linkedStudentIDs: Array(linkedStudentIDs),
+                warningLeadTimes: warningLeadTimes
+            )
             var updatedAlarms = alarms
             updatedAlarms[index] = newItem
             alarms = sortedAlarms(updatedAlarms)
         } else {
-            alarms = sortedAlarms(alarms + [newItem])
+            let createdItems = selectedDays.sorted().map { weekday in
+                AlarmItem(
+                    id: UUID(),
+                    dayOfWeek: weekday,
+                    className: trimmedName,
+                    location: trimmedRoom,
+                    gradeLevel: trimmedGrade,
+                    startTime: start,
+                    endTime: end,
+                    type: type,
+                    classDefinitionID: resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade),
+                    linkedStudentIDs: Array(linkedStudentIDs),
+                    warningLeadTimes: warningLeadTimes
+                )
+            }
+            alarms = sortedAlarms(alarms + createdItems)
         }
         dismiss()
     }
@@ -333,7 +389,8 @@ struct AddEditView: View {
             endTime: newEnd,
             type: existing.type,
             classDefinitionID: existing.classDefinitionID,
-            linkedStudentIDs: existing.linkedStudentIDs
+            linkedStudentIDs: existing.linkedStudentIDs,
+            warningLeadTimes: existing.warningLeadTimes
         )
 
         alarms = sortedAlarms(alarms + [duplicated])
@@ -347,6 +404,23 @@ struct AddEditView: View {
             }
             return lhs.dayOfWeek < rhs.dayOfWeek
         }
+    }
+
+    private var currentWarningLeadTimes: [Int] {
+        [firstWarningMinutes, secondWarningMinutes, thirdWarningMinutes]
+            .filter { $0 > 0 }
+            .sorted(by: >)
+    }
+
+    private func applyWarningLeadTimes(_ values: [Int]) {
+        let normalized = values.filter { $0 > 0 }.sorted(by: >)
+        firstWarningMinutes = normalized.indices.contains(0) ? normalized[0] : 5
+        secondWarningMinutes = normalized.indices.contains(1) ? normalized[1] : 2
+        thirdWarningMinutes = normalized.indices.contains(2) ? normalized[2] : 1
+    }
+
+    private func warningLabel(for minutes: Int) -> String {
+        minutes == 0 ? "Off" : "\(minutes) min"
     }
 
     private func roundedDate(from date: Date) -> Date {
@@ -502,6 +576,30 @@ struct AddEditView: View {
                 Spacer()
             }
             .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func weekdayToggleButton(for weekday: WeekdayTab) -> some View {
+        let isSelected = selectedDays.contains(weekday.rawValue)
+
+        Button {
+            if isSelected {
+                selectedDays.remove(weekday.rawValue)
+            } else {
+                selectedDays.insert(weekday.rawValue)
+            }
+        } label: {
+            Text(weekday.shortTitle)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isSelected ? Color.blue : Color(.secondarySystemBackground))
+                )
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
     }

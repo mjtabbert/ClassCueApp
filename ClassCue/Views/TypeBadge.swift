@@ -27,8 +27,14 @@ struct TypeBadge: View {
         case .socialStudies:
             return "SOCIAL"
 
+        case .assembly:
+            return "ASSEMBLY"
+
         case .prep:
             return "PREP"
+
+        case .studyTime:
+            return "STUDY"
 
         case .recess:
             return "RECESS"
@@ -49,7 +55,7 @@ struct TypeBadge: View {
 
     var foregroundColor: Color {
         switch type {
-        case .science, .blank:
+        case .science, .blank, .studyTime, .assembly:
             return .primary
         case .transition:
             return .secondary
