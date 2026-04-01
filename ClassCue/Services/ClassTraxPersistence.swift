@@ -1,6 +1,7 @@
 import Foundation
 import CoreData
 import SwiftData
+import CloudKit
 
 protocol PersistedUUIDModel: PersistentModel {
     var id: UUID { get set }
@@ -649,9 +650,14 @@ enum ClassTraxPersistence {
     static let thirdSliceMigrationKey = "swiftdata_third_slice_migration_v1"
     static let cloudKitContainerIdentifier = "iCloud.com.mrmike.classtrax"
     static let cloudKitSchemaInitializationKey = "swiftdata_cloudkit_schema_initialized_classtrax_v1"
+    static let cloudKitLastEventSummaryKey = "cloudkit_last_event_summary_v1"
+    static let cloudKitLastEventTimestampKey = "cloudkit_last_event_timestamp_v1"
     static private(set) var activeContainerMode: ContainerMode = .localFallback
     static private(set) var lastContainerStatusMessage = "Container not initialized yet."
     static private(set) var lastSchemaInitializationMessage = "Schema initializer not run yet."
+    static private(set) var lastCloudKitEventSummary = UserDefaults.standard.string(forKey: cloudKitLastEventSummaryKey) ?? "No CloudKit sync events observed yet."
+    static private(set) var lastCloudKitEventTimestamp = UserDefaults.standard.double(forKey: cloudKitLastEventTimestampKey)
+    static private var cloudKitEventObserver: NSObjectProtocol?
 
     static let persistedEntityTypes: [any PersistentModel.Type] = [
         PersistedAlarmItem.self,
@@ -684,7 +690,82 @@ enum ClassTraxPersistence {
             details += " Underlying: \(underlying.domain) (\(underlying.code)): \(underlying.localizedDescription)"
         }
 
+        let usefulUserInfo = nsError.userInfo
+            .filter { key, _ in
+                let keyString = String(describing: key)
+                return keyString != NSUnderlyingErrorKey
+            }
+            .map { key, value in
+                "\(key)=\(value)"
+            }
+            .sorted()
+
+        if !usefulUserInfo.isEmpty {
+            details += " UserInfo: \(usefulUserInfo.joined(separator: "; "))"
+        }
+
         return details
+    }
+
+    static func describeCloudKitError(_ error: Error) -> String {
+        let nsError = error as NSError
+
+        if nsError.domain == CKErrorDomain,
+           let ckError = error as? CKError,
+           ckError.code == .partialFailure,
+           let partialErrors = ckError.partialErrorsByItemID,
+           let firstPartialError = partialErrors.first {
+            let itemDescription: String
+            if let recordID = firstPartialError.key as? CKRecord.ID {
+                itemDescription = recordID.recordName
+            } else {
+                itemDescription = String(describing: firstPartialError.key)
+            }
+
+            return "Partial failure on \(itemDescription): \(describe(error: firstPartialError.value))"
+        }
+
+        return describe(error: error)
+    }
+
+    static func registerCloudKitEventObserver() {
+        guard cloudKitEventObserver == nil else { return }
+
+        cloudKitEventObserver = NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event else {
+                return
+            }
+
+            let status = event.succeeded ? "Succeeded" : "Failed"
+            let eventType: String
+            switch event.type {
+            case .setup:
+                eventType = "Setup"
+            case .import:
+                eventType = "Import"
+            case .export:
+                eventType = "Export"
+            @unknown default:
+                eventType = "Unknown"
+            }
+
+            let message: String
+            if let error = event.error {
+                message = "\(eventType) \(status): \(describeCloudKitError(error))"
+            } else {
+                message = "\(eventType) \(status)"
+            }
+
+            lastCloudKitEventSummary = message
+            let timestamp = (event.endDate ?? event.startDate).timeIntervalSince1970
+            lastCloudKitEventTimestamp = timestamp
+            UserDefaults.standard.set(message, forKey: cloudKitLastEventSummaryKey)
+            UserDefaults.standard.set(timestamp, forKey: cloudKitLastEventTimestampKey)
+        }
     }
 
     static let sharedModelContainer: ModelContainer = {

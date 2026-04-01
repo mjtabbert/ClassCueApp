@@ -11,6 +11,7 @@ struct ClassTraxApp: App {
         center.delegate = NotificationDelegate.shared
 
         NotificationCategories.register()
+        ClassTraxPersistence.registerCloudKitEventObserver()
         Task {
             ClassTraxPersistence.initializeCloudKitDevelopmentSchemaIfNeeded()
         }

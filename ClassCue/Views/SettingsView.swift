@@ -74,6 +74,8 @@ struct SettingsView: View {
     @AppStorage("class_definitions_v1_data") private var savedClassDefinitions: Data = Data()
     @AppStorage("cloud_sync_last_local_mutation_at") private var lastLocalMutationTimestamp: Double = 0
     @AppStorage("cloud_sync_last_refresh_at") private var lastCloudRefreshTimestamp: Double = 0
+    @AppStorage("cloudkit_last_event_summary_v1") private var lastCloudKitEventSummary: String = "No CloudKit sync events observed yet."
+    @AppStorage("cloudkit_last_event_timestamp_v1") private var lastCloudKitEventTimestamp: Double = 0
     @AppStorage("school_quiet_hours_enabled") private var schoolQuietHoursEnabled = false
     @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
     @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
@@ -728,6 +730,20 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
 
+            LabeledContent("Last Sync Event") {
+                Text(lastCloudKitEventSummary)
+                    .font(.footnote)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(.secondary)
+            }
+
+            LabeledContent("Sync Event Time") {
+                Text(lastCloudKitEventTimestampSummary)
+                    .font(.footnote)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(.secondary)
+            }
+
             LabeledContent("Schema Init Status") {
                 Text(ClassTraxPersistence.lastSchemaInitializationMessage)
                     .font(.footnote)
@@ -991,6 +1007,10 @@ struct SettingsView: View {
 
     private var lastLocalMutationSummary: String {
         formattedSyncTimestamp(lastLocalMutationTimestamp, empty: "No local changes recorded yet")
+    }
+
+    private var lastCloudKitEventTimestampSummary: String {
+        formattedSyncTimestamp(lastCloudKitEventTimestamp, empty: "No CloudKit event timestamp yet")
     }
 
     private func formattedSyncTimestamp(_ timestamp: Double, empty: String) -> String {
