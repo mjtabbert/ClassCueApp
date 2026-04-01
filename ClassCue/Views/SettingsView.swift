@@ -112,7 +112,7 @@ struct SettingsView: View {
     @State private var hasLoadedInitialState = false
 
     var body: some View {
-        stabilitySettingsContent
+        settingsPersistenceContent
     }
 
     private var stabilitySettingsContent: some View {
@@ -226,7 +226,7 @@ struct SettingsView: View {
     }
 
     private var settingsPersistenceContent: some View {
-        settingsList
+        stabilitySettingsContent
             .onChange(of: alarms) { _, newValue in
                 guard !isLoadingInitialState else { return }
                 saveAlarms(newValue)

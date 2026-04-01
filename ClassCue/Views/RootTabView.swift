@@ -1037,8 +1037,14 @@ struct RootTabView: View {
     }
 
     private func reconcileClassDefinitionLinks() {
+        let validDefinitionIDs = Set(classDefinitions.map(\.id))
+
         alarms = alarms.map { alarm in
             var updated = alarm
+            if let classDefinitionID = updated.classDefinitionID,
+               !validDefinitionIDs.contains(classDefinitionID) {
+                updated.classDefinitionID = nil
+            }
             if updated.classDefinitionID == nil {
                 updated.classDefinitionID = exactClassDefinitionMatch(
                     name: updated.className,
@@ -1068,14 +1074,26 @@ struct RootTabView: View {
 
         studentProfiles = studentProfiles.map { profile in
             var updated = profile
-            if linkedClassDefinitionIDs(for: updated).isEmpty,
+            let filteredLinkedIDs = linkedClassDefinitionIDs(for: updated)
+                .filter { validDefinitionIDs.contains($0) }
+
+            updated = updatingProfile(
+                updated,
+                linkedTo: filteredLinkedIDs,
+                definitions: classDefinitions
+            )
+
+            if filteredLinkedIDs.isEmpty,
                let matchedID = exactClassDefinitionMatch(
                     name: updated.className,
                     gradeLevel: updated.gradeLevel,
                     in: classDefinitions
                 )?.id {
-                updated.classDefinitionID = matchedID
-                updated.classDefinitionIDs = [matchedID]
+                updated = updatingProfile(
+                    updated,
+                    linkedTo: [matchedID],
+                    definitions: classDefinitions
+                )
             }
             updated.className = classSummary(for: updated, in: classDefinitions)
             return updated
