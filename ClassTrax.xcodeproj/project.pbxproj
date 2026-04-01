@@ -74,14 +74,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		27335DC22F5B700B00889F92 /* Exceptions for "ClassCue" folder in "ClassTrax" app target */ = {
+		27335DC22F5B700B00889F92 /* Exceptions for "ClassCue" folder in "ClassTrax" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = 27335DB42F5B700800889F92 /* ClassTrax */;
 		};
-		27EC66F02F61EB3F00D0870D /* Exceptions for "Class Cue" folder in "ClassTraxExtension" extension target */ = {
+		27EC66F02F61EB3F00D0870D /* Exceptions for "Class Cue" folder in "ClassTraxExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AppIntent.swift,
@@ -90,7 +90,7 @@
 			);
 			target = 27EC66D62F61EB3D00D0870D /* ClassTraxExtension */;
 		};
-		27EC67322F6204B100D0870D /* Exceptions for "ClassCue" folder in "ClassTraxExtension" extension target */ = {
+		27EC67322F6204B100D0870D /* Exceptions for "ClassCue" folder in "ClassTraxExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/NotificationDelegate.swift,
@@ -155,8 +155,8 @@
 		27335DB72F5B700800889F92 /* ClassCue */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				27335DC22F5B700B00889F92 /* Exceptions for "ClassCue" folder in "ClassTrax" app target */,
-				27EC67322F6204B100D0870D /* Exceptions for "ClassCue" folder in "ClassTraxExtension" extension target */,
+				27335DC22F5B700B00889F92 /* Exceptions for "ClassCue" folder in "ClassTrax" target */,
+				27EC67322F6204B100D0870D /* Exceptions for "ClassCue" folder in "ClassTraxExtension" target */,
 			);
 			path = ClassCue;
 			sourceTree = "<group>";
@@ -164,7 +164,7 @@
 		27EC66DC2F61EB3D00D0870D /* Class Cue */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				27EC66F02F61EB3F00D0870D /* Exceptions for "Class Cue" folder in "ClassTraxExtension" extension target */,
+				27EC66F02F61EB3F00D0870D /* Exceptions for "Class Cue" folder in "ClassTraxExtension" target */,
 			);
 			path = "Class Cue";
 			sourceTree = "<group>";
@@ -435,7 +435,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mrmike.classtrax.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -469,7 +469,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mrmike.classtrax.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -514,7 +514,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mrmike.classtrax;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -559,7 +559,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mrmike.classtrax;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -718,7 +718,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.mrmike.classtrax.Class-Trax";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -752,7 +752,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.mrmike.classtrax.Class-Trax";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
