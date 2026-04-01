@@ -14,13 +14,27 @@ struct AddFollowUpNoteView: View {
     let preferredKind: FollowUpNoteItem.Kind?
     let existing: FollowUpNoteItem?
     let initialNoteText: String
+    let initialContext: String
+    let initialStudentOrGroup: String
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("add_follow_up_note_draft_v1") private var savedDraftData: Data = Data()
 
     @State private var kind: FollowUpNoteItem.Kind = .generalNote
     @State private var context = ""
     @State private var studentOrGroup = ""
     @State private var note = ""
+    @State private var followUpDate = Date()
+
+    private struct Draft: Codable, Equatable {
+        var existingID: UUID?
+        var kind: FollowUpNoteItem.Kind
+        var context: String
+        var studentOrGroup: String
+        var note: String
+        var followUpDate: Date
+    }
 
     init(
         notes: Binding<[FollowUpNoteItem]>,
@@ -28,7 +42,9 @@ struct AddFollowUpNoteView: View {
         suggestedStudents: [String],
         preferredKind: FollowUpNoteItem.Kind? = nil,
         existing: FollowUpNoteItem? = nil,
-        initialNoteText: String = ""
+        initialNoteText: String = "",
+        initialContext: String = "",
+        initialStudentOrGroup: String = ""
     ) {
         _notes = notes
         self.suggestedContexts = suggestedContexts
@@ -36,6 +52,8 @@ struct AddFollowUpNoteView: View {
         self.preferredKind = preferredKind
         self.existing = existing
         self.initialNoteText = initialNoteText
+        self.initialContext = initialContext
+        self.initialStudentOrGroup = initialStudentOrGroup
     }
 
     var body: some View {
@@ -81,12 +99,19 @@ struct AddFollowUpNoteView: View {
 
                     TextField("Note", text: $note, axis: .vertical)
                         .lineLimit(4...8)
+
+                    DatePicker(
+                        "Follow-Up Date",
+                        selection: $followUpDate,
+                        displayedComponents: .date
+                    )
                 }
             }
             .navigationTitle(existing == nil ? "Add Follow-Up" : "Edit Follow-Up")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
+                        clearDraft()
                         dismiss()
                     }
                 }
@@ -104,12 +129,17 @@ struct AddFollowUpNoteView: View {
                     context = existing.context
                     studentOrGroup = existing.studentOrGroup
                     note = existing.note
+                    followUpDate = existing.followUpDate
                 } else {
                     if let preferredKind {
                         kind = preferredKind
                     }
+                    context = initialContext
+                    studentOrGroup = initialStudentOrGroup
                     note = initialNoteText
+                    followUpDate = Date()
                 }
+                restoreDraftIfNeeded()
             }
             .onChange(of: kind) { _, newKind in
                 switch newKind {
@@ -120,6 +150,14 @@ struct AddFollowUpNoteView: View {
                     studentOrGroup = ""
                 case .studentNote, .parentContact:
                     break
+                }
+            }
+            .onChange(of: currentDraft) { _, _ in
+                persistDraft()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase != .active {
+                    persistDraft()
                 }
             }
         }
@@ -199,6 +237,7 @@ struct AddFollowUpNoteView: View {
             context: context.trimmingCharacters(in: .whitespacesAndNewlines),
             studentOrGroup: studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines),
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+            followUpDate: followUpDate,
             createdAt: existing?.createdAt ?? Date()
         )
 
@@ -208,6 +247,37 @@ struct AddFollowUpNoteView: View {
             notes.insert(item, at: 0)
         }
 
+        clearDraft()
         dismiss()
+    }
+
+    private var currentDraft: Draft {
+        Draft(
+            existingID: existing?.id,
+            kind: kind,
+            context: context,
+            studentOrGroup: studentOrGroup,
+            note: note,
+            followUpDate: followUpDate
+        )
+    }
+
+    private func restoreDraftIfNeeded() {
+        guard let draft = try? JSONDecoder().decode(Draft.self, from: savedDraftData) else { return }
+        guard draft.existingID == existing?.id else { return }
+        kind = draft.kind
+        context = draft.context
+        studentOrGroup = draft.studentOrGroup
+        note = draft.note
+        followUpDate = draft.followUpDate
+    }
+
+    private func persistDraft() {
+        guard let encoded = try? JSONEncoder().encode(currentDraft) else { return }
+        savedDraftData = encoded
+    }
+
+    private func clearDraft() {
+        savedDraftData = Data()
     }
 }

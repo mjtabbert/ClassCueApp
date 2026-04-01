@@ -43,6 +43,7 @@ struct ScheduleView: View {
     @State private var showingExportSheet = false
     @State private var showingOverridesSheet = false
     @State private var showingStudentDirectory = false
+    @State private var pendingDeleteItem: AlarmItem?
     @State private var profileName = ""
     @State private var overrides: [DayOverride] = []
     @State private var showPastBlocks = false
@@ -79,33 +80,7 @@ struct ScheduleView: View {
         NavigationStack {
 
             TimelineView(.periodic(from: .now, by: 30)) { context in
-                ScrollView {
-                    HStack(spacing: 0) {
-                        Spacer(minLength: 0)
-
-                        VStack(alignment: .leading, spacing: 16) {
-
-                            dayPicker
-
-                            planningOverviewCard(now: context.date)
-
-                            if let activeOverrideName, isViewingActiveOverride {
-                                overrideBanner(name: activeOverrideName)
-                            }
-
-                            if filteredSchedule.isEmpty {
-                                emptyState
-                            } else if isSelectedDayToday {
-                                todayScheduleLayout(now: context.date)
-                            } else {
-                                standardScheduleLayout
-                            }
-                        }
-                        .frame(maxWidth: 1100, alignment: .leading)
-                        Spacer(minLength: 0)
-                    }
-                    .padding()
-                }
+                scheduleScrollContent(now: context.date)
                 .refreshable {
                     onRefresh()
                 }
@@ -115,38 +90,13 @@ struct ScheduleView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
-                        Menu {
-                            Button("Import Schedule CSV", systemImage: "square.and.arrow.down") {
-                                showingImportSheet = true
-                            }
-
-                            Button("Export Schedule CSV", systemImage: "square.and.arrow.up") {
-                                showingExportSheet = true
-                            }
-                            .disabled(alarms.isEmpty)
+                        Button {
+                            showingOverridesSheet = true
                         } label: {
-                            toolbarCapsuleLabel(
-                                title: "CSV",
-                                systemImage: "arrow.up.arrow.down.square"
-                            )
+                            toolbarIconButton(systemImage: "wand.and.stars", title: "Overrides")
                         }
 
                         Menu {
-                            Button("Students", systemImage: "person.3") {
-                                showingStudentDirectory = true
-                            }
-
-                            Button("Refresh", systemImage: "arrow.clockwise") {
-                                onRefresh()
-                            }
-
-                            Button("Daily Sub Plan", systemImage: "doc.text") {
-                                selectedDay = .today
-                                openTodayTab()
-                            }
-
-                            Divider()
-
                             Button("Copy Day", systemImage: "doc.on.doc") {
                                 showingCopyDayDialog = true
                             }
@@ -163,17 +113,43 @@ struct ScheduleView: View {
                                 showingSaveWeekProfileAlert = true
                             }
                             .disabled(alarms.isEmpty)
+                        } label: {
+                            toolbarIconButton(systemImage: "tray.full", title: "Profiles")
+                        }
+
+                        Menu {
+                            Button("Import Schedule CSV", systemImage: "square.and.arrow.down") {
+                                showingImportSheet = true
+                            }
+
+                            Button("Export Schedule CSV", systemImage: "square.and.arrow.up") {
+                                showingExportSheet = true
+                            }
+                            .disabled(alarms.isEmpty)
+
+                            Divider()
+
+                            Button("Students", systemImage: "person.3") {
+                                showingStudentDirectory = true
+                            }
+
+                            Button("Refresh", systemImage: "arrow.clockwise") {
+                                onRefresh()
+                            }
+
+                            Button("Sub Plan", systemImage: "doc.text") {
+                                selectedDay = .today
+                                openTodayTab()
+                            }
+
+                            Divider()
 
                             Button("Erase Day", systemImage: "trash", role: .destructive) {
                                 showingEraseDayDialog = true
                             }
                             .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
-
-                            Button("Day Overrides", systemImage: "wand.and.stars") {
-                                showingOverridesSheet = true
-                            }
                         } label: {
-                            toolbarIconButton(systemImage: "ellipsis", title: "Actions")
+                            toolbarIconButton(systemImage: "ellipsis", title: "Data")
                         }
 
                         Button {
@@ -230,6 +206,18 @@ struct ScheduleView: View {
                     StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
                 }
             }
+            .alert("Delete Block?", isPresented: isShowingDeleteBlockAlert) {
+                Button("Delete", role: .destructive) {
+                    if let pendingDeleteItem {
+                        deleteBlock(pendingDeleteItem)
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteItem = nil
+                }
+            } message: {
+                Text("This block will be removed from the schedule.")
+            }
             .onChange(of: overrides) { _, newValue in
                 saveOverrides(newValue)
             }
@@ -275,6 +263,35 @@ struct ScheduleView: View {
             } message: {
                 Text("Save the full week as a reusable profile.")
             }
+        }
+    }
+
+    private func scheduleScrollContent(now: Date) -> some View {
+        ScrollView {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+
+                VStack(alignment: .leading, spacing: 16) {
+                    dayPicker
+                    planningOverviewCard(now: now)
+
+                    if let activeOverrideName, isViewingActiveOverride {
+                        overrideBanner(name: activeOverrideName)
+                    }
+
+                    if filteredSchedule.isEmpty {
+                        emptyState
+                    } else if isSelectedDayToday {
+                        todayScheduleLayout(now: now)
+                    } else {
+                        standardScheduleLayout
+                    }
+                }
+                .frame(maxWidth: 1100, alignment: .leading)
+
+                Spacer(minLength: 0)
+            }
+            .padding()
         }
     }
 
@@ -428,7 +445,7 @@ struct ScheduleView: View {
                 planningStatPill(title: "Meetings", value: "\(selectedDayCommitmentCount)", accent: .green)
             }
 
-            HStack(spacing: 10) {
+            VStack(spacing: 10) {
                 Button {
                     openTodayTab()
                 } label: {
@@ -437,21 +454,23 @@ struct ScheduleView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button {
-                    openTodoTab()
-                } label: {
-                    Label("Tasks", systemImage: "checklist")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
+                HStack(spacing: 10) {
+                    Button {
+                        openTodoTab()
+                    } label: {
+                        Label("Tasks", systemImage: "checklist")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
 
-                Button {
-                    openNotesTab()
-                } label: {
-                    Label("Notes", systemImage: "note.text")
-                        .frame(maxWidth: .infinity)
+                    Button {
+                        openNotesTab()
+                    } label: {
+                        Label("Notes", systemImage: "square.and.pencil")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
         }
         .padding(16)
@@ -642,7 +661,24 @@ struct ScheduleView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("Delete", role: .destructive) {
+                    pendingDeleteItem = item
+                }
+            }
         }
+    }
+
+    private func deleteBlock(_ item: AlarmItem) {
+        alarms.removeAll { $0.id == item.id }
+        pendingDeleteItem = nil
+    }
+
+    private var isShowingDeleteBlockAlert: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteItem != nil },
+            set: { if !$0 { pendingDeleteItem = nil } }
+        )
     }
 
     private func isPast(_ item: AlarmItem, now: Date) -> Bool {

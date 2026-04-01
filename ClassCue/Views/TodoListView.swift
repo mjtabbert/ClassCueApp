@@ -62,15 +62,15 @@ struct TodoListView: View {
     }
 
     enum WorkspaceFilter: String, CaseIterable {
-        case all
         case school
         case personal
+        case all
 
         var displayName: String {
             switch self {
-            case .all: return "All Workspaces"
             case .school: return "School"
             case .personal: return "Personal"
+            case .all: return "All"
             }
         }
 
@@ -83,11 +83,40 @@ struct TodoListView: View {
         }
     }
 
+    enum PriorityFilter: String, CaseIterable {
+        case all
+        case high
+        case med
+        case low
+        case none
+
+        var displayName: String {
+            switch self {
+            case .all: return "All Priorities"
+            case .high: return TodoItem.Priority.high.rawValue
+            case .med: return TodoItem.Priority.med.rawValue
+            case .low: return TodoItem.Priority.low.rawValue
+            case .none: return TodoItem.Priority.none.rawValue
+            }
+        }
+
+        var priority: TodoItem.Priority? {
+            switch self {
+            case .all: return nil
+            case .high: return TodoItem.Priority.high
+            case .med: return TodoItem.Priority.med
+            case .low: return TodoItem.Priority.low
+            case .none: return TodoItem.Priority.none
+            }
+        }
+    }
+
     @State private var showAdd = false
     @State private var editingTodo: TodoItem?
     @State private var showingQuickCapture = false
     @State private var categoryFilter: CategoryFilter = .all
     @State private var workspaceFilter: WorkspaceFilter = .all
+    @State private var priorityFilter: PriorityFilter = .all
     @State private var showOnlyFollowUp = false
     @State private var showOnlyStudentContext = false
     @State private var studentFilter = ""
@@ -117,9 +146,14 @@ struct TodoListView: View {
     var body: some View {
         NavigationStack {
             List {
-                let linkedGroups = linkedContextGroups
-
-                Section("Triage") {
+                Section {
+                    Picker("Workspace", selection: $workspaceFilter) {
+                        ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
+                            Text(filter.displayName).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    
                     Button {
                         showAdd = true
                     } label: {
@@ -127,55 +161,6 @@ struct TodoListView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(.borderedProminent)
-
-                    triageSummaryRow(
-                        title: "Needs Attention",
-                        value: "\(attentionCount)",
-                        detail: "Open tasks with reminders, high priority, or due dates"
-                    )
-                    triageSummaryRow(
-                        title: "School vs Personal",
-                        value: "\(schoolTaskCount) / \(personalTaskCount)",
-                        detail: "Keep work boundaries visible while planning"
-                    )
-
-                    if activeFilterCount > 0 {
-                        Button("Clear Active Filters") {
-                            clearFilters()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-
-                if !linkedGroups.isEmpty {
-                    Section("By Class / Commitment") {
-                        ForEach(linkedGroups, id: \.context) { group in
-                            Button {
-                                linkedContextFilter = group.context
-                            } label: {
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(group.context)
-                                            .fontWeight(.semibold)
-
-                                        Text(group.preview)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(2)
-                                    }
-
-                                    Spacer()
-
-                                    Text("\(group.count)")
-                                        .font(.caption.weight(.bold))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Capsule().fill(Color.accentColor.opacity(0.14)))
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
                 }
 
                 ForEach(TodoItem.Bucket.allCases, id: \.self) { bucket in
@@ -202,6 +187,11 @@ struct TodoListView: View {
             .scrollContentBackground(.hidden)
             .background(todoBackground)
             .listStyle(.insetGrouped)
+            .onChange(of: workspaceFilter) { _, newValue in
+                if newValue != .all {
+                    clearAllWorkspaceFilters()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if todos.contains(where: { $0.isCompleted }) {
@@ -226,56 +216,68 @@ struct TodoListView: View {
                             Button("Daily Sub Plan", systemImage: "doc.text") {
                                 openTodayTab()
                             }
+
+                            if activeFilterCount > 0 {
+                                Divider()
+
+                                Button("Clear Filters", systemImage: "line.3.horizontal.decrease.circle") {
+                                    clearFilters()
+                                }
+                            }
                         } label: {
-                            toolbarIconButton(systemImage: "ellipsis", title: "Actions")
+                            toolbarMenuButton(systemImage: "ellipsis")
                         }
 
-                        Menu {
-                            Picker("Category", selection: $categoryFilter) {
-                                ForEach(CategoryFilter.allCases, id: \.self) { filter in
-                                    Text(filter.displayName).tag(filter)
-                                }
-                            }
-
-                            Divider()
-
-                            Toggle("Needs Follow-Up", isOn: $showOnlyFollowUp)
-                            Toggle("Student / Group Context", isOn: $showOnlyStudentContext)
-
-                            Picker("Workspace", selection: $workspaceFilter) {
-                                ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
-                                    Text(filter.displayName).tag(filter)
-                                }
-                            }
-
-                            if !suggestedStudents.isEmpty {
-                                Divider()
-
-                                Picker("Student / Group", selection: $studentFilter) {
-                                    Text("All Students").tag("")
-                                    ForEach(suggestedStudents, id: \.self) { student in
-                                        Text(student).tag(student)
+                        if workspaceFilter == .all {
+                            Menu {
+                                Picker("Priority", selection: $priorityFilter) {
+                                    ForEach(PriorityFilter.allCases, id: \.self) { filter in
+                                        Text(filter.displayName).tag(filter)
                                     }
                                 }
-                            }
 
-                            if !suggestedContexts.isEmpty {
                                 Divider()
 
-                                Picker("Class / Commitment", selection: $linkedContextFilter) {
-                                    Text("All Classes").tag("")
-                                    ForEach(suggestedContexts, id: \.self) { context in
-                                        Text(context).tag(context)
+                                Picker("Category", selection: $categoryFilter) {
+                                    ForEach(CategoryFilter.allCases, id: \.self) { filter in
+                                        Text(filter.displayName).tag(filter)
                                     }
                                 }
+
+                                Divider()
+
+                                Toggle("Needs Follow-Up", isOn: $showOnlyFollowUp)
+                                Toggle("Student / Group Context", isOn: $showOnlyStudentContext)
+
+                                if !suggestedStudents.isEmpty {
+                                    Divider()
+
+                                    Picker("Student / Group", selection: $studentFilter) {
+                                        Text("All Students").tag("")
+                                        ForEach(suggestedStudents, id: \.self) { student in
+                                            Text(student).tag(student)
+                                        }
+                                    }
+                                }
+
+                                if !suggestedContexts.isEmpty {
+                                    Divider()
+
+                                    Picker("Class / Commitment", selection: $linkedContextFilter) {
+                                        Text("All Classes").tag("")
+                                        ForEach(suggestedContexts, id: \.self) { context in
+                                            Text(context).tag(context)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                toolbarIconButton(
+                                    systemImage: activeFilterCount == 0
+                                        ? "line.3.horizontal.decrease"
+                                        : "line.3.horizontal.decrease.circle.fill",
+                                    title: activeFilterCount == 0 ? "Filters" : "Filters On"
+                                )
                             }
-                        } label: {
-                            toolbarIconButton(
-                                systemImage: activeFilterCount == 0
-                                    ? "line.3.horizontal.decrease"
-                                    : "line.3.horizontal.decrease.circle.fill",
-                                title: activeFilterCount == 0 ? "Filters" : "Filters On"
-                            )
                         }
 
                         Button {
@@ -374,6 +376,18 @@ struct TodoListView: View {
         }
     }
 
+    private func toolbarMenuButton(systemImage: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.accentColor.opacity(0.10))
+                .frame(width: 30, height: 30)
+
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+        }
+    }
+
     private var prefersExpandedToolbar: Bool {
         horizontalSizeClass != .compact
     }
@@ -398,6 +412,7 @@ struct TodoListView: View {
     private func items(for bucket: TodoItem.Bucket) -> [TodoItem] {
         let selectedCategory = categoryFilter.category
         let selectedWorkspace = workspaceFilter.workspace
+        let selectedPriority = priorityFilter.priority
 
         let filtered = todos.filter { item in
             guard item.bucket == bucket else { return false }
@@ -410,6 +425,10 @@ struct TodoListView: View {
                 return false
             }
 
+            if let selectedPriority, item.priority != selectedPriority {
+                return false
+            }
+
             if showOnlyFollowUp,
                item.followUpNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                item.reminder == .none {
@@ -417,15 +436,15 @@ struct TodoListView: View {
             }
 
             if showOnlyStudentContext,
-               item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+               item.effectiveStudentOrGroup.isEmpty {
                 return false
             }
 
-            if !studentFilter.isEmpty, item.studentOrGroup != studentFilter {
+            if !studentFilter.isEmpty, item.effectiveStudentOrGroup != studentFilter {
                 return false
             }
 
-            if !linkedContextFilter.isEmpty, item.linkedContext != linkedContextFilter {
+            if !linkedContextFilter.isEmpty, item.effectiveClassLink != linkedContextFilter {
                 return false
             }
 
@@ -459,7 +478,7 @@ struct TodoListView: View {
     }
 
     private func todoRow(for item: TodoItem) -> some View {
-        let studentName = item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        let studentName = item.effectiveStudentLink
         let matchedStudent = studentProfile(named: studentName)
 
         return HStack(spacing: 12) {
@@ -519,15 +538,21 @@ struct TodoListView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
 
-                if !item.linkedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(item.linkedContext)
+                if !item.effectiveClassLink.isEmpty {
+                    Text(item.effectiveClassLink)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
 
-                if !item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !item.effectiveStudentGroupLink.isEmpty {
+                    Label(item.effectiveStudentGroupLink, systemImage: "person.3")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                if !item.effectiveStudentOrGroup.isEmpty {
                     HStack(spacing: 6) {
-                        Label(item.studentOrGroup, systemImage: "person.text.rectangle")
+                        Label(item.effectiveStudentOrGroup, systemImage: "person.text.rectangle")
                             .font(.caption2)
                             .foregroundColor(.secondary)
 
@@ -537,7 +562,7 @@ struct TodoListView: View {
                     }
                 }
 
-                if let support = studentSupportsByName[item.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)],
+                if let support = studentSupportsByName[item.effectiveStudentLink],
                    !support.accommodations.isEmpty {
                     Text(support.accommodations)
                         .font(.caption2)
@@ -555,10 +580,34 @@ struct TodoListView: View {
 
             Spacer()
 
-            Button {
-                editingTodo = item
+            Menu {
+                Button("Edit", systemImage: "pencil") {
+                    editingTodo = item
+                }
+
+                Button(item.isCompleted ? "Mark Incomplete" : "Mark Complete", systemImage: item.isCompleted ? "arrow.uturn.backward.circle" : "checkmark.circle") {
+                    toggleCompletion(for: item)
+                }
+
+                Divider()
+
+                ForEach(TodoItem.Bucket.allCases, id: \.self) { bucket in
+                    Button(bucket.displayName, systemImage: item.bucket == bucket ? "checkmark" : "folder") {
+                        move(item, to: bucket)
+                    }
+                    .disabled(item.bucket == bucket)
+                }
+
+                if !item.effectiveClassLink.isEmpty ||
+                    !item.effectiveStudentOrGroup.isEmpty {
+                    Divider()
+
+                    Button("Clear Links", systemImage: "link.badge.minus") {
+                        clearLinks(for: item)
+                    }
+                }
             } label: {
-                Image(systemName: "pencil.circle")
+                Image(systemName: "ellipsis.circle")
                     .font(.title3)
                     .foregroundColor(.blue)
             }
@@ -579,6 +628,20 @@ struct TodoListView: View {
     private func deleteTodo(at offsets: IndexSet, in bucketItems: [TodoItem]) {
         let idsToDelete = offsets.map { bucketItems[$0].id }
         todos = todos.filter { !idsToDelete.contains($0.id) }
+    }
+
+    private func move(_ item: TodoItem, to bucket: TodoItem.Bucket) {
+        guard let index = todos.firstIndex(where: { $0.id == item.id }) else { return }
+        todos[index].bucket = bucket
+    }
+
+    private func clearLinks(for item: TodoItem) {
+        guard let index = todos.firstIndex(where: { $0.id == item.id }) else { return }
+        todos[index].linkedContext = ""
+        todos[index].studentOrGroup = ""
+        todos[index].classLink = ""
+        todos[index].studentGroupLink = ""
+        todos[index].studentLink = ""
     }
 
     private func dueDateText(for item: TodoItem) -> String {
@@ -624,7 +687,7 @@ struct TodoListView: View {
     private var activeFilterCount: Int {
         var count = 0
         if categoryFilter != .all { count += 1 }
-        if workspaceFilter != .all { count += 1 }
+        if priorityFilter != .all { count += 1 }
         if showOnlyFollowUp { count += 1 }
         if showOnlyStudentContext { count += 1 }
         if !studentFilter.isEmpty { count += 1 }
@@ -652,7 +715,16 @@ struct TodoListView: View {
 
     private func clearFilters() {
         categoryFilter = .all
-        workspaceFilter = .all
+        priorityFilter = .all
+        showOnlyFollowUp = false
+        showOnlyStudentContext = false
+        studentFilter = ""
+        linkedContextFilter = ""
+    }
+
+    private func clearAllWorkspaceFilters() {
+        categoryFilter = .all
+        priorityFilter = .all
         showOnlyFollowUp = false
         showOnlyStudentContext = false
         studentFilter = ""
@@ -662,8 +734,8 @@ struct TodoListView: View {
     private var linkedContextGroups: [(context: String, count: Int, preview: String)] {
         Dictionary(grouping: todos.filter {
             !$0.isCompleted &&
-            !$0.linkedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }) { $0.linkedContext }
+            !$0.effectiveClassLink.isEmpty
+        }) { $0.effectiveClassLink }
         .map { key, items in
             let sorted = items.sorted { priorityRank($0.priority) < priorityRank($1.priority) }
             let preview = sorted.prefix(2).map(\.task).joined(separator: " • ")

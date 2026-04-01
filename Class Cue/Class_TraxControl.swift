@@ -18,15 +18,15 @@ struct Class_TraxControl: ControlWidget {
             provider: Provider()
         ) { value in
             ControlWidgetToggle(
-                "Start Timer",
+                "Live Countdown",
                 isOn: value.isRunning,
-                action: StartTimerIntent(value.name)
+                action: ToggleClassTraxControlIntent(value.name)
             ) { isRunning in
-                Label(isRunning ? "On" : "Off", systemImage: "timer")
+                Label(isRunning ? "Active" : "Idle", systemImage: "timer")
             }
         }
-        .displayName("Timer")
-        .description("A an example control that runs a timer.")
+        .displayName("ClassTrax")
+        .description("Shows the current ClassTrax control state for testing.")
     }
 }
 
@@ -42,26 +42,26 @@ extension Class_TraxControl {
         }
 
         func currentValue(configuration: TimerConfiguration) async throws -> Value {
-            let isRunning = true // Check if the timer is running
+            let isRunning = false
             return Class_TraxControl.Value(isRunning: isRunning, name: configuration.timerName)
         }
     }
 }
 
 struct TimerConfiguration: ControlConfigurationIntent {
-    static let title: LocalizedStringResource = "Timer Name Configuration"
+    static let title: LocalizedStringResource = "ClassTrax Control"
 
-    @Parameter(title: "Timer Name", default: "Timer")
+    @Parameter(title: "Display Name", default: "ClassTrax")
     var timerName: String
 }
 
-struct StartTimerIntent: SetValueIntent {
-    static let title: LocalizedStringResource = "Start a timer"
+struct ToggleClassTraxControlIntent: SetValueIntent {
+    static let title: LocalizedStringResource = "Toggle ClassTrax Control"
 
-    @Parameter(title: "Timer Name")
+    @Parameter(title: "Display Name")
     var name: String
 
-    @Parameter(title: "Timer is running")
+    @Parameter(title: "Control Active")
     var value: Bool
 
     init() {}
@@ -71,7 +71,6 @@ struct StartTimerIntent: SetValueIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        // Start the timer…
         return .result()
     }
 }

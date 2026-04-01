@@ -250,35 +250,28 @@ struct ActiveTimerCard: View {
     private func detailsBlock(titleFont: Font, detailFont: Font) -> some View {
         let grade = item.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines)
         let room = item.location.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secondaryLine = [grade, room]
+            .filter { !$0.isEmpty }
+            .joined(separator: " • ")
 
         VStack(alignment: .leading, spacing: 10) {
-            Text(item.className)
+            Text(item.displayClassName)
                 .font(titleFont.weight(.bold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 8) {
-                metadataChip(
-                    timeRangeText,
-                    systemImage: "clock",
-                    font: detailFont
-                )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(timeRangeText)
+                    .font(detailFont.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
 
-                if !room.isEmpty {
-                    metadataChip(
-                        room,
-                        systemImage: "mappin.and.ellipse",
-                        font: detailFont
-                    )
-                }
-
-                if !grade.isEmpty {
-                    metadataChip(
-                        grade,
-                        systemImage: "graduationcap",
-                        font: detailFont
-                    )
+                if !secondaryLine.isEmpty {
+                    Text(secondaryLine)
+                        .font(detailFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
         }

@@ -18,14 +18,17 @@ struct AddTodoView: View {
     var existing: TodoItem? = nil
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("add_todo_draft_v1") private var savedDraftData: Data = Data()
     
     @State private var task = ""
     @State private var priority = TodoItem.Priority.none
     @State private var category = TodoItem.Category.prep
     @State private var bucket = TodoItem.Bucket.today
     @State private var workspace = TodoItem.Workspace.school
-    @State private var linkedContext = ""
-    @State private var studentOrGroup = ""
+    @State private var classLink = ""
+    @State private var studentGroupLink = ""
+    @State private var studentLink = ""
     @State private var followUpNote = ""
     @State private var reminder = TodoItem.Reminder.none
     @State private var hasDueDate = false
@@ -34,6 +37,22 @@ struct AddTodoView: View {
     @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
     @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
     @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
+
+    private struct Draft: Codable, Equatable {
+        var existingID: UUID?
+        var task: String
+        var priority: TodoItem.Priority
+        var category: TodoItem.Category
+        var bucket: TodoItem.Bucket
+        var workspace: TodoItem.Workspace
+        var classLink: String
+        var studentGroupLink: String
+        var studentLink: String
+        var followUpNote: String
+        var reminder: TodoItem.Reminder
+        var hasDueDate: Bool
+        var dueDate: Date
+    }
 
     init(
         todos: Binding<[TodoItem]>,
@@ -60,8 +79,23 @@ struct AddTodoView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Workspace") {
+                    Picker("Workspace", selection: $workspace) {
+                        ForEach(TodoItem.Workspace.allCases, id: \.self) { workspace in
+                            Label(workspace.displayName, systemImage: workspace.systemImage)
+                                .tag(workspace)
+                        }
+                    }
+                }
+
                 Section("Task Details") {
                     TextField("Task Name", text: $task)
+
+                    Picker("When", selection: $bucket) {
+                        ForEach(TodoItem.Bucket.allCases, id: \.self) { bucket in
+                            Text(bucket.displayName).tag(bucket)
+                        }
+                    }
 
                     Picker("Category", selection: $category) {
                         ForEach(TodoItem.Category.allCases, id: \.self) { category in
@@ -70,46 +104,39 @@ struct AddTodoView: View {
                         }
                     }
 
-                    Picker("When", selection: $bucket) {
-                        ForEach(TodoItem.Bucket.allCases, id: \.self) { bucket in
-                            Text(bucket.displayName).tag(bucket)
-                        }
-                    }
-
-                    Picker("Workspace", selection: $workspace) {
-                        ForEach(TodoItem.Workspace.allCases, id: \.self) { workspace in
-                            Label(workspace.displayName, systemImage: workspace.systemImage)
-                                .tag(workspace)
-                        }
-                    }
-
                     Picker("Priority", selection: $priority) {
                         ForEach(TodoItem.Priority.allCases, id: \.self) { level in
                             Text(level.rawValue).tag(level)
                         }
                     }
+                }
 
-                    TextField("Linked Class or Commitment (Optional)", text: $linkedContext)
-
-                    if !suggestedContexts.isEmpty {
-                        Picker("Suggested Link", selection: $linkedContext) {
-                            Text("None").tag("")
-                            ForEach(suggestedContexts, id: \.self) { context in
-                                Text(context).tag(context)
-                            }
+                Section("Links") {
+                    Picker("Class Link", selection: $classLink) {
+                        Text("None").tag("")
+                        ForEach(suggestedContexts, id: \.self) { context in
+                            Text(context).tag(context)
                         }
                     }
+                    .pickerStyle(.menu)
 
-                    TextField("Student or Group (Optional)", text: $studentOrGroup)
-
-                    if !suggestedStudents.isEmpty {
-                        Picker("Saved Student / Group", selection: $studentOrGroup) {
-                            Text("None").tag("")
-                            ForEach(suggestedStudents, id: \.self) { student in
-                                Text(student).tag(student)
-                            }
+                    Picker("Student Group Link", selection: $studentGroupLink) {
+                        Text("None").tag("")
+                        ForEach(suggestedStudents, id: \.self) { student in
+                            Text(student).tag(student)
                         }
-                    } else {
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Student Link", selection: $studentLink) {
+                        Text("None").tag("")
+                        ForEach(suggestedStudents, id: \.self) { student in
+                            Text(student).tag(student)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if suggestedStudents.isEmpty {
                         Text("Add names in Settings > Student Directory to use a prefilled student picker here.")
                             .font(.footnote)
                             .foregroundColor(.secondary)
@@ -148,6 +175,7 @@ struct AddTodoView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
+                        clearDraft()
                         dismiss()
                     }
                 }
@@ -166,8 +194,9 @@ struct AddTodoView: View {
                     category = existing.category
                     bucket = existing.bucket
                     workspace = existing.workspace
-                    linkedContext = existing.linkedContext
-                    studentOrGroup = existing.studentOrGroup
+                    classLink = existing.effectiveClassLink
+                    studentGroupLink = existing.effectiveStudentGroupLink
+                    studentLink = existing.effectiveStudentLink
                     followUpNote = existing.followUpNote
                     reminder = existing.reminder
 
@@ -180,11 +209,22 @@ struct AddTodoView: View {
                     }
                 }
             }
+            .onAppear {
+                restoreDraftIfNeeded()
+            }
+            .onChange(of: currentDraft) { _, _ in
+                persistDraft()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase != .active {
+                    persistDraft()
+                }
+            }
         }
     }
 
     private var studentSupport: StudentSupportProfile? {
-        studentSupportsByName[studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)]
+        studentSupportsByName[studentLink.trimmingCharacters(in: .whitespacesAndNewlines)]
     }
 
     @ViewBuilder
@@ -233,8 +273,13 @@ struct AddTodoView: View {
             category: category,
             bucket: bucket,
             workspace: workspace,
-            linkedContext: linkedContext.trimmingCharacters(in: .whitespacesAndNewlines),
-            studentOrGroup: studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines),
+            linkedContext: classLink.trimmingCharacters(in: .whitespacesAndNewlines),
+            studentOrGroup: studentLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? studentGroupLink.trimmingCharacters(in: .whitespacesAndNewlines)
+                : studentLink.trimmingCharacters(in: .whitespacesAndNewlines),
+            classLink: classLink.trimmingCharacters(in: .whitespacesAndNewlines),
+            studentGroupLink: studentGroupLink.trimmingCharacters(in: .whitespacesAndNewlines),
+            studentLink: studentLink.trimmingCharacters(in: .whitespacesAndNewlines),
             followUpNote: followUpNote.trimmingCharacters(in: .whitespacesAndNewlines),
             reminder: reminder
         )
@@ -245,8 +290,53 @@ struct AddTodoView: View {
         } else {
             todos.append(newTodo)
         }
-        
+
+        clearDraft()
         dismiss()
+    }
+
+    private var currentDraft: Draft {
+        Draft(
+            existingID: existing?.id,
+            task: task,
+            priority: priority,
+            category: category,
+            bucket: bucket,
+            workspace: workspace,
+            classLink: classLink,
+            studentGroupLink: studentGroupLink,
+            studentLink: studentLink,
+            followUpNote: followUpNote,
+            reminder: reminder,
+            hasDueDate: hasDueDate,
+            dueDate: dueDate
+        )
+    }
+
+    private func restoreDraftIfNeeded() {
+        guard let draft = try? JSONDecoder().decode(Draft.self, from: savedDraftData) else { return }
+        guard draft.existingID == existing?.id else { return }
+        task = draft.task
+        priority = draft.priority
+        category = draft.category
+        bucket = draft.bucket
+        workspace = draft.workspace
+        classLink = draft.classLink
+        studentGroupLink = draft.studentGroupLink
+        studentLink = draft.studentLink
+        followUpNote = draft.followUpNote
+        reminder = draft.reminder
+        hasDueDate = draft.hasDueDate
+        dueDate = draft.dueDate
+    }
+
+    private func persistDraft() {
+        guard let encoded = try? JSONEncoder().encode(currentDraft) else { return }
+        savedDraftData = encoded
+    }
+
+    private func clearDraft() {
+        savedDraftData = Data()
     }
 
     private static func shouldDefaultToPersonalCapture(

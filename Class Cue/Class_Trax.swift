@@ -49,7 +49,8 @@ struct ClassTraxHomeProvider: TimelineProvider {
                 symbolName: "function",
                 startTime: now.addingTimeInterval(-600),
                 endTime: now.addingTimeInterval(1800),
-                typeName: "Math"
+                typeName: "Math",
+                isHeld: false
             ),
             next: .init(
                 id: UUID(),
@@ -59,7 +60,8 @@ struct ClassTraxHomeProvider: TimelineProvider {
                 symbolName: "atom",
                 startTime: now.addingTimeInterval(2100),
                 endTime: now.addingTimeInterval(4500),
-                typeName: "Science"
+                typeName: "Science",
+                isHeld: false
             )
         )
     }
@@ -222,10 +224,18 @@ struct ClassTraxHomeEntryView: View {
 
             Spacer()
 
-            Text(snapshot?.current == nil && snapshot?.next == nil ? "Wrapped" : "Now")
+            Text(headerStatusText)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(snapshot?.isStale == true ? .yellow : .secondary)
         }
+    }
+
+    private var headerStatusText: String {
+        if snapshot?.isStale == true {
+            return "Waiting"
+        }
+
+        return snapshot?.current == nil && snapshot?.next == nil ? "Wrapped" : "Now"
     }
 
     private func compactHero(title: String, block: ClassTraxWidgetSnapshot.BlockSummary, timerDate: Date) -> some View {
@@ -260,12 +270,18 @@ struct ClassTraxHomeEntryView: View {
 
                     Spacer()
 
-                    Text(timerDate, style: title == "Now" ? .timer : .relative)
-                        .font(.system(size: family == .systemSmall ? 24 : 26, weight: .black, design: .rounded))
-                        .monospacedDigit()
-                        .minimumScaleFactor(0.55)
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
+                    if title == "Now" && block.isHeld {
+                        Label("Held", systemImage: "pause.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(timerDate, style: title == "Now" ? .timer : .relative)
+                            .font(.system(size: family == .systemSmall ? 24 : 26, weight: .black, design: .rounded))
+                            .monospacedDigit()
+                            .minimumScaleFactor(0.55)
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+                    }
                 }
 
                 let meta = blockMetaText(block)
@@ -358,10 +374,12 @@ struct ClassTraxHomeEntryView: View {
         VStack(alignment: .leading, spacing: 8) {
             Spacer(minLength: 0)
 
-            Text("Day Wrapped")
+            Text(snapshot?.isStale == true ? "Waiting for Sync" : "Day Wrapped")
                 .font(.title3.weight(.bold))
 
-            Text("Open ClassTrax for tomorrow’s schedule, tasks, and supports.")
+            Text(snapshot?.isStale == true
+                 ? "Open ClassTrax on your iPhone if the schedule here looks out of date."
+                 : "Open ClassTrax for tomorrow’s schedule, tasks, and supports.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -431,7 +449,8 @@ struct Class_Trax: Widget {
                 symbolName: "function",
                 startTime: .now.addingTimeInterval(-600),
                 endTime: .now.addingTimeInterval(2400),
-                typeName: "Math"
+                typeName: "Math",
+                isHeld: false
             ),
             next: .init(
                 id: UUID(),
@@ -441,7 +460,8 @@ struct Class_Trax: Widget {
                 symbolName: "atom",
                 startTime: .now.addingTimeInterval(2700),
                 endTime: .now.addingTimeInterval(4500),
-                typeName: "Science"
+                typeName: "Science",
+                isHeld: false
             )
         )
     )

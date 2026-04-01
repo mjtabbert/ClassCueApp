@@ -155,10 +155,6 @@ struct NotesView: View {
 
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Menu {
-                        Button("Add Note", systemImage: "square.and.pencil") {
-                            presentAddNote()
-                        }
-
                         if !currentModeNotes.isEmpty {
                             Button("Export", systemImage: "square.and.arrow.up") {
                                 showingExportComposer = true
@@ -466,6 +462,7 @@ struct NotesView: View {
             parts.append(student)
         }
 
+        parts.append("Follow up \(note.followUpDate.formatted(date: .abbreviated, time: .omitted))")
         parts.append(note.createdAt.formatted(date: .abbreviated, time: .shortened))
         return parts.joined(separator: " • ")
     }
@@ -578,7 +575,7 @@ struct NotesView: View {
                 Section {
                     ContentUnavailableView(
                         "No Notes Yet",
-                        systemImage: "note.text",
+                        systemImage: "square.and.pencil",
                         description: Text("Tap + to create a note, or submit a quick school note from Today.")
                     )
                 }
@@ -704,7 +701,7 @@ struct NotesView: View {
                 noteOverviewRow(
                     title: "Visible Notes",
                     value: "\(groups.reduce(0) { $0 + $1.notes.count })",
-                    systemImage: "note.text"
+                    systemImage: "square.and.pencil"
                 )
 
                 HStack {
@@ -772,7 +769,7 @@ struct NotesView: View {
                 Section {
                     ContentUnavailableView(
                         "No Class Notes Yet",
-                        systemImage: "note.text.badge.plus",
+                        systemImage: "square.and.pencil",
                         description: Text("Tap + to create a class note.")
                     )
                 }
@@ -1096,11 +1093,29 @@ struct NotesView: View {
         let trimmedPersonalNotes = personalNotesText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if !trimmedSchoolNotes.isEmpty && !updated.contains(where: { $0.kind == .generalNote }) {
-            updated.insert(FollowUpNoteItem(kind: .generalNote, context: "", studentOrGroup: "", note: trimmedSchoolNotes), at: 0)
+            updated.insert(
+                FollowUpNoteItem(
+                    kind: .generalNote,
+                    context: "",
+                    studentOrGroup: "",
+                    note: trimmedSchoolNotes,
+                    followUpDate: Date()
+                ),
+                at: 0
+            )
         }
 
         if !trimmedPersonalNotes.isEmpty && !updated.contains(where: { $0.kind == .personalNote }) {
-            updated.insert(FollowUpNoteItem(kind: .personalNote, context: "", studentOrGroup: "", note: trimmedPersonalNotes), at: 0)
+            updated.insert(
+                FollowUpNoteItem(
+                    kind: .personalNote,
+                    context: "",
+                    studentOrGroup: "",
+                    note: trimmedPersonalNotes,
+                    followUpDate: Date()
+                ),
+                at: 0
+            )
         }
 
         if updated != followUpNotes {
@@ -1156,7 +1171,8 @@ struct NotesView: View {
                 kind: kind,
                 context: "",
                 studentOrGroup: "",
-                note: noteText
+                note: noteText,
+                followUpDate: Date()
             ),
             at: 0
         )
@@ -1391,6 +1407,7 @@ func notesExportBody(for notes: [FollowUpNoteItem]) -> String {
             lines.append("Student/Group: \(student)")
         }
 
+        lines.append("Follow-Up: \(note.followUpDate.formatted(date: .abbreviated, time: .omitted))")
         lines.append("Created: \(note.createdAt.formatted(date: .abbreviated, time: .shortened))")
         lines.append("")
         lines.append(note.note)
@@ -1460,9 +1477,24 @@ private func makeNotesPDF(title: String, body: String) -> URL? {
 
 private func drawAttributedString(_ string: NSAttributedString, in rect: CGRect, range: NSRange) -> NSRange {
     let framesetter = CTFramesetterCreateWithAttributedString(string)
-    let path = CGPath(rect: rect, transform: nil)
+    guard let context = UIGraphicsGetCurrentContext() else {
+        return range
+    }
+    let pageBounds = UIGraphicsGetPDFContextBounds()
+    let coreTextRect = CGRect(
+        x: rect.minX,
+        y: pageBounds.height - rect.maxY,
+        width: rect.width,
+        height: rect.height
+    )
+    let path = CGPath(rect: coreTextRect, transform: nil)
     let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(range.location, range.length), path, nil)
-    CTFrameDraw(frame, UIGraphicsGetCurrentContext()!)
+    context.saveGState()
+    context.textMatrix = .identity
+    context.translateBy(x: 0, y: pageBounds.height)
+    context.scaleBy(x: 1, y: -1)
+    CTFrameDraw(frame, context)
+    context.restoreGState()
     let visibleRange = CTFrameGetVisibleStringRange(frame)
     return NSRange(location: range.location + visibleRange.length, length: string.length - range.location - visibleRange.length)
 }

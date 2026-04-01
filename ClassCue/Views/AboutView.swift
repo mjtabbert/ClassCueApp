@@ -75,11 +75,13 @@ struct AboutView: View {
                         }
                         .buttonStyle(.bordered)
                         
-                        Link(destination: URL(string: "mailto:\(AppInfo.supportEmail)")!) {
-                            Label("Contact Support", systemImage: "envelope")
-                                .frame(maxWidth: .infinity)
+                        if let supportURL = URL(string: "mailto:\(AppInfo.supportEmail)") {
+                            Link(destination: supportURL) {
+                                Label("Contact Support", systemImage: "envelope")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
                 .padding()

@@ -163,6 +163,8 @@ final class PersistedCommitmentItem: PersistedUUIDModel {
     var title: String = ""
     var kindRawValue: String = CommitmentItem.Kind.other.rawValue
     var dayOfWeek: Int = 1
+    var recurrenceRawValue: String = CommitmentItem.Recurrence.weekly.rawValue
+    var specificDate: Date?
     var startTime: Date = Date.distantPast
     var endTime: Date = Date.distantPast
     var location: String = ""
@@ -177,6 +179,8 @@ final class PersistedCommitmentItem: PersistedUUIDModel {
         self.title = item.title
         self.kindRawValue = item.kind.rawValue
         self.dayOfWeek = item.dayOfWeek
+        self.recurrenceRawValue = item.recurrence.rawValue
+        self.specificDate = item.specificDate
         self.startTime = item.startTime
         self.endTime = item.endTime
         self.location = item.location
@@ -189,6 +193,8 @@ final class PersistedCommitmentItem: PersistedUUIDModel {
             title: title,
             kind: CommitmentItem.Kind(rawValue: kindRawValue) ?? .other,
             dayOfWeek: dayOfWeek,
+            recurrence: CommitmentItem.Recurrence(rawValue: recurrenceRawValue) ?? .weekly,
+            specificDate: specificDate,
             startTime: startTime,
             endTime: endTime,
             location: location,
@@ -209,6 +215,9 @@ final class PersistedTodoItem: PersistedUUIDModel {
     var workspaceRawValue: String = TodoItem.Workspace.school.rawValue
     var linkedContext: String = ""
     var studentOrGroup: String = ""
+    var classLink: String = ""
+    var studentGroupLink: String = ""
+    var studentLink: String = ""
     var followUpNote: String = ""
     var reminderRawValue: String = TodoItem.Reminder.none.rawValue
 
@@ -227,6 +236,9 @@ final class PersistedTodoItem: PersistedUUIDModel {
         self.workspaceRawValue = item.workspace.rawValue
         self.linkedContext = item.linkedContext
         self.studentOrGroup = item.studentOrGroup
+        self.classLink = item.classLink
+        self.studentGroupLink = item.studentGroupLink
+        self.studentLink = item.studentLink
         self.followUpNote = item.followUpNote
         self.reminderRawValue = item.reminder.rawValue
     }
@@ -243,6 +255,9 @@ final class PersistedTodoItem: PersistedUUIDModel {
             workspace: TodoItem.Workspace(rawValue: workspaceRawValue) ?? .school,
             linkedContext: linkedContext,
             studentOrGroup: studentOrGroup,
+            classLink: classLink,
+            studentGroupLink: studentGroupLink,
+            studentLink: studentLink,
             followUpNote: followUpNote,
             reminder: TodoItem.Reminder(rawValue: reminderRawValue) ?? .none
         )
@@ -423,6 +438,9 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
     var studentName: String = ""
     var studentID: UUID?
     var classDefinitionID: UUID?
+    var blockID: UUID?
+    var blockStartTime: Date?
+    var blockEndTime: Date?
     var statusRawValue: String = AttendanceRecord.Status.present.rawValue
     var absentHomework: String = ""
 
@@ -438,6 +456,9 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
         self.studentName = item.studentName
         self.studentID = item.studentID
         self.classDefinitionID = item.classDefinitionID
+        self.blockID = item.blockID
+        self.blockStartTime = item.blockStartTime
+        self.blockEndTime = item.blockEndTime
         self.statusRawValue = item.status.rawValue
         self.absentHomework = item.absentHomework
     }
@@ -451,6 +472,9 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
             studentName: studentName,
             studentID: studentID,
             classDefinitionID: classDefinitionID,
+            blockID: blockID,
+            blockStartTime: blockStartTime,
+            blockEndTime: blockEndTime,
             status: AttendanceRecord.Status(rawValue: statusRawValue) ?? .present,
             absentHomework: absentHomework
         )
@@ -1033,7 +1057,13 @@ enum ClassTraxPersistence {
         create: (Value) -> T,
         update: (T, Value) -> Void,
         identifier: (Value) -> UUID = { value in
-            (value as! any Identifiable).id as! UUID
+            guard let identifiable = value as? any Identifiable else {
+                preconditionFailure("syncModels default identifier requires Identifiable values.")
+            }
+            guard let id = identifiable.id as? UUID else {
+                preconditionFailure("syncModels default identifier requires UUID-backed Identifiable values.")
+            }
+            return id
         }
     ) {
         let descriptor = FetchDescriptor<T>()

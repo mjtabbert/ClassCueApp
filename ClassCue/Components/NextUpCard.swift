@@ -61,7 +61,7 @@ struct NextUpCard: View {
                     .foregroundColor(countdownColor(isSoon: isSoon, isCritical: isCritical))
                     .tracking(2)
                 
-                Text(item.className.uppercased())
+                Text(item.displayClassName.uppercased())
                     .font(.title3)
                     .fontWeight(.black)
                 

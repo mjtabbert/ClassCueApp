@@ -16,6 +16,10 @@ struct ContentView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        if snapshotStore.snapshot?.isStale == true {
+                            staleSyncSurface
+                        }
+
                         if let current = snapshotStore.snapshot?.current {
                             activeTimerSurface(current, now: now)
                         } else {
@@ -41,46 +45,50 @@ struct ContentView: View {
     }
 
     private func activeTimerSurface(_ block: ClassTraxWatchSnapshot.BlockSummary, now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let grade = block.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let room = block.room.trimmingCharacters(in: .whitespacesAndNewlines)
+        let supportingLine = [grade, room]
+            .filter { !$0.isEmpty }
+            .joined(separator: " • ")
+
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 8) {
                 timerPill(title: "Now", accent: accentColor(for: block.symbolName))
-                Text(block.typeName)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
 
                 Spacer(minLength: 0)
             }
 
             Text(block.className)
                 .font(.title3.weight(.black))
-                .lineLimit(3)
+                .lineLimit(2)
                 .minimumScaleFactor(0.75)
 
-            Text(block.endTime, style: .timer)
-                .font(.system(size: 40, weight: .black, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.42)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 8) {
-                timerInfoChip(
-                    title: "Ends \(block.endTime.formatted(date: .omitted, time: .shortened))",
-                    systemImage: "clock",
-                    accent: accentColor(for: block.symbolName)
-                )
-
-                if !block.room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    timerInfoChip(
-                        title: block.room,
-                        systemImage: "mappin.and.ellipse",
-                        accent: accentColor(for: block.symbolName)
-                    )
-                }
+            if block.isHeld {
+                Label("Held", systemImage: "pause.fill")
+                    .font(.title2.weight(.black))
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(block.endTime, style: .timer)
+                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.42)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            compactControls(for: block)
+            Text("\(block.startTime.formatted(date: .omitted, time: .shortened)) - \(block.endTime.formatted(date: .omitted, time: .shortened))")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+
+            if !supportingLine.isEmpty {
+                Text(supportingLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -89,7 +97,9 @@ struct ContentView: View {
     }
 
     private func nextUpSurface(_ block: ClassTraxWatchSnapshot.BlockSummary, now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let grade = block.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 timerPill(title: "Next", accent: accentColor(for: block.symbolName))
 
@@ -103,21 +113,20 @@ struct ContentView: View {
 
             Text(block.className)
                 .font(.headline.weight(.bold))
-                .lineLimit(2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
             Text("\(block.startTime.formatted(date: .omitted, time: .shortened)) - \(block.endTime.formatted(date: .omitted, time: .shortened))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
 
-            HStack(spacing: 8) {
-                if !block.room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    timerInfoChip(
-                        title: block.room,
-                        systemImage: "mappin.and.ellipse",
-                        accent: accentColor(for: block.symbolName)
-                    )
-                }
-
+            if !grade.isEmpty {
+                Text(grade)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .padding(12)
@@ -140,13 +149,15 @@ struct ContentView: View {
                 .font(.headline.weight(.bold))
 
             if let next = nextBlock(for: now) {
-                Text("Next up is \(next.className) at \(next.startTime.formatted(date: .omitted, time: .shortened)).")
+                Text("\(next.className) at \(next.startTime.formatted(date: .omitted, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
             } else {
-                Text("The watch is waiting for the next schedule update from your iPhone.")
+                Text("Waiting for the next schedule update.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
         }
         .padding(14)
@@ -161,25 +172,27 @@ struct ContentView: View {
         )
     }
 
-    private func compactControls(for block: ClassTraxWatchSnapshot.BlockSummary) -> some View {
+    private var staleSyncSurface: some View {
         HStack(spacing: 8) {
-            Button {
-                snapshotStore.toggleHold(for: block.id)
-            } label: {
-                Label("Hold", systemImage: "pause.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
+            Image(systemName: "iphone.slash")
+                .foregroundStyle(.yellow)
 
-            Button {
-                snapshotStore.skipBell(for: block.id)
-            } label: {
-                Label("Skip", systemImage: "bell.slash")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
+            Text("Waiting for iPhone sync")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
-        .font(.caption2.weight(.bold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.yellow.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.yellow.opacity(0.18), lineWidth: 1)
+        )
     }
 
     private func timerPill(title: String, accent: Color) -> some View {
@@ -191,19 +204,6 @@ struct ContentView: View {
             .background(
                 Capsule(style: .continuous)
                     .fill(accent.opacity(0.14))
-            )
-    }
-
-    private func timerInfoChip(title: String, systemImage: String, accent: Color) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(accent.opacity(0.10))
             )
     }
 

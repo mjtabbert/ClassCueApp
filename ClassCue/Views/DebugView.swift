@@ -24,13 +24,62 @@ struct DebugView: View {
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
     @AppStorage("pref_haptic") private var selectedHapticRawValue: String = ""
     @AppStorage("pref_sound") private var selectedSoundRawValue: String = ""
+    @AppStorage("live_activities_enabled") private var liveActivitiesEnabled = true
 
     @State private var alarms: [AlarmItem] = []
     @State private var todos: [TodoItem] = []
+    @State private var notificationSnapshot: NotificationManager.DebugSnapshot?
+    @State private var widgetSnapshot: ClassTraxWidgetSnapshot?
+    @State private var liveActivityStatusMessage = ""
+    @State private var liveActivityDebugState: LiveActivityManager.DebugState?
 
     var body: some View {
         NavigationStack {
             List {
+                Section("Testing Readiness") {
+                    LabeledContent("Notifications", value: notificationSnapshot?.authorizationStatus ?? "Loading…")
+                    LabeledContent("Alerts", value: notificationSnapshot?.alertSetting ?? "Loading…")
+                    LabeledContent("Sound", value: notificationSnapshot?.soundSetting ?? "Loading…")
+                    LabeledContent("Badges", value: notificationSnapshot?.badgeSetting ?? "Loading…")
+                    LabeledContent("Pending Requests", value: "\(notificationSnapshot?.pendingRequestCount ?? 0)")
+                    LabeledContent("ClassTrax Pending", value: "\(notificationSnapshot?.classTraxPendingCount ?? 0)")
+                    LabeledContent("Next Scheduled", value: notificationSnapshot?.nextClassTraxTrigger ?? "Loading…")
+                    LabeledContent("Next Identifier", value: notificationSnapshot?.nextClassTraxIdentifier ?? "Loading…")
+                    LabeledContent("Live Activities", value: liveActivitiesEnabled ? "Enabled" : "Disabled")
+                    LabeledContent("Live Activity Status", value: liveActivityStatusMessage.isEmpty ? "Unknown" : liveActivityStatusMessage)
+                    LabeledContent("Live Activity Active", value: liveActivityDebugState?.isActive == true ? "Yes" : "No")
+                    LabeledContent("Live Activity Class", value: liveActivityDebugState?.className ?? "None")
+                    LabeledContent("Live Activity End", value: liveActivityEndText)
+                    LabeledContent("Live Activity Held", value: liveActivityDebugState?.isHeld == true ? "Yes" : "No")
+                    LabeledContent("Live Activity Next", value: liveActivityDebugState?.nextClassName.isEmpty == false ? (liveActivityDebugState?.nextClassName ?? "None") : "None")
+                    LabeledContent("Live Activity Refresh", value: liveActivityDebugUpdatedAtText)
+                    LabeledContent("Widget Snapshot", value: widgetSnapshotStatusText)
+                    LabeledContent("Last Snapshot Update", value: widgetSnapshotUpdatedAtText)
+                    LabeledContent("Watch Sync Age", value: watchSyncAgeText)
+
+                    Button("Refresh Debug Status") {
+                        loadData()
+                    }
+
+                    Button("Refresh Live Activity") {
+                        LiveActivityManager.refreshFromLastKnownState()
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(250))
+                            await MainActor.run { loadData() }
+                        }
+                    }
+                    .disabled(liveActivityDebugState == nil)
+
+                    Button("Restart Live Activity") {
+                        LiveActivityManager.restartFromLastKnownState()
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(700))
+                            await MainActor.run { loadData() }
+                        }
+                    }
+                    .disabled(liveActivityDebugState == nil)
+                }
+
                 Section("App State") {
                     LabeledContent("Alarm Count", value: "\(alarms.count)")
                     LabeledContent("Todo Count", value: "\(todos.count)")
@@ -145,5 +194,53 @@ struct DebugView: View {
         } else {
             todos = []
         }
+
+        widgetSnapshot = WidgetSnapshotStore.load()
+        liveActivityDebugState = LiveActivityManager.debugState()
+        Task {
+            notificationSnapshot = await NotificationManager.shared.debugSnapshot()
+            liveActivityStatusMessage = LiveActivityManager.lastStatusMessage
+            liveActivityDebugState = LiveActivityManager.debugState()
+        }
+    }
+
+    private var widgetSnapshotStatusText: String {
+        guard let widgetSnapshot else { return "No Snapshot" }
+        if widgetSnapshot.isStale {
+            return "Stale"
+        }
+        if widgetSnapshot.current != nil {
+            return "Current Block"
+        }
+        if widgetSnapshot.next != nil {
+            return "Next Block Only"
+        }
+        return "Day Wrapped"
+    }
+
+    private var widgetSnapshotUpdatedAtText: String {
+        widgetSnapshot?.updatedAt.formatted(date: .abbreviated, time: .shortened) ?? "None"
+    }
+
+    private var watchSyncAgeText: String {
+        guard let updatedAt = widgetSnapshot?.updatedAt else { return "Unknown" }
+        let seconds = max(Int(Date().timeIntervalSince(updatedAt)), 0)
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        let hours = minutes / 60
+        return "\(hours)h"
+    }
+
+    private var liveActivityEndText: String {
+        liveActivityDebugState?.endTime.formatted(date: .omitted, time: .shortened) ?? "None"
+    }
+
+    private var liveActivityDebugUpdatedAtText: String {
+        liveActivityDebugState?.lastUpdatedAt.formatted(date: .abbreviated, time: .shortened) ?? "None"
     }
 }

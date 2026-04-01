@@ -56,8 +56,10 @@ struct QuickCaptureView: View {
     @AppStorage("school_quiet_hour") private var schoolQuietHour = 16
     @AppStorage("school_quiet_minute") private var schoolQuietMinute = 0
     @AppStorage("school_default_personal_capture_after_hours") private var defaultPersonalCaptureAfterHours = true
+    @AppStorage("quick_capture_draft_v1") private var savedDraftData: Data = Data()
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var target: CaptureTarget = .task
     @State private var text = ""
@@ -68,6 +70,18 @@ struct QuickCaptureView: View {
     @State private var followUpNote = ""
     @State private var reminder = TodoItem.Reminder.none
     @State private var noteDestination: NoteDestination = .general
+
+    private struct Draft: Codable, Equatable {
+        var targetRawValue: String
+        var text: String
+        var categoryRawValue: String
+        var workspaceRawValue: String
+        var linkedContext: String
+        var studentOrGroup: String
+        var followUpNote: String
+        var reminderRawValue: String
+        var noteDestinationRawValue: String
+    }
 
     init(
         todos: Binding<[TodoItem]>,
@@ -133,12 +147,24 @@ struct QuickCaptureView: View {
                             }
                         }
 
-                        TextField("Class or Commitment (Optional)", text: $linkedContext)
-
-                        TextField("Student or Group (Optional)", text: $studentOrGroup)
+                        if !suggestedContexts.isEmpty {
+                            Picker("Class / Commitment Link", selection: $linkedContext) {
+                                Text("None").tag("")
+                                if let preferredContext, !preferredContext.isEmpty {
+                                    Text("Current Focus: \(preferredContext)").tag(preferredContext)
+                                }
+                                ForEach(suggestedContexts, id: \.self) { context in
+                                    Text(context).tag(context)
+                                }
+                            }
+                        } else {
+                            Text("No saved class links yet.")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
 
                         if !suggestedStudents.isEmpty {
-                            Picker("Saved Student / Group", selection: $studentOrGroup) {
+                            Picker("Student / Group Link", selection: $studentOrGroup) {
                                 Text("None").tag("")
                                 ForEach(suggestedStudents, id: \.self) { student in
                                     Text(student).tag(student)
@@ -152,18 +178,6 @@ struct QuickCaptureView: View {
 
                         if let support = studentSupport {
                             supportPreview(support)
-                        }
-
-                        if !suggestedContexts.isEmpty {
-                            Picker("Suggested Link", selection: $linkedContext) {
-                                Text("None").tag("")
-                                if let preferredContext, !preferredContext.isEmpty {
-                                    Text("Current Focus: \(preferredContext)").tag(preferredContext)
-                                }
-                                ForEach(suggestedContexts, id: \.self) { context in
-                                    Text(context).tag(context)
-                                }
-                            }
                         }
 
                         TextField("Follow-Up Note (Optional)", text: $followUpNote, axis: .vertical)
@@ -241,8 +255,20 @@ struct QuickCaptureView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
+                        clearDraft()
                         dismiss()
                     }
+                }
+            }
+            .onAppear {
+                restoreDraftIfNeeded()
+            }
+            .onChange(of: currentDraft) { _, _ in
+                persistDraft()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase != .active {
+                    persistDraft()
                 }
             }
         }
@@ -267,6 +293,7 @@ struct QuickCaptureView: View {
             at: 0
         )
 
+        clearDraft()
         dismiss()
     }
 
@@ -286,6 +313,7 @@ struct QuickCaptureView: View {
         )
         saveFollowUpNotes(notes)
 
+        clearDraft()
         dismiss()
     }
 
@@ -368,5 +396,41 @@ struct QuickCaptureView: View {
                     .lineLimit(2)
             }
         }
+    }
+
+    private var currentDraft: Draft {
+        Draft(
+            targetRawValue: target.rawValue,
+            text: text,
+            categoryRawValue: category.rawValue,
+            workspaceRawValue: workspace.rawValue,
+            linkedContext: linkedContext,
+            studentOrGroup: studentOrGroup,
+            followUpNote: followUpNote,
+            reminderRawValue: reminder.rawValue,
+            noteDestinationRawValue: noteDestination.rawValue
+        )
+    }
+
+    private func restoreDraftIfNeeded() {
+        guard let draft = try? JSONDecoder().decode(Draft.self, from: savedDraftData) else { return }
+        target = CaptureTarget(rawValue: draft.targetRawValue) ?? .task
+        text = draft.text
+        category = TodoItem.Category(rawValue: draft.categoryRawValue) ?? .prep
+        workspace = TodoItem.Workspace(rawValue: draft.workspaceRawValue) ?? .school
+        linkedContext = draft.linkedContext
+        studentOrGroup = draft.studentOrGroup
+        followUpNote = draft.followUpNote
+        reminder = TodoItem.Reminder(rawValue: draft.reminderRawValue) ?? .none
+        noteDestination = NoteDestination(rawValue: draft.noteDestinationRawValue) ?? .general
+    }
+
+    private func persistDraft() {
+        guard let encoded = try? JSONEncoder().encode(currentDraft) else { return }
+        savedDraftData = encoded
+    }
+
+    private func clearDraft() {
+        savedDraftData = Data()
     }
 }

@@ -36,6 +36,7 @@ struct FollowUpNoteItem: Identifiable, Codable, Equatable {
     var context: String
     var studentOrGroup: String
     var note: String
+    var followUpDate: Date
     var createdAt: Date = Date()
 
     init(
@@ -44,6 +45,7 @@ struct FollowUpNoteItem: Identifiable, Codable, Equatable {
         context: String,
         studentOrGroup: String,
         note: String,
+        followUpDate: Date = Date(),
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -51,6 +53,7 @@ struct FollowUpNoteItem: Identifiable, Codable, Equatable {
         self.context = context
         self.studentOrGroup = studentOrGroup
         self.note = note
+        self.followUpDate = followUpDate
         self.createdAt = createdAt
     }
 
@@ -61,6 +64,7 @@ struct FollowUpNoteItem: Identifiable, Codable, Equatable {
         studentOrGroup = try container.decodeIfPresent(String.self, forKey: .studentOrGroup) ?? ""
         note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        followUpDate = try container.decodeIfPresent(Date.self, forKey: .followUpDate) ?? createdAt
 
         if let kind = try container.decodeIfPresent(Kind.self, forKey: .kind) {
             self.kind = kind

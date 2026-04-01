@@ -20,6 +20,8 @@ struct AddEditView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("add_edit_block_draft_v1") private var savedDraftData: Data = Data()
 
     @State private var name = ""
     @State private var room = ""
@@ -35,10 +37,29 @@ struct AddEditView: View {
     @State private var firstWarningMinutes = 5
     @State private var secondWarningMinutes = 2
     @State private var thirdWarningMinutes = 1
+    @State private var showingSuggestedRosterGroups = true
+    @State private var showingAllRosterGroups = false
+    @State private var showingIndividualStudents = false
 
     @State private var showDeleteConfirm = false
     @State private var showValidationAlert = false
     @State private var validationMessage = ""
+
+    private struct Draft: Codable, Equatable {
+        var existingID: UUID?
+        var name: String
+        var room: String
+        var grade: String
+        var type: AlarmItem.ScheduleType
+        var selectedClassDefinitionID: UUID?
+        var start: Date
+        var end: Date
+        var linkedStudentIDs: [UUID]
+        var selectedDays: [Int]
+        var firstWarningMinutes: Int
+        var secondWarningMinutes: Int
+        var thirdWarningMinutes: Int
+    }
 
     private struct StudentRosterGroup: Identifiable {
         let key: String
@@ -88,7 +109,7 @@ struct AddEditView: View {
                 }
 
                 Section("Class Details") {
-                    Picker("Saved Class", selection: $selectedClassDefinitionID) {
+                    Picker("Class Roster", selection: $selectedClassDefinitionID) {
                         Text("None").tag(Optional<UUID>.none)
                         ForEach(availableClassDefinitions) { definition in
                             Text(definition.displayName).tag(Optional(definition.id))
@@ -119,14 +140,9 @@ struct AddEditView: View {
 
                     TextField("Room / Location", text: $room)
 
-                    if selectedClassDefinitionID == nil, !candidateClassDefinitions.isEmpty {
-                        Picker("Suggested Match", selection: $selectedClassDefinitionID) {
-                            Text("No Match").tag(Optional<UUID>.none)
-                            ForEach(candidateClassDefinitions) { definition in
-                                Text(definition.displayName).tag(Optional(definition.id))
-                            }
-                        }
-                    }
+                    Text("Choose the class roster manually when you want this block linked to a saved roster.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Timing") {
@@ -169,40 +185,50 @@ struct AddEditView: View {
 
                 if !sortedStudentProfiles.isEmpty {
                     Section("Linked Roster") {
+                        if !linkedRosterSummaryText.isEmpty {
+                            Text(linkedRosterSummaryText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         if !suggestedRosterGroups.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Suggested groups for this block")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-
-                                ForEach(suggestedRosterGroups) { group in
-                                    rosterGroupRow(group)
+                            DisclosureGroup(
+                                "Suggested Groups (\(selectedSuggestedRosterCount)/\(suggestedRosterGroups.count))",
+                                isExpanded: $showingSuggestedRosterGroups
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(suggestedRosterGroups) { group in
+                                        rosterGroupRow(group)
+                                    }
                                 }
+                                .padding(.top, 8)
                             }
                         }
 
-                        if !allRosterGroups.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Roster groups")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-
-                                ForEach(remainingRosterGroups) { group in
-                                    rosterGroupRow(group)
+                        if !remainingRosterGroups.isEmpty {
+                            DisclosureGroup(
+                                "Roster Groups (\(selectedRemainingRosterCount)/\(remainingRosterGroups.count))",
+                                isExpanded: $showingAllRosterGroups
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(remainingRosterGroups) { group in
+                                        rosterGroupRow(group)
+                                    }
                                 }
+                                .padding(.top, 8)
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: 8) {
-                            if !suggestedStudents.isEmpty || !suggestedRosterGroups.isEmpty {
-                                Text("Individual students")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                        DisclosureGroup(
+                            "Individual Students (\(linkedStudentIDs.count)/\(sortedStudentProfiles.count))",
+                            isExpanded: $showingIndividualStudents
+                        ) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(sortedStudentProfiles) { profile in
+                                    studentToggleRow(profile)
+                                }
                             }
-
-                            ForEach(sortedStudentProfiles) { profile in
-                                studentToggleRow(profile)
-                            }
+                            .padding(.top, 8)
                         }
                     }
                 }
@@ -228,6 +254,7 @@ struct AddEditView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
+                        clearDraft()
                         dismiss()
                     }
                 }
@@ -242,6 +269,15 @@ struct AddEditView: View {
             .onAppear {
                 prepareAvailableClassDefinitions()
                 configureInitialValues()
+                restoreDraftIfNeeded()
+            }
+            .onChange(of: currentDraft) { _, _ in
+                persistDraft()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase != .active {
+                    persistDraft()
+                }
             }
             .onChange(of: classDefinitions) { _, newValue in
                 if !newValue.isEmpty {
@@ -363,12 +399,14 @@ struct AddEditView: View {
             }
             alarms = sortedAlarms(alarms + createdItems)
         }
+        clearDraft()
         dismiss()
     }
 
     private func deleteCurrentBlock() {
         guard let existing else { return }
         alarms = alarms.filter { $0.id != existing.id }
+        clearDraft()
         dismiss()
     }
 
@@ -394,7 +432,52 @@ struct AddEditView: View {
         )
 
         alarms = sortedAlarms(alarms + [duplicated])
+        clearDraft()
         dismiss()
+    }
+
+    private var currentDraft: Draft {
+        Draft(
+            existingID: existing?.id,
+            name: name,
+            room: room,
+            grade: grade,
+            type: type,
+            selectedClassDefinitionID: selectedClassDefinitionID,
+            start: start,
+            end: end,
+            linkedStudentIDs: Array(linkedStudentIDs).sorted { $0.uuidString < $1.uuidString },
+            selectedDays: Array(selectedDays).sorted(),
+            firstWarningMinutes: firstWarningMinutes,
+            secondWarningMinutes: secondWarningMinutes,
+            thirdWarningMinutes: thirdWarningMinutes
+        )
+    }
+
+    private func restoreDraftIfNeeded() {
+        guard let draft = try? JSONDecoder().decode(Draft.self, from: savedDraftData) else { return }
+        guard draft.existingID == existing?.id else { return }
+        name = draft.name
+        room = draft.room
+        grade = draft.grade
+        type = draft.type
+        selectedClassDefinitionID = draft.selectedClassDefinitionID
+        start = draft.start
+        end = draft.end
+        linkedStudentIDs = Set(draft.linkedStudentIDs)
+        selectedDays = Set(draft.selectedDays)
+        firstWarningMinutes = draft.firstWarningMinutes
+        secondWarningMinutes = draft.secondWarningMinutes
+        thirdWarningMinutes = draft.thirdWarningMinutes
+    }
+
+    private func persistDraft() {
+        guard let encoded = try? JSONEncoder().encode(currentDraft) else { return }
+        savedDraftData = encoded
+    }
+
+    private func clearDraft() {
+        savedDraftData = Data()
     }
 
     private func sortedAlarms(_ items: [AlarmItem]) -> [AlarmItem] {
@@ -510,6 +593,26 @@ struct AddEditView: View {
         return allRosterGroups.filter { !suggestedKeys.contains($0.key) }
     }
 
+    private var selectedSuggestedRosterCount: Int {
+        suggestedRosterGroups.filter(isRosterGroupFullySelected).count
+    }
+
+    private var selectedRemainingRosterCount: Int {
+        remainingRosterGroups.filter(isRosterGroupFullySelected).count
+    }
+
+    private var linkedRosterSummaryText: String {
+        let selectedStudents = linkedStudentIDs.count
+        let selectedGroups = allRosterGroups.filter(isRosterGroupFullySelected).count
+        if selectedStudents == 0 && selectedGroups == 0 {
+            return "No students linked to this block yet."
+        }
+
+        let studentText = "\(selectedStudents) student\(selectedStudents == 1 ? "" : "s")"
+        let groupText = selectedGroups == 0 ? nil : "\(selectedGroups) group\(selectedGroups == 1 ? "" : "s")"
+        return [studentText, groupText].compactMap { $0 }.joined(separator: " • ")
+    }
+
     @ViewBuilder
     private func studentToggleRow(_ profile: StudentSupportProfile) -> some View {
         let isSelected = linkedStudentIDs.contains(profile.id)
@@ -580,6 +683,11 @@ struct AddEditView: View {
         .buttonStyle(.plain)
     }
 
+    private func isRosterGroupFullySelected(_ group: StudentRosterGroup) -> Bool {
+        let groupIDs = Set(group.students.map(\.id))
+        return linkedStudentIDs.intersection(groupIDs).count == group.students.count
+    }
+
     @ViewBuilder
     private func weekdayToggleButton(for weekday: WeekdayTab) -> some View {
         let isSelected = selectedDays.contains(weekday.rawValue)
@@ -606,7 +714,6 @@ struct AddEditView: View {
 
     private func applySelectedClassDefinition(_ id: UUID?) {
         guard let id, let definition = availableClassDefinitions.first(where: { $0.id == id }) else { return }
-        name = definition.name
         type = AlarmItem.ScheduleType(rawValue: definition.scheduleKind.rawValue) ?? .other
         grade = GradeLevelOption.normalized(definition.gradeLevel)
         if room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -36,9 +36,10 @@ struct ClassTraxLiveActivityWidget: Widget {
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                     } else {
-                        Text(timerInterval: Date()...context.state.endTime, countsDown: true, showsHours: false)
+                        Text(context.state.endTime, style: .timer)
                             .font(.headline.weight(.black))
                             .monospacedDigit()
+                            .contentTransition(.numericText(countsDown: true))
                     }
                 }
 
@@ -128,6 +129,7 @@ struct ClassTraxLiveActivityWidget: Widget {
                             .monospacedDigit()
                             .minimumScaleFactor(0.5)
                             .lineLimit(1)
+                            .contentTransition(.numericText(countsDown: true))
                     }
                 }
                 .padding(.horizontal, 9)
@@ -200,6 +202,7 @@ struct ClassTraxLiveActivityWidget: Widget {
                                 .monospacedDigit()
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.58)
+                                .contentTransition(.numericText(countsDown: true))
 
                             Text("Ends at \(context.state.endTime.formatted(date: .omitted, time: .shortened))")
                                 .font(.caption.weight(.semibold))

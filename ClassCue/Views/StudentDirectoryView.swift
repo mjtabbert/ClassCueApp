@@ -14,6 +14,7 @@ struct StudentDirectoryView: View {
 
     @Binding var profiles: [StudentSupportProfile]
     @Binding var classDefinitions: [ClassDefinitionItem]
+    let showsRosterDataTools: Bool
 
     private enum GroupingMode: String, CaseIterable, Identifiable {
         case none = "All"
@@ -23,7 +24,25 @@ struct StudentDirectoryView: View {
         var id: String { rawValue }
     }
 
+    private enum NameSortMode: String, CaseIterable, Identifiable {
+        case firstName = "First"
+        case lastName = "Last"
+
+        var id: String { rawValue }
+    }
+
+    private struct HomeworkSession: Identifiable {
+        let kind: FollowUpNoteItem.Kind
+        let context: String
+        let studentOrGroup: String
+
+        var id: String {
+            "\(kind.rawValue)-\(context)-\(studentOrGroup)"
+        }
+    }
+
     @State private var showingAdd = false
+    @State private var showingSavedClasses = false
     @State private var editingProfile: StudentSupportProfile?
     @State private var showingFileImporter = false
     @State private var showingTemplateShareSheet = false
@@ -42,7 +61,23 @@ struct StudentDirectoryView: View {
     @State private var showingExportShareSheet = false
     @State private var searchText = ""
     @State private var groupingMode: GroupingMode = .none
+    @State private var nameSortMode: NameSortMode = .firstName
     @State private var expandedClassSections = Set<String>()
+    @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
+    @State private var followUpNotes: [FollowUpNoteItem] = []
+    @State private var homeworkSession: HomeworkSession?
+    @State private var showingHomeworkClassPicker = false
+    @State private var selectedHomeworkClass = ""
+
+    init(
+        profiles: Binding<[StudentSupportProfile]>,
+        classDefinitions: Binding<[ClassDefinitionItem]>,
+        showsRosterDataTools: Bool = false
+    ) {
+        _profiles = profiles
+        _classDefinitions = classDefinitions
+        self.showsRosterDataTools = showsRosterDataTools
+    }
 
     var body: some View {
         directoryList
@@ -62,25 +97,33 @@ struct StudentDirectoryView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
-                        Button("Import Roster CSV") {
-                            showingFileImporter = true
+                        Button("Manage Saved Classes") {
+                            showingSavedClasses = true
                         }
 
-                        Button("Paste Roster CSV") {
-                            showingPasteImporter = true
-                        }
+                        if showsRosterDataTools {
+                            Divider()
 
-                        Button("Share Roster Template") {
-                            showingTemplateShareSheet = true
-                        }
+                            Button("Import Roster CSV") {
+                                showingFileImporter = true
+                            }
 
-                        Divider()
+                            Button("Paste Roster CSV") {
+                                showingPasteImporter = true
+                            }
 
-                        Button("Export Roster CSV") {
-                            showingExportOptions = true
+                            Button("Share Roster Template") {
+                                showingTemplateShareSheet = true
+                            }
+
+                            Divider()
+
+                            Button("Export Roster CSV") {
+                                showingExportOptions = true
+                            }
                         }
                     } label: {
-                        toolbarMenuLabel(title: "Roster", systemImage: "square.and.arrow.down")
+                        toolbarActionButton()
                     }
                 }
 
@@ -94,6 +137,11 @@ struct StudentDirectoryView: View {
             }
             .sheet(isPresented: $showingAdd) {
                 EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: nil)
+            }
+            .sheet(isPresented: $showingSavedClasses) {
+                NavigationStack {
+                    ClassDefinitionsView(classDefinitions: $classDefinitions, profiles: $profiles)
+                }
             }
             .sheet(item: $editingProfile) { profile in
                 EditStudentSupportView(profiles: $profiles, classDefinitions: classDefinitions, existing: profile)
@@ -137,12 +185,46 @@ struct StudentDirectoryView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingHomeworkClassPicker) {
+                NavigationStack {
+                    exportScopePickerView(
+                        title: "Missing Homework",
+                        values: availableClasses,
+                        selection: $selectedHomeworkClass,
+                        buttonTitle: "Continue",
+                        mode: .className
+                    ) {
+                        homeworkSession = HomeworkSession(
+                            kind: .classNote,
+                            context: selectedHomeworkClass,
+                            studentOrGroup: ""
+                        )
+                        showingHomeworkClassPicker = false
+                    }
+                }
+            }
+            .sheet(item: $homeworkSession) { session in
+                AddFollowUpNoteView(
+                    notes: $followUpNotes,
+                    suggestedContexts: availableClasses,
+                    suggestedStudents: normalizedStudentDirectory(profiles.map(\.name)),
+                    preferredKind: session.kind,
+                    initialContext: session.context,
+                    initialStudentOrGroup: session.studentOrGroup
+                )
+            }
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.commaSeparatedText, .plainText],
                 allowsMultipleSelection: false
             ) { result in
                 handleImportResult(result)
+            }
+            .onAppear {
+                loadFollowUpNotesIfNeeded()
+            }
+            .onChange(of: followUpNotes) { _, _ in
+                persistFollowUpNotes()
             }
             .confirmationDialog(
                 "Export Student Roster",
@@ -207,6 +289,19 @@ struct StudentDirectoryView: View {
         }
     }
 
+    private func toolbarActionButton() -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.accentColor.opacity(0.10))
+                .frame(width: 32, height: 32)
+
+            Image(systemName: "ellipsis")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .accessibilityLabel("Actions")
+    }
+
     private var prefersExpandedToolbar: Bool {
         horizontalSizeClass != .compact
     }
@@ -214,60 +309,93 @@ struct StudentDirectoryView: View {
     private var directoryList: some View {
         List(selection: $selection) {
             Section {
-                Text("Manage your class list here, then save each student's class, grade, accommodations, and instructional reminders. Roster CSV import lives here and does not change the bell schedule.")
+                Text(
+                    showsRosterDataTools
+                        ? "Use this screen for roster CSV import and export. Student editing and saved class management still live in Class List."
+                        : "Manage your class list here, then save each student's class, grade, accommodations, and instructional reminders. Use Settings > Data Management for roster CSV import and export."
+                )
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .listRowBackground(sectionCardBackground(accent: .blue))
             }
 
-            Section("Quick Actions") {
+            Section(showsRosterDataTools ? "Roster Data Tools" : "Quick Actions") {
                 Button {
-                    showingFileImporter = true
+                    showingSavedClasses = true
                 } label: {
                     actionRowLabel(
-                        title: "Import Roster CSV",
-                        detail: "Bring in students from a saved file",
-                        systemImage: "square.and.arrow.down"
+                        title: "Manage Saved Classes",
+                        detail: "Add or remove reusable class names and linked class definitions",
+                        systemImage: "books.vertical"
                     )
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(sectionCardBackground(accent: .green))
+                .listRowBackground(sectionCardBackground(accent: .indigo))
 
-                Button {
-                    showingPasteImporter = true
-                } label: {
-                    actionRowLabel(
-                        title: "Paste Roster CSV",
-                        detail: "Paste rows directly from a spreadsheet",
-                        systemImage: "doc.on.clipboard"
-                    )
+                if !availableClasses.isEmpty {
+                    Button {
+                        selectedHomeworkClass = availableClasses.first ?? ""
+                        showingHomeworkClassPicker = true
+                    } label: {
+                        actionRowLabel(
+                            title: "Log Class Missing Homework",
+                            detail: "Report homework for one class, then keep it tied to that class in Notes",
+                            systemImage: "text.book.closed"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(sectionCardBackground(accent: .orange))
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(sectionCardBackground(accent: .mint))
 
-                Button {
-                    showingExportOptions = true
-                } label: {
-                    actionRowLabel(
-                        title: "Export Roster CSV",
-                        detail: exportSummaryText,
-                        systemImage: "square.and.arrow.up"
-                    )
-                }
-                .buttonStyle(.plain)
-                .listRowBackground(sectionCardBackground(accent: .orange))
+                if showsRosterDataTools {
+                    Button {
+                        showingFileImporter = true
+                    } label: {
+                        actionRowLabel(
+                            title: "Import Roster CSV",
+                            detail: "Bring in students from a saved file",
+                            systemImage: "square.and.arrow.down"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(sectionCardBackground(accent: .green))
 
-                Button {
-                    showingTemplateShareSheet = true
-                } label: {
-                    actionRowLabel(
-                        title: "Share Roster Template",
-                        detail: "Send a blank CSV template for roster setup",
-                        systemImage: "square.and.arrow.up.on.square"
-                    )
+                    Button {
+                        showingPasteImporter = true
+                    } label: {
+                        actionRowLabel(
+                            title: "Paste Roster CSV",
+                            detail: "Paste rows directly from a spreadsheet",
+                            systemImage: "doc.on.clipboard"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(sectionCardBackground(accent: .mint))
+
+                    Button {
+                        showingExportOptions = true
+                    } label: {
+                        actionRowLabel(
+                            title: "Export Roster CSV",
+                            detail: exportSummaryText,
+                            systemImage: "square.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(sectionCardBackground(accent: .orange))
+
+                    Button {
+                        showingTemplateShareSheet = true
+                    } label: {
+                        actionRowLabel(
+                            title: "Share Roster Template",
+                            detail: "Send a blank CSV template for roster setup",
+                            systemImage: "square.and.arrow.up.on.square"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(sectionCardBackground(accent: .blue))
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(sectionCardBackground(accent: .blue))
             }
 
             Section("Roster Snapshot") {
@@ -307,6 +435,12 @@ struct StudentDirectoryView: View {
                             .font(.headline)
                     }
                 }
+
+                if !showsRosterDataTools {
+                    Button("Add New Student") {
+                        showingAdd = true
+                    }
+                }
             }
 
             Section("Class Context") {
@@ -325,9 +459,13 @@ struct StudentDirectoryView: View {
                         .font(.headline)
                 }
 
-                Text("Roster CSV belongs here. Saved class links determine whether student supports, notes, and class-specific context stay attached across the app.")
+                Text("Saved class links determine whether student supports, notes, and class-specific context stay attached across the app.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+
+                Button("Edit Saved Classes") {
+                    showingSavedClasses = true
+                }
             }
 
             if !duplicateGroups.isEmpty {
@@ -361,6 +499,14 @@ struct StudentDirectoryView: View {
                 }
                 .pickerStyle(.segmented)
                 .listRowBackground(sectionCardBackground(accent: .indigo))
+
+                Picker("Sort Names", selection: $nameSortMode) {
+                    ForEach(NameSortMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .listRowBackground(sectionCardBackground(accent: .blue))
             }
 
             if filteredProfiles.isEmpty {
@@ -464,6 +610,15 @@ struct StudentDirectoryView: View {
             .tint(.blue)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("Homework") {
+                homeworkSession = HomeworkSession(
+                    kind: .studentNote,
+                    context: firstClassContext(for: profile),
+                    studentOrGroup: profile.name
+                )
+            }
+            .tint(.blue)
+
             Button("Edit") {
                 editingProfile = profile
             }
@@ -513,7 +668,7 @@ struct StudentDirectoryView: View {
     private var needsClassReviewCount: Int {
         profiles.filter { profile in
             let hasSavedClassLink = profile.classDefinitionID != nil || !profile.classDefinitionIDs.isEmpty
-            let hasTypedClassName = !profile.className.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasTypedClassName = !classSummary(for: profile, in: classDefinitions).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             return !hasSavedClassLink && hasTypedClassName
         }.count
     }
@@ -785,7 +940,7 @@ struct StudentDirectoryView: View {
             }
         }
 
-        profiles = merged.map {
+        profiles = sortProfiles(merged.map {
             StudentSupportProfile(
                 id: $0.id,
                 name: $0.name,
@@ -802,8 +957,7 @@ struct StudentDirectoryView: View {
                 accommodations: $0.accommodations,
                 prompts: $0.prompts
             )
-        }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        })
     }
 
     private func isHeaderRow(_ parts: [String]) -> Bool {
@@ -837,9 +991,18 @@ struct StudentDirectoryView: View {
         return url
     }
 
+    private func loadFollowUpNotesIfNeeded() {
+        guard followUpNotes.isEmpty else { return }
+        followUpNotes = (try? JSONDecoder().decode([FollowUpNoteItem].self, from: savedFollowUpNotes)) ?? []
+    }
+
+    private func persistFollowUpNotes() {
+        savedFollowUpNotes = (try? JSONEncoder().encode(followUpNotes)) ?? Data()
+    }
+
     private func profileSummary(_ profile: StudentSupportProfile) -> String {
-        let classSummary = linkedClassNames(for: profile, in: classDefinitions).joined(separator: ", ")
-        return [classSummary.isEmpty ? profile.className : classSummary, profile.gradeLevel, profile.graduationYear.isEmpty ? "" : "Class of \(profile.graduationYear)"]
+        let summary = classSummary(for: profile, in: classDefinitions)
+        return [summary, profile.gradeLevel, profile.graduationYear.isEmpty ? "" : "Class of \(profile.graduationYear)"]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " • ")
@@ -848,13 +1011,26 @@ struct StudentDirectoryView: View {
     private var availableClasses: [String] {
         profiles
             .flatMap { profile in
-                let names = linkedClassNames(for: profile, in: classDefinitions)
-                return names.isEmpty ? [profile.className] : names
+                classSummary(for: profile, in: classDefinitions)
+                    .components(separatedBy: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .removingDuplicates()
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private func firstClassContext(for profile: StudentSupportProfile) -> String {
+        let linkedNames = linkedClassNames(for: profile, in: classDefinitions)
+        if let first = linkedNames.first {
+            return first
+        }
+
+        return classSummary(for: profile, in: classDefinitions)
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
     }
 
     private var availableGrades: [String] {
@@ -884,12 +1060,12 @@ struct StudentDirectoryView: View {
         let duplicateIDs = Set(group.map(\.id))
         profiles.removeAll { duplicateIDs.contains($0.id) }
         profiles.append(mergedProfile)
-        profiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        profiles = sortProfiles(profiles)
         selection.subtract(duplicateIDs)
     }
 
     private func exportAllProfiles() {
-        export(profiles, filename: "classtrax-students-all.csv")
+        export(sortProfiles(profiles), filename: "classtrax-students-all.csv")
     }
 
     private func exportSelectedProfiles() {
@@ -958,7 +1134,7 @@ struct StudentDirectoryView: View {
             return linkedNames.joined(separator: "; ")
         }
 
-        return profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        return classSummary(for: profile, in: classDefinitions).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func csvEscape(_ value: String) -> String {
@@ -967,7 +1143,7 @@ struct StudentDirectoryView: View {
     }
 
     private var selectedProfilesForExport: [StudentSupportProfile] {
-        profiles.filter { selection.contains($0.id) }
+        sortProfiles(profiles.filter { selection.contains($0.id) })
     }
 
     private func filteredProfilesForExport(named value: String, mode: ExportMode) -> [StudentSupportProfile] {
@@ -976,7 +1152,7 @@ struct StudentDirectoryView: View {
             return profiles.filter {
                 linkedClassNames(for: $0, in: classDefinitions).contains(where: {
                     $0.localizedCaseInsensitiveCompare(value) == .orderedSame
-                }) || $0.className.trimmingCharacters(in: .whitespacesAndNewlines)
+                }) || classSummary(for: $0, in: classDefinitions).trimmingCharacters(in: .whitespacesAndNewlines)
                     .localizedCaseInsensitiveCompare(value) == .orderedSame
             }
         case .gradeLevel:
@@ -993,9 +1169,10 @@ struct StudentDirectoryView: View {
         values: [String],
         selection: Binding<String>,
         buttonTitle: String,
+        mode: ExportMode? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        let exportMode: ExportMode = title == "Export Class" ? .className : .gradeLevel
+        let exportMode = mode ?? (title == "Export Class" ? .className : .gradeLevel)
         let valueCounts = values.map { value in
             (value: value, count: filteredProfilesForExport(named: value, mode: exportMode).count)
         }
@@ -1048,12 +1225,12 @@ private extension StudentDirectoryView {
 
     var filteredProfiles: [StudentSupportProfile] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return profiles }
+        guard !query.isEmpty else { return sortProfiles(profiles) }
 
-        return profiles.filter { profile in
+        return sortProfiles(profiles.filter { profile in
             [
                 profile.name,
-                profile.className,
+                classSummary(for: profile, in: classDefinitions),
                 linkedClassNames(for: profile, in: classDefinitions).joined(separator: ", "),
                 profile.gradeLevel,
                 profile.parentNames,
@@ -1063,13 +1240,13 @@ private extension StudentDirectoryView {
             .contains { value in
                 value.localizedCaseInsensitiveContains(query)
             }
-        }
+        })
     }
 
     var groupedProfiles: [StudentProfileSection] {
         switch groupingMode {
         case .none:
-            return [StudentProfileSection(title: "Saved Supports", profiles: filteredProfiles)]
+            return [StudentProfileSection(title: "Saved Supports", profiles: sortProfiles(filteredProfiles))]
         case .className:
             return groupedClassSections(from: filteredProfiles)
         case .gradeLevel:
@@ -1095,9 +1272,7 @@ private extension StudentDirectoryView {
             .map { key, value in
                 StudentProfileSection(
                     title: key,
-                    profiles: value.sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
+                    profiles: sortProfiles(value)
                 )
             }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -1109,7 +1284,10 @@ private extension StudentDirectoryView {
         for profile in profiles {
             let names = linkedClassNames(for: profile, in: classDefinitions)
             let classNames = names.isEmpty
-                ? [profile.className.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+                ? classSummary(for: profile, in: classDefinitions)
+                    .components(separatedBy: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
                 : names
 
             if classNames.isEmpty {
@@ -1124,12 +1302,30 @@ private extension StudentDirectoryView {
         return grouped.map { key, value in
             StudentProfileSection(
                 title: key,
-                profiles: value.sorted {
-                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                }
+                profiles: sortProfiles(value)
             )
         }
         .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    func sortProfiles(_ profiles: [StudentSupportProfile]) -> [StudentSupportProfile] {
+        profiles.sorted { lhs, rhs in
+            let lhsKey = sortKey(for: lhs)
+            let rhsKey = sortKey(for: rhs)
+            if lhsKey == rhsKey {
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            return lhsKey.localizedCaseInsensitiveCompare(rhsKey) == .orderedAscending
+        }
+    }
+
+    private func sortKey(for profile: StudentSupportProfile) -> String {
+        let trimmed = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard nameSortMode == .lastName else { return trimmed }
+        let parts = trimmed.split(separator: " ").map(String.init)
+        guard let last = parts.last, parts.count > 1 else { return trimmed }
+        let first = parts.dropLast().joined(separator: " ")
+        return "\(last), \(first)"
     }
 }
 

@@ -12,6 +12,17 @@ import UserNotifications
 
 final class NotificationManager {
 
+    struct DebugSnapshot {
+        var authorizationStatus: String
+        var alertSetting: String
+        var soundSetting: String
+        var badgeSetting: String
+        var pendingRequestCount: Int
+        var classTraxPendingCount: Int
+        var nextClassTraxIdentifier: String
+        var nextClassTraxTrigger: String
+    }
+
     static let shared = NotificationManager()
 
     private init() {}
@@ -59,6 +70,76 @@ final class NotificationManager {
 
             print("Notifications granted:", granted)
         }
+    }
+
+    func debugSnapshot() async -> DebugSnapshot {
+        let settings = await center.notificationSettings()
+        let requests = await pendingRequests()
+        let classTraxRequests = requests.filter { $0.identifier.hasPrefix("classtrax.") }
+        let sortedClassTraxRequests = classTraxRequests.sorted { lhs, rhs in
+            nextTriggerDate(for: lhs) < nextTriggerDate(for: rhs)
+        }
+
+        let nextRequest = sortedClassTraxRequests.first
+
+        return DebugSnapshot(
+            authorizationStatus: describeAuthorizationStatus(settings.authorizationStatus),
+            alertSetting: describeNotificationSetting(settings.alertSetting),
+            soundSetting: describeNotificationSetting(settings.soundSetting),
+            badgeSetting: describeNotificationSetting(settings.badgeSetting),
+            pendingRequestCount: requests.count,
+            classTraxPendingCount: classTraxRequests.count,
+            nextClassTraxIdentifier: nextRequest?.identifier ?? "None",
+            nextClassTraxTrigger: formattedTriggerDate(for: nextRequest)
+        )
+    }
+
+    private func pendingRequests() async -> [UNNotificationRequest] {
+        await withCheckedContinuation { continuation in
+            center.getPendingNotificationRequests { requests in
+                continuation.resume(returning: requests)
+            }
+        }
+    }
+
+    private func describeAuthorizationStatus(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "Not Determined"
+        case .denied: return "Denied"
+        case .authorized: return "Authorized"
+        case .provisional: return "Provisional"
+        case .ephemeral: return "Ephemeral"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private func describeNotificationSetting(_ setting: UNNotificationSetting) -> String {
+        switch setting {
+        case .notSupported: return "Not Supported"
+        case .disabled: return "Disabled"
+        case .enabled: return "Enabled"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private func nextTriggerDate(for request: UNNotificationRequest) -> Date {
+        triggerDate(for: request.trigger) ?? .distantFuture
+    }
+
+    private func formattedTriggerDate(for request: UNNotificationRequest?) -> String {
+        guard let request, let nextDate = triggerDate(for: request.trigger) else {
+            return "None"
+        }
+
+        return nextDate.formatted()
+    }
+
+    private func triggerDate(for trigger: UNNotificationTrigger?) -> Date? {
+        if let calendarTrigger = trigger as? UNCalendarNotificationTrigger {
+            return calendarTrigger.nextTriggerDate()
+        }
+
+        return nil
     }
 
     // MARK: Refresh Schedule Notifications

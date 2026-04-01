@@ -15,6 +15,19 @@ class LiveActivityManager {
 
     static var currentActivity: Activity<ClassTraxActivityAttributes>?
     @MainActor static var lastStatusMessage: String = "Idle"
+    private static let debugStateKey = "classtrax_live_activity_debug_state_v1"
+
+    struct DebugState: Codable, Equatable {
+        var className: String
+        var room: String
+        var endTime: Date
+        var isHeld: Bool
+        var iconName: String
+        var nextClassName: String
+        var nextIconName: String
+        var isActive: Bool
+        var lastUpdatedAt: Date
+    }
 
     private static var resolvedActivity: Activity<ClassTraxActivityAttributes>? {
         if let currentActivity {
@@ -24,6 +37,82 @@ class LiveActivityManager {
         let existing = Activity<ClassTraxActivityAttributes>.activities.first
         currentActivity = existing
         return existing
+    }
+
+    private static func saveDebugState(
+        className: String,
+        room: String,
+        endTime: Date,
+        isHeld: Bool,
+        iconName: String,
+        nextClassName: String,
+        nextIconName: String,
+        isActive: Bool
+    ) {
+        let state = DebugState(
+            className: className,
+            room: room,
+            endTime: endTime,
+            isHeld: isHeld,
+            iconName: iconName,
+            nextClassName: nextClassName,
+            nextIconName: nextIconName,
+            isActive: isActive,
+            lastUpdatedAt: Date()
+        )
+
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: debugStateKey)
+    }
+
+    private static func markDebugStateInactive() {
+        guard var state = debugState() else { return }
+        state.isActive = false
+        state.lastUpdatedAt = Date()
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: debugStateKey)
+    }
+
+    static func debugState() -> DebugState? {
+        guard
+            let data = UserDefaults.standard.data(forKey: debugStateKey),
+            let state = try? JSONDecoder().decode(DebugState.self, from: data)
+        else {
+            return nil
+        }
+
+        return state
+    }
+
+    static func refreshFromLastKnownState() {
+        guard let state = debugState() else { return }
+        sync(
+            className: state.className,
+            room: state.room,
+            endTime: state.endTime,
+            isHeld: state.isHeld,
+            iconName: state.iconName,
+            nextClassName: state.nextClassName,
+            nextIconName: state.nextIconName
+        )
+    }
+
+    static func restartFromLastKnownState() {
+        guard let state = debugState() else { return }
+
+        Task {
+            stop()
+            try? await Task.sleep(for: .milliseconds(350))
+            start(
+                className: state.className,
+                room: state.room,
+                endTime: state.endTime,
+                isHeld: state.isHeld,
+                iconName: state.iconName,
+                nextClassName: state.nextClassName,
+                nextIconName: state.nextIconName
+            )
+        }
     }
 
     // MARK: - Start Activity
@@ -60,7 +149,18 @@ class LiveActivityManager {
 
         let content = ActivityContent(
             state: state,
-            staleDate: endTime
+            staleDate: nil
+        )
+
+        saveDebugState(
+            className: className,
+            room: room,
+            endTime: endTime,
+            isHeld: isHeld,
+            iconName: iconName,
+            nextClassName: nextClassName,
+            nextIconName: nextIconName,
+            isActive: true
         )
 
         if resolvedActivity != nil {
@@ -122,8 +222,19 @@ class LiveActivityManager {
             await activity.update(
                 ActivityContent(
                     state: updatedState,
-                    staleDate: endTime
+                    staleDate: nil
                 )
+            )
+
+            saveDebugState(
+                className: className,
+                room: room,
+                endTime: endTime,
+                isHeld: isHeld,
+                iconName: iconName,
+                nextClassName: nextClassName,
+                nextIconName: nextIconName,
+                isActive: true
             )
 
             await MainActor.run {
@@ -177,6 +288,7 @@ class LiveActivityManager {
             }
 
             currentActivity = nil
+            markDebugStateInactive()
             await MainActor.run {
                 lastStatusMessage = "Stopped"
             }

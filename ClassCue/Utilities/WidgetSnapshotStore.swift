@@ -26,6 +26,7 @@ struct ClassTraxWidgetSnapshot: Codable, Equatable {
         var startTime: Date
         var endTime: Date
         var typeName: String
+        var isHeld: Bool
     }
 
     var updatedAt: Date
@@ -34,6 +35,10 @@ struct ClassTraxWidgetSnapshot: Codable, Equatable {
 
     var isDayWrapped: Bool {
         current == nil && next == nil
+    }
+
+    var isStale: Bool {
+        Date().timeIntervalSince(updatedAt) > 60 * 5
     }
 
     static func == (lhs: ClassTraxWidgetSnapshot, rhs: ClassTraxWidgetSnapshot) -> Bool {

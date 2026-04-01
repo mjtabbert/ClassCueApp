@@ -40,7 +40,7 @@ struct NextUpSummaryCard: View {
                     TypeBadge(type: item.type)
                 }
 
-                Text(item.className)
+                Text(item.displayClassName)
                     .font(isCompact ? .subheadline : .headline)
                     .fontWeight(.bold)
                     .lineLimit(1)

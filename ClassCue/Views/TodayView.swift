@@ -18,6 +18,7 @@ struct TodayView: View {
     enum TodayDashboardCard: String, CaseIterable, Identifiable {
         case teacherContext
         case currentClass
+        case attendance
         case commitments
         case upcoming
         case tasks
@@ -34,6 +35,8 @@ struct TodayView: View {
                 return "Teacher Context"
             case .currentClass:
                 return "Current / Next Class"
+            case .attendance:
+                return "Attendance"
             case .commitments:
                 return "Commitments"
             case .upcoming:
@@ -57,6 +60,8 @@ struct TodayView: View {
                 return "sparkles"
             case .currentClass:
                 return "studentdesk"
+            case .attendance:
+                return "checklist.checked"
             case .commitments:
                 return "briefcase"
             case .upcoming:
@@ -66,7 +71,7 @@ struct TodayView: View {
             case .support:
                 return "person.crop.circle.badge.checkmark"
             case .notes:
-                return "note.text"
+                return "square.and.pencil"
             case .endOfDay:
                 return "sun.max"
             case .subPlan:
@@ -77,6 +82,7 @@ struct TodayView: View {
         static let defaultOrder: [TodayDashboardCard] = [
             .teacherContext,
             .currentClass,
+            .attendance,
             .commitments,
             .upcoming,
             .tasks,
@@ -132,19 +138,26 @@ struct TodayView: View {
     @State private var lastActiveItemID: UUID?
     @State private var showingSessionActions = false
     @State private var showingAddCommitment = false
+    @State private var showingCommitmentsManager = false
     @State private var editingCommitment: CommitmentItem?
     @State private var showingQuickCapture = false
     @State private var editingAlarm: AlarmItem?
     @State private var showingStudentDirectory = false
     @State private var rosterItem: AlarmItem?
-    @State private var attendanceItem: AlarmItem?
+    @State private var attendanceSession: AttendanceSession?
+    @State private var homeworkCaptureSession: HomeworkCaptureSession?
+    @State private var showingHomeworkReview = false
+    @State private var homeworkReviewDate = Date()
     @State private var subPlanItem: AlarmItem?
     @State private var showingDailySubPlan = false
     @State private var dailySubPlanDate = Date()
+    @State private var todayAttendanceExportURL: URL?
+    @State private var showingTodayAttendanceShareSheet = false
     @State private var quickSchoolNoteText = ""
     @State private var pendingLiveActivityStopTask: Task<Void, Never>?
     @State private var dashboardCardOrder = TodayDashboardCard.defaultOrder
     @State private var hiddenDashboardCards = Set<TodayDashboardCard>()
+    @State private var scrollTargetCard: TodayDashboardCard?
 
     private var extraTimeByItemID: [UUID: TimeInterval] {
         SessionControlStore.extraTimeByItemID()
@@ -186,6 +199,7 @@ struct TodayView: View {
                     Group {
                         if isLandscape {
                             landscapeDashboard(
+                                availableSize: geo.size,
                                 now: now,
                                 schedule: schedule,
                                 activeItem: activeItem,
@@ -254,6 +268,19 @@ struct TodayView: View {
                     defaultDay: Calendar.current.component(.weekday, from: now)
                 )
             }
+            .sheet(isPresented: $showingCommitmentsManager) {
+                NavigationStack {
+                    TodayCommitmentsManagerView(
+                        commitments: $commitments,
+                        onAdd: {
+                            showingAddCommitment = true
+                        },
+                        onEdit: { commitment in
+                            editingCommitment = commitment
+                        }
+                    )
+                }
+            }
             .sheet(item: $editingCommitment) { commitment in
                 AddCommitmentView(
                     commitments: $commitments,
@@ -294,17 +321,6 @@ struct TodayView: View {
                     )
                 }
             }
-            .sheet(item: $attendanceItem) { item in
-                NavigationStack {
-                    TodayClassAttendanceView(
-                        item: item,
-                        date: now,
-                        schedule: schedule,
-                        students: rosterStudents(for: item),
-                        records: $attendanceRecords
-                    )
-                }
-            }
             .sheet(item: $subPlanItem) { item in
                 NavigationStack {
                     TodayClassSubPlanView(
@@ -333,6 +349,11 @@ struct TodayView: View {
                     )
                 }
             }
+            .sheet(isPresented: $showingTodayAttendanceShareSheet) {
+                if let todayAttendanceExportURL {
+                    ShareSheet(activityItems: [todayAttendanceExportURL])
+                }
+            }
             .onAppear {
                 loadDashboardCardOrderIfNeeded()
             }
@@ -341,6 +362,36 @@ struct TodayView: View {
             }
             .onChange(of: hiddenDashboardCards) { _, newValue in
                 persistHiddenDashboardCards(newValue)
+            }
+        }
+        .sheet(item: $attendanceSession) { session in
+            NavigationStack {
+                AttendanceEditorView(
+                    item: session.item,
+                    date: session.date,
+                    students: session.students,
+                    records: attendanceRecords,
+                    onCommit: { attendanceRecords = $0 }
+                )
+            }
+        }
+        .sheet(item: $homeworkCaptureSession) { session in
+            NavigationStack {
+                AttendanceNoteEditorView(
+                    title: session.item.className,
+                    helperText: "This homework note is saved with today's class and included in attendance exports.",
+                    initialText: classHomeworkText(for: session.item, now: session.date),
+                    onSave: { saveClassHomework($0, for: session.item, now: session.date) }
+                )
+            }
+        }
+        .sheet(isPresented: $showingHomeworkReview) {
+            NavigationStack {
+                DailyHomeworkReviewView(
+                    attendanceRecords: $attendanceRecords,
+                    classDefinitions: classDefinitions,
+                    date: homeworkReviewDate
+                )
             }
         }
     }
@@ -387,17 +438,23 @@ struct TodayView: View {
                     title: "Blocks",
                     value: "\(blockCount)",
                     accent: accent
-                )
+                ) {
+                    openScheduleTab()
+                }
                 todayHeaderStat(
                     title: "Tasks",
                     value: "\(taskCount)",
                     accent: .orange
-                )
+                ) {
+                    scrollTargetCard = .tasks
+                }
                 todayHeaderStat(
                     title: "Commitments",
                     value: "\(commitmentCount)",
                     accent: .indigo
-                )
+                ) {
+                    scrollTargetCard = .commitments
+                }
             }
 
             if let ignoreDate, ignoreDate > now {
@@ -478,8 +535,9 @@ struct TodayView: View {
         todayCommitments: [CommitmentItem]
     ) -> some View {
 
-        ScrollView {
-            VStack(spacing: 10) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 10) {
 
                 header(now: now)
 
@@ -525,11 +583,18 @@ struct TodayView: View {
                     emptyState(for: now)
                         .padding(.horizontal)
                 }
+                }
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 96)
+                .padding(.top, -6)
             }
-            .frame(maxWidth: 920)
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, 96)
-            .padding(.top, -6)
+            .onChange(of: scrollTargetCard) { _, newValue in
+                guard let newValue else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
+                    proxy.scrollTo(newValue, anchor: .top)
+                }
+            }
         }
         .refreshable {
             onRefresh()
@@ -538,6 +603,7 @@ struct TodayView: View {
 
     @ViewBuilder
     private func landscapeDashboard(
+        availableSize: CGSize,
         now: Date,
         schedule: [AlarmItem],
         activeItem: AlarmItem?,
@@ -556,6 +622,7 @@ struct TodayView: View {
             }
 
             HStack(alignment: .top, spacing: 16) {
+                let primaryCardMaxHeight = min(max(availableSize.height - 48, 320), 520)
 
                 Group {
                     if let active = activeItem {
@@ -581,23 +648,31 @@ struct TodayView: View {
                         emptyState(for: now)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: primaryCardMaxHeight, alignment: .top)
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        dashboardSummaryColumn(
-                            now: now,
-                            schedule: schedule,
-                            activeItem: activeItem,
-                            nextItem: nextItem,
-                            todayCommitments: todayCommitments
-                        )
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            dashboardSummaryColumn(
+                                now: now,
+                                schedule: schedule,
+                                activeItem: activeItem,
+                                nextItem: nextItem,
+                                todayCommitments: todayCommitments
+                            )
+                        }
+                        .padding(.bottom, 24)
                     }
-                    .padding(.bottom, 24)
-                }
-                .frame(width: 320)
-                .refreshable {
-                    onRefresh()
+                    .frame(width: 320)
+                    .onChange(of: scrollTargetCard) { _, newValue in
+                        guard let newValue else { return }
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
+                            proxy.scrollTo(newValue, anchor: .top)
+                        }
+                    }
+                    .refreshable {
+                        onRefresh()
+                    }
                 }
             }
         }
@@ -693,6 +768,7 @@ struct TodayView: View {
                 todayCommitments: todayCommitments,
                 compact: compact
             )
+            .id(card)
         }
     }
 
@@ -728,6 +804,8 @@ struct TodayView: View {
             .padding(.top, 6)
         case .currentClass:
             classSectionCard(activeItem: activeItem, nextItem: nextItem, schedule: schedule, now: now, compact: compact)
+        case .attendance:
+            attendanceDashboardCard(schedule: schedule, now: now, activeItem: activeItem, compact: compact)
         case .commitments:
             commitmentsCard(todayCommitments: todayCommitments, compact: compact)
         case .upcoming:
@@ -760,15 +838,6 @@ struct TodayView: View {
                     .localizedCaseInsensitiveCompare(item.className.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
             }
             let roster = rosterStudents(for: item)
-            let previousAttendanceItems = schedule
-                .filter {
-                    endDateToday(for: $0, now: now) < now &&
-                    $0.id != item.id &&
-                    !rosterStudents(for: $0).isEmpty
-                }
-                .sorted {
-                    endDateToday(for: $0, now: now) > endDateToday(for: $1, now: now)
-                }
             let sectionTitle: String = {
                 if activeItem?.id == item.id {
                     return "Current Class"
@@ -792,8 +861,15 @@ struct TodayView: View {
                     Spacer()
                 }
 
-                Text(item.className)
-                    .font((compact ? Font.caption : .subheadline).weight(.semibold))
+                Button {
+                    openBlock(item)
+                } label: {
+                    Text(item.className)
+                        .font((compact ? Font.caption : .subheadline).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
 
                 let meta = [item.gradeLevel, item.location]
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -813,6 +889,12 @@ struct TodayView: View {
                             .font(compact ? .caption2 : .caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    if let completionText = attendanceCompletionText(for: item, now: now) {
+                        Label(completionText, systemImage: "checkmark.circle")
+                            .font(compact ? .caption2 : .caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Text("Live Controls")
@@ -820,103 +902,174 @@ struct TodayView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
 
-                HStack(spacing: 10) {
-                    Button {
-                        attendanceItem = item
-                    } label: {
-                        Label("Attendance", systemImage: "checklist.checked")
-                            .frame(maxWidth: .infinity)
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        Button {
+                            presentAttendance(for: item, now: now, schedule: schedule)
+                        } label: {
+                            Label("Attendance", systemImage: "checklist.checked")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(roster.isEmpty)
+
+                        Button {
+                            rosterItem = item
+                        } label: {
+                            Label("Roster", systemImage: "person.3")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(roster.isEmpty)
 
-                    Button {
-                        rosterItem = item
-                    } label: {
-                        Label("Roster", systemImage: "person.3")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
+                    HStack(spacing: 10) {
+                        Button {
+                            homeworkCaptureSession = HomeworkCaptureSession(item: item, date: now)
+                        } label: {
+                            Label("Homework", systemImage: "text.book.closed")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
 
-                HStack(spacing: 10) {
-                    Button {
-                        openNotesTab()
-                    } label: {
-                        Label("Notes", systemImage: "note.text")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        openTodoTab()
-                    } label: {
-                        Label("Tasks", systemImage: "checklist")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        dailySubPlanDate = now
-                        showingDailySubPlan = true
-                    } label: {
-                        Label("Daily Plan", systemImage: "doc.text")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        showingSessionActions = true
-                    } label: {
-                        Label("Class Controls", systemImage: "ellipsis.circle")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-
-                if !previousAttendanceItems.isEmpty {
-                    Text("Catch Up")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
-
-                    Menu {
-                        ForEach(previousAttendanceItems) { previousItem in
-                            Button {
-                                attendanceItem = previousItem
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(previousItem.className)
-                                    Text(
-                                        "\(previousItem.startTime.formatted(date: .omitted, time: .shortened)) - \(previousItem.endTime.formatted(date: .omitted, time: .shortened))"
-                                    )
-                                }
+                        Menu {
+                            Button("Sub Plan", systemImage: "doc.text") {
+                                subPlanItem = item
                             }
-                        }
-                    } label: {
-                        Label(
-                            "Previous Attendance (\(previousAttendanceItems.count))",
-                            systemImage: "clock.arrow.circlepath"
-                        )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.bordered)
 
-                    Button {
-                        if let mostRecent = previousAttendanceItems.first {
-                            attendanceItem = mostRecent
+                            Button("Class Controls", systemImage: "ellipsis.circle") {
+                                showingSessionActions = true
+                            }
+                        } label: {
+                            Label("More", systemImage: "ellipsis.circle")
+                                .frame(maxWidth: .infinity)
                         }
-                    } label: {
-                        Label("Open Most Recent", systemImage: "arrow.uturn.backward.circle")
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
                 }
+
             }
             .modifier(DashboardCardStyle(accent: item.type.themeColor == .clear ? .blue : item.type.themeColor, compact: compact))
         }
+    }
+
+    @ViewBuilder
+    private func attendanceDashboardCard(
+        schedule: [AlarmItem],
+        now: Date,
+        activeItem: AlarmItem?,
+        compact: Bool
+    ) -> some View {
+        let currentAttendanceTarget = activeItem ?? schedule.first {
+            now >= startDateToday(for: $0, now: now) && now <= endDateToday(for: $0, now: now)
+        }
+        let previousAttendanceItems = schedule
+            .filter {
+                endDateToday(for: $0, now: now) < now &&
+                !rosterStudents(for: $0).isEmpty
+            }
+            .sorted {
+                endDateToday(for: $0, now: now) > endDateToday(for: $1, now: now)
+            }
+
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Attendance", systemImage: "checklist.checked")
+                    .font((compact ? Font.subheadline : .headline).weight(.bold))
+
+                Spacer()
+            }
+
+            if let currentAttendanceTarget {
+                Button {
+                    openBlock(currentAttendanceTarget)
+                } label: {
+                    Text(currentAttendanceTarget.className)
+                        .font((compact ? Font.caption : .subheadline).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                if let completionText = attendanceCompletionText(for: currentAttendanceTarget, now: now) {
+                    Text(completionText)
+                        .font(compact ? .caption2 : .caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("Open the current block quickly or catch up on an earlier class from one place.")
+                    .font(compact ? .caption2 : .caption)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    presentAttendance(for: currentAttendanceTarget, now: now, schedule: schedule)
+                } label: {
+                    Label("Open Current Attendance", systemImage: "checkmark.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(rosterStudents(for: currentAttendanceTarget).isEmpty)
+            } else {
+                Text("No active class right now.")
+                    .font((compact ? Font.caption : .subheadline).weight(.semibold))
+
+                Text("Use the most recent class below if you need to catch up on attendance.")
+                    .font(compact ? .caption2 : .caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !previousAttendanceItems.isEmpty {
+                Menu {
+                    ForEach(previousAttendanceItems) { previousItem in
+                        Button {
+                            presentAttendance(for: previousItem, now: now, schedule: schedule)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(previousItem.className)
+                                Text(
+                                    "\(previousItem.startTime.formatted(date: .omitted, time: .shortened)) - \(previousItem.endTime.formatted(date: .omitted, time: .shortened))"
+                                )
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Catch Up Previous Attendance (\(previousAttendanceItems.count))", systemImage: "clock.arrow.circlepath")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Button {
+                homeworkReviewDate = now
+                showingHomeworkReview = true
+            } label: {
+                Label("Review Homework", systemImage: "text.book.closed")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+            .disabled(attendanceRecordsForToday(now: now).allSatisfy {
+                $0.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })
+
+            Menu {
+                Button("Attendance Summary (.txt)", systemImage: "doc.text") {
+                    exportTodayAttendance(as: .text, schedule: schedule, now: now)
+                }
+
+                Button("Attendance Summary (.csv)", systemImage: "tablecells") {
+                    exportTodayAttendance(as: .csv, schedule: schedule, now: now)
+                }
+
+                Button("Attendance Summary (.pdf)", systemImage: "doc.richtext") {
+                    exportTodayAttendance(as: .pdf, schedule: schedule, now: now)
+                }
+            } label: {
+                Label("Export Attendance", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+            .disabled(attendanceRecordsForToday(now: now).isEmpty)
+        }
+        .modifier(DashboardCardStyle(accent: .blue, compact: compact))
     }
 
     @ViewBuilder
@@ -944,7 +1097,7 @@ struct TodayView: View {
                 showingDailySubPlan = true
             } label: {
                 Label(
-                    "Open \(dailySubPlanDate.formatted(date: .abbreviated, time: .omitted)) Plan",
+                    "Open \(dailySubPlanDate.formatted(date: .abbreviated, time: .omitted)) Sub Plan",
                     systemImage: "square.and.pencil"
                 )
                     .frame(maxWidth: .infinity)
@@ -993,6 +1146,11 @@ struct TodayView: View {
                         .font((compact ? Font.subheadline : .headline).weight(.bold))
 
                     Spacer()
+
+                    Button("Open") {
+                        rosterItem = nextItem
+                    }
+                    .font(.caption.weight(.semibold))
                 }
 
                 Text(nextItem.className)
@@ -1003,9 +1161,9 @@ struct TodayView: View {
                     .foregroundStyle(.secondary)
             }
             .modifier(DashboardCardStyle(accent: nextItem.type.themeColor == .clear ? .blue : nextItem.type.themeColor, compact: compact))
-        } else if let support = relevantTasks.compactMap({ task in
+        } else if relevantTasks.compactMap({ task in
             studentSupportsByName[task.studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)]
-        }).first {
+        }).first != nil {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Label("Student Support", systemImage: "person.crop.circle.badge.checkmark")
@@ -1014,12 +1172,12 @@ struct TodayView: View {
                     Spacer()
 
                     Button("Open") {
-                        rosterItem = nextItem
+                        openStudentsTab()
                     }
                     .font(.caption.weight(.semibold))
                 }
 
-                Text(support.name)
+                Text("Confidential student support item")
                     .font((compact ? Font.caption : .subheadline).weight(.semibold))
 
                 Text("Open the linked class or student record to review details.")
@@ -1063,6 +1221,15 @@ struct TodayView: View {
                 return profileGradeKey == gradeKey
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func presentAttendance(for item: AlarmItem, now: Date, schedule: [AlarmItem]) {
+        attendanceSession = AttendanceSession(
+            item: item,
+            date: now,
+            schedule: schedule,
+            students: rosterStudents(for: item)
+        )
     }
 
     private func dayStatusCard(
@@ -1128,6 +1295,14 @@ struct TodayView: View {
                     )
                 }
             }
+
+            Button {
+                openScheduleTab()
+            } label: {
+                Label("Open Schedule", systemImage: "calendar")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
         }
         .modifier(DashboardCardStyle(accent: tint, compact: compact))
         .overlay(
@@ -1167,9 +1342,9 @@ struct TodayView: View {
         }
 
         return Group {
-            if let nextItem {
+            if let editableItem = nextItem ?? activeItem {
                 Button {
-                    editingAlarm = nextItem
+                    editingAlarm = editableItem
                 } label: {
                     teacherContextRibbonContent(
                         label: label,
@@ -1279,10 +1454,10 @@ struct TodayView: View {
                 Spacer()
 
                 Button(todayCommitments.isEmpty ? "Add" : "Manage") {
-                    if let first = todayCommitments.first {
-                        editingCommitment = first
-                    } else {
+                    if todayCommitments.isEmpty {
                         showingAddCommitment = true
+                    } else {
+                        showingCommitmentsManager = true
                     }
                 }
                 .font(.caption.weight(.semibold))
@@ -1368,14 +1543,25 @@ struct TodayView: View {
     }
 
     private func floatingActionMenu(activeItem: AlarmItem?, now: Date) -> some View {
-        Menu {
-            Button("Notes", systemImage: "note.text") {
+        return Menu {
+            Button("Quick Add", systemImage: "plus.bubble") {
+                showingQuickCapture = true
+            }
+
+            Button("Tasks", systemImage: "checklist") {
+                openTodoTab()
+            }
+
+            Button("Notes", systemImage: "square.and.pencil") {
                 openNotesTab()
             }
 
-            Button("Refresh", systemImage: "arrow.clockwise") {
-                onRefresh()
+            Button("Homework Review", systemImage: "text.book.closed") {
+                homeworkReviewDate = now
+                showingHomeworkReview = true
             }
+
+            Divider()
 
             Button("Schedule", systemImage: "calendar") {
                 openScheduleTab()
@@ -1385,36 +1571,12 @@ struct TodayView: View {
                 openStudentsTab()
             }
 
-            Button("Today Layout", systemImage: "rectangle.grid.1x2") {
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                onRefresh()
+            }
+
+            Button("Settings", systemImage: "gearshape") {
                 openSettingsTab()
-            }
-
-            Button("Sub Plan", systemImage: "doc.text") {
-                showingDailySubPlan = true
-            }
-
-            Button("Tasks", systemImage: "checklist") {
-                openTodoTab()
-            }
-
-            Divider()
-
-            Button("Quick Add", systemImage: "square.and.pencil") {
-                showingQuickCapture = true
-            }
-
-            if let activeItem {
-                Divider()
-
-                Button(
-                    skippedBellItemIDs.contains(activeItem.id) ? "Bell Already Skipped" : "Skip Bell",
-                    systemImage: skippedBellItemIDs.contains(activeItem.id) ? "bell.slash.fill" : "bell.slash"
-                ) {
-                    if !skippedBellItemIDs.contains(activeItem.id) {
-                        skipBell(for: activeItem)
-                    }
-                }
-                .disabled(skippedBellItemIDs.contains(activeItem.id))
             }
         } label: {
             Label("Actions", systemImage: "plus")
@@ -1479,49 +1641,59 @@ struct TodayView: View {
     }
 
     private func upcomingChip(for item: AlarmItem, compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(item.accentColor == .clear ? Color.gray.opacity(0.2) : item.accentColor)
-                    .frame(width: 8, height: 8)
+        Button {
+            openBlock(item)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(item.accentColor == .clear ? Color.gray.opacity(0.2) : item.accentColor)
+                        .frame(width: 8, height: 8)
 
-                Text(item.className)
-                    .font((compact ? Font.caption : .subheadline).weight(.bold))
-                    .lineLimit(1)
-            }
+                    Text(item.className)
+                        .font((compact ? Font.caption : .subheadline).weight(.bold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
 
-            Text("\(item.startTime.formatted(date: .omitted, time: .shortened)) - \(item.endTime.formatted(date: .omitted, time: .shortened))")
-                .font(compact ? .caption2 : .caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            if !item.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Label(item.location, systemImage: "mappin.and.ellipse")
+                Text("\(item.startTime.formatted(date: .omitted, time: .shortened)) - \(item.endTime.formatted(date: .omitted, time: .shortened))")
                     .font(compact ? .caption2 : .caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                if !item.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Label(item.location, systemImage: "mappin.and.ellipse")
+                        .font(compact ? .caption2 : .caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-        }
-        .frame(width: compact ? 140 : 168, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.blue.opacity(0.08),
-                            Color(.secondarySystemBackground).opacity(0.92)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+            .frame(width: compact ? 140 : 168, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.blue.opacity(0.08),
+                                Color(.secondarySystemBackground).opacity(0.92)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func openBlock(_ item: AlarmItem) {
+        editingAlarm = item
     }
 
     private func topTasksCard(now: Date, compact: Bool = false) -> some View {
@@ -1571,7 +1743,7 @@ struct TodayView: View {
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Notes Snapshot", systemImage: "note.text")
+                Label("Notes Snapshot", systemImage: "square.and.pencil")
                     .font((compact ? Font.subheadline : .headline).weight(.bold))
 
                 Spacer()
@@ -1823,7 +1995,7 @@ struct TodayView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Label("Personal Notes", systemImage: "note.text")
+                        Label("Personal Notes", systemImage: "square.and.pencil")
                             .font((compact ? Font.caption : .subheadline).weight(.semibold))
 
                         Spacer()
@@ -1898,6 +2070,14 @@ struct TodayView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            Button {
+                openTodoTab()
+            } label: {
+                Label("Open To Do", systemImage: "checklist")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
         }
         .modifier(DashboardCardStyle(accent: .indigo, compact: compact))
     }
@@ -2009,7 +2189,15 @@ struct TodayView: View {
         let weekday = Calendar.current.component(.weekday, from: now)
 
         return commitments
-            .filter { $0.dayOfWeek == weekday }
+            .filter {
+                switch $0.recurrence {
+                case .weekly:
+                    return $0.dayOfWeek == weekday
+                case .oneTime:
+                    guard let specificDate = $0.specificDate else { return false }
+                    return Calendar.current.isDate(specificDate, inSameDayAs: now)
+                }
+            }
             .sorted { lhs, rhs in
                 let lhsStart = anchoredDate(for: lhs.startTime, now: now)
                 let rhsStart = anchoredDate(for: rhs.startTime, now: now)
@@ -2489,7 +2677,8 @@ struct TodayView: View {
                 symbolName: item.scheduleType.symbolName,
                 startTime: startDateToday(for: item, now: now),
                 endTime: endDateToday(for: item, now: now),
-                typeName: item.typeLabel
+                typeName: item.typeLabel,
+                isHeld: isHeld(item)
             )
         }
 
@@ -2595,7 +2784,20 @@ struct TodayView: View {
         adjustedTodaySchedule(for: now).count
     }
 
-    private func todayHeaderStat(title: String, value: String, accent: Color) -> some View {
+    private func todayHeaderStat(title: String, value: String, accent: Color, action: (() -> Void)? = nil) -> some View {
+        Group {
+            if let action {
+                Button(action: action) {
+                    todayHeaderStatContent(title: title, value: value, accent: accent)
+                }
+                .buttonStyle(.plain)
+            } else {
+                todayHeaderStatContent(title: title, value: value, accent: accent)
+            }
+        }
+    }
+
+    private func todayHeaderStatContent(title: String, value: String, accent: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption2.weight(.semibold))
@@ -2636,6 +2838,1356 @@ struct TodayView: View {
     private func todayHeaderBorder(accent: Color) -> some View {
         RoundedRectangle(cornerRadius: 26, style: .continuous)
             .stroke(accent.opacity(0.14), lineWidth: 1)
+    }
+
+    private func mostRecentAttendanceItem(from schedule: [AlarmItem], now: Date) -> AlarmItem? {
+        schedule
+            .filter { block in
+                endDateToday(for: block, now: now) < now &&
+                !rosterStudents(for: block).isEmpty
+            }
+            .max { lhs, rhs in
+                endDateToday(for: lhs, now: now) < endDateToday(for: rhs, now: now)
+            }
+    }
+
+    private func attendanceRecordsForToday(now: Date) -> [AttendanceRecord] {
+        let dateKey = AttendanceRecord.dateKey(for: now)
+        return attendanceRecords.filter { $0.dateKey == dateKey }
+    }
+
+    private func classHomeworkText(for item: AlarmItem, now: Date) -> String {
+        let dateKey = AttendanceRecord.dateKey(for: now)
+        return attendanceRecords.first(where: {
+            $0.dateKey == dateKey &&
+            $0.isClassHomeworkNote &&
+            attendanceRecordMatchesClass($0, item: item)
+        })?.absentHomework ?? ""
+    }
+
+    private func saveClassHomework(_ text: String, for item: AlarmItem, now: Date) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dateKey = AttendanceRecord.dateKey(for: now)
+        let roster = rosterStudents(for: item)
+
+        attendanceRecords.removeAll {
+            $0.dateKey == dateKey &&
+            ($0.isClassHomeworkNote || $0.isHomeworkAssignmentOnly) &&
+            attendanceRecordMatchesClass($0, item: item)
+        }
+
+        guard !trimmed.isEmpty else { return }
+
+        attendanceRecords.append(
+            AttendanceRecord(
+                dateKey: dateKey,
+                className: item.className,
+                gradeLevel: GradeLevelOption.normalized(item.gradeLevel),
+                studentName: "",
+                studentID: nil,
+                classDefinitionID: item.classDefinitionID,
+                blockID: item.id,
+                blockStartTime: item.startTime,
+                blockEndTime: item.endTime,
+                status: .present,
+                absentHomework: trimmed
+            )
+        )
+
+        for student in roster {
+            attendanceRecords.append(
+                AttendanceRecord(
+                    dateKey: dateKey,
+                    className: item.className,
+                    gradeLevel: GradeLevelOption.normalized(student.gradeLevel).isEmpty ? GradeLevelOption.normalized(item.gradeLevel) : GradeLevelOption.normalized(student.gradeLevel),
+                    studentName: student.name,
+                    studentID: student.id,
+                    classDefinitionID: item.classDefinitionID,
+                    blockID: item.id,
+                    blockStartTime: item.startTime,
+                    blockEndTime: item.endTime,
+                    status: .present,
+                    absentHomework: trimmed,
+                    isHomeworkAssignmentOnly: true
+                )
+            )
+        }
+    }
+
+    private func attendanceRecordMatchesClass(_ record: AttendanceRecord, item: AlarmItem) -> Bool {
+        if let blockID = record.blockID {
+            return blockID == item.id
+        }
+
+        if recordMatchesBlockTime(record, item: item) {
+            return true
+        }
+
+        if let classDefinitionID = item.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
+            return classDefinitionID == recordClassDefinitionID
+        }
+
+        return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className) &&
+            normalizedStudentKey(record.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+    }
+
+    private func recordMatchesBlockTime(_ record: AttendanceRecord, item: AlarmItem) -> Bool {
+        guard
+            let recordStartTime = record.blockStartTime,
+            let recordEndTime = record.blockEndTime
+        else {
+            return false
+        }
+
+        return blockTimeSignature(start: recordStartTime, end: recordEndTime) ==
+            blockTimeSignature(start: item.startTime, end: item.endTime)
+    }
+
+    private func blockTimeSignature(start: Date, end: Date) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let startHour = calendar.component(.hour, from: start)
+        let startMinute = calendar.component(.minute, from: start)
+        let endHour = calendar.component(.hour, from: end)
+        let endMinute = calendar.component(.minute, from: end)
+        return String(format: "%02d:%02d-%02d:%02d", startHour, startMinute, endHour, endMinute)
+    }
+
+    private func attendanceMatchKey(studentID: UUID?, studentName: String) -> String? {
+        if let studentID {
+            return studentID.uuidString.lowercased()
+        }
+
+        let normalizedName = normalizedStudentKey(studentName)
+        return normalizedName.isEmpty ? nil : "name:\(normalizedName)"
+    }
+
+    private func attendanceCompletionText(for item: AlarmItem, now: Date) -> String? {
+        let roster = rosterStudents(for: item)
+        guard !roster.isEmpty else { return nil }
+        let dateKey = AttendanceRecord.dateKey(for: now)
+        let markedKeys = Set(
+            attendanceRecords
+                .filter {
+                    $0.isAttendanceEntry &&
+                    $0.dateKey == dateKey &&
+                    attendanceRecordMatchesClass($0, item: item)
+                }
+                .compactMap { record in
+                    attendanceMatchKey(studentID: record.studentID, studentName: record.studentName)
+                }
+        )
+        let markedCount = roster.filter { student in
+            guard let key = attendanceMatchKey(studentID: student.id, studentName: student.name) else { return false }
+            return markedKeys.contains(key)
+        }.count
+        return markedCount >= roster.count
+            ? "Attendance complete"
+            : "Attendance \(markedCount)/\(roster.count)"
+    }
+
+    private enum TodayAttendanceExportFormat {
+        case text
+        case csv
+        case pdf
+    }
+
+    private func exportTodayAttendance(as format: TodayAttendanceExportFormat, schedule: [AlarmItem], now: Date) {
+        let records = attendanceRecordsForToday(now: now)
+        guard !records.isEmpty else { return }
+
+        let titleDate = now.formatted(date: .abbreviated, time: .omitted)
+        let filenameDate = AttendanceRecord.dateKey(for: now)
+        let title = "Attendance Summary - \(titleDate)"
+        let body = todayAttendanceExportBody(records: records, schedule: schedule)
+
+        let exportURL: URL?
+        switch format {
+        case .pdf:
+            exportURL = makeSubPlanPDF(
+                title: title,
+                filename: "classtrax-attendance-summary-\(filenameDate)",
+                body: body
+            )
+        case .text:
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("classtrax-attendance-summary-\(filenameDate)-\(UUID().uuidString).txt")
+            do {
+                try "\(title)\n\n\(body)".write(to: url, atomically: true, encoding: .utf8)
+                exportURL = url
+            } catch {
+                exportURL = nil
+            }
+        case .csv:
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("classtrax-attendance-summary-\(filenameDate)-\(UUID().uuidString).csv")
+            do {
+                try todayAttendanceCSV(records: records, schedule: schedule).write(to: url, atomically: true, encoding: .utf8)
+                exportURL = url
+            } catch {
+                exportURL = nil
+            }
+        }
+
+        guard let exportURL else { return }
+        todayAttendanceExportURL = exportURL
+        showingTodayAttendanceShareSheet = true
+    }
+
+    private func todayAttendanceExportBody(records: [AttendanceRecord], schedule: [AlarmItem]) -> String {
+        let classOrder = Dictionary(
+            uniqueKeysWithValues: schedule.enumerated().map { index, block in
+                (normalizedStudentKey(block.className), index)
+            }
+        )
+        let classHomeworkNotes = records.filter(\.isClassHomeworkNote)
+        let studentRecords = records.filter(\.isAttendanceEntry)
+
+        let grouped = Dictionary(grouping: studentRecords) { record in
+            if let studentID = record.studentID {
+                return studentID.uuidString
+            }
+            return normalizedStudentKey(record.studentName)
+        }
+
+        var sections: [String] = grouped.values
+            .sorted { lhs, rhs in
+                let leftName = lhs.first?.studentName ?? ""
+                let rightName = rhs.first?.studentName ?? ""
+                return leftName.localizedCaseInsensitiveCompare(rightName) == .orderedAscending
+            }
+            .compactMap { studentRecords in
+                let sortedRecords = studentRecords.sorted { lhs, rhs in
+                    let leftOrder = classOrder[normalizedStudentKey(resolvedAttendanceClassName(for: lhs))] ?? .max
+                    let rightOrder = classOrder[normalizedStudentKey(resolvedAttendanceClassName(for: rhs))] ?? .max
+                    if leftOrder == rightOrder {
+                        return resolvedAttendanceClassName(for: lhs)
+                            .localizedCaseInsensitiveCompare(resolvedAttendanceClassName(for: rhs)) == .orderedAscending
+                    }
+                    return leftOrder < rightOrder
+                }
+
+                let studentName = sortedRecords.first?.studentName ?? "Student"
+                let gradeLevel = sortedRecords.first?.gradeLevel ?? ""
+                let attendanceExceptions = sortedRecords.filter { $0.status != .present }
+                let statusLines = attendanceExceptions.map {
+                    "\(resolvedAttendanceClassName(for: $0)): \($0.status.rawValue)"
+                }
+                let homework = sortedRecords
+                    .compactMap(\.absentHomework)
+                    .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                let homeworkLines = formattedMissingWorkLines(from: homework)
+
+                guard !statusLines.isEmpty || !homeworkLines.isEmpty else {
+                    return nil
+                }
+
+                var sections = ["Student: \(studentName)"]
+                if !gradeLevel.isEmpty {
+                    sections.append("Grade: \(gradeLevel)")
+                }
+                if !statusLines.isEmpty {
+                    sections.append("Attendance:")
+                    sections.append(contentsOf: statusLines.map { "• \($0)" })
+                }
+                if !homeworkLines.isEmpty {
+                    sections.append("Missing Work:")
+                    sections.append(contentsOf: homeworkLines.map { "• \($0)" })
+                }
+                return sections.joined(separator: "\n")
+            }
+        if !classHomeworkNotes.isEmpty {
+            let homeworkSection = classHomeworkNotes
+                .sorted {
+                    let leftOrder = classOrder[normalizedStudentKey(resolvedAttendanceClassName(for: $0))] ?? .max
+                    let rightOrder = classOrder[normalizedStudentKey(resolvedAttendanceClassName(for: $1))] ?? .max
+                    return leftOrder < rightOrder
+                }
+                .flatMap { record in
+                    formattedMissingWorkLines(from: record.absentHomework).map {
+                        "• \(resolvedAttendanceClassName(for: record)): \($0)"
+                    }
+                }
+
+            if !homeworkSection.isEmpty {
+                sections.append((["Class Homework:"] + homeworkSection).joined(separator: "\n"))
+            }
+        }
+
+        return sections.isEmpty ? "All recorded students were marked present." : sections.joined(separator: "\n\n")
+    }
+
+    private func todayAttendanceCSV(records: [AttendanceRecord], schedule: [AlarmItem]) -> String {
+        let classOrder = Dictionary(
+            uniqueKeysWithValues: schedule.enumerated().map { index, block in
+                (normalizedStudentKey(block.className), index)
+            }
+        )
+
+        let sortedRecords = records
+            .filter(\.isAttendanceEntry)
+            .sorted { lhs, rhs in
+            let leftName = lhs.studentName.localizedLowercase
+            let rightName = rhs.studentName.localizedLowercase
+            if leftName != rightName {
+                return leftName < rightName
+            }
+
+            let leftOrder = classOrder[normalizedStudentKey(resolvedAttendanceClassName(for: lhs))] ?? .max
+            let rightOrder = classOrder[normalizedStudentKey(resolvedAttendanceClassName(for: rhs))] ?? .max
+            if leftOrder != rightOrder {
+                return leftOrder < rightOrder
+            }
+
+            return resolvedAttendanceClassName(for: lhs)
+                .localizedCaseInsensitiveCompare(resolvedAttendanceClassName(for: rhs)) == .orderedAscending
+        }
+
+        let header = [
+            "date",
+            "studentName",
+            "gradeLevel",
+            "className",
+            "status",
+            "missingWork"
+        ].joined(separator: ",")
+
+        let rows = sortedRecords.map { record in
+            [
+                record.dateKey,
+                record.studentName,
+                record.gradeLevel,
+                resolvedAttendanceClassName(for: record),
+                record.status.rawValue,
+                record.absentHomework
+            ]
+            .map(csvEscape)
+            .joined(separator: ",")
+        }
+
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    private func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
+
+    private func resolvedAttendanceClassName(for record: AttendanceRecord) -> String {
+        if let classDefinitionID = record.classDefinitionID,
+           let definition = classDefinitions.first(where: { $0.id == classDefinitionID }) {
+            let name = definition.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                return name
+            }
+        }
+
+        let rawName = record.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawName.isEmpty || rawName.localizedCaseInsensitiveContains("managedobject") {
+            return "Class Not Set"
+        }
+        return rawName
+    }
+
+    private func formattedMissingWorkLines(from homework: String?) -> [String] {
+        guard let homework else { return [] }
+        return homework
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+private struct AttendanceSession: Identifiable {
+    let item: AlarmItem
+    let date: Date
+    let schedule: [AlarmItem]
+    let students: [StudentSupportProfile]
+
+    var id: UUID { item.id }
+}
+
+private struct HomeworkCaptureSession: Identifiable {
+    let item: AlarmItem
+    let date: Date
+
+    var id: UUID { item.id }
+}
+
+struct AttendanceEditorView: View {
+    private enum StatusChoice: String, CaseIterable, Identifiable {
+        case present = "Present"
+        case absent = "Absent"
+        case tardy = "Tardy"
+        case excused = "Excused"
+
+        var id: String { rawValue }
+
+        var status: AttendanceRecord.Status {
+            switch self {
+            case .present: return .present
+            case .absent: return .absent
+            case .tardy: return .tardy
+            case .excused: return .excused
+            }
+        }
+    }
+
+    let item: AlarmItem
+    let date: Date
+    let students: [StudentSupportProfile]
+    let onCommit: ([AttendanceRecord]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var baseRecords: [AttendanceRecord]
+    @State private var draftClassRecords: [AttendanceRecord]
+    @State private var classMissingWork: String
+    @State private var showingClassNoteEditor = false
+    @State private var editingStudentHomework: StudentSupportProfile?
+    @State private var applyMissingWorkFeedback: String?
+    @State private var exportURL: URL?
+    @State private var showingShareSheet = false
+    @State private var didCommit = false
+
+    init(
+        item: AlarmItem,
+        date: Date,
+        students: [StudentSupportProfile],
+        records: [AttendanceRecord],
+        onCommit: @escaping ([AttendanceRecord]) -> Void
+    ) {
+        self.item = item
+        self.date = date
+        self.students = students
+        self.onCommit = onCommit
+        let dateKey = AttendanceRecord.dateKey(for: date)
+        let splitRecords = Self.splitRecords(records, for: item, dateKey: dateKey)
+        _baseRecords = State(initialValue: splitRecords.base)
+        _draftClassRecords = State(initialValue: splitRecords.currentClass)
+        _classMissingWork = State(initialValue: Self.defaultMissingWork(from: splitRecords.currentClass))
+    }
+
+    private var dateKey: String {
+        AttendanceRecord.dateKey(for: date)
+    }
+
+    private var normalizedGrade: String {
+        GradeLevelOption.normalized(item.gradeLevel)
+    }
+
+    private var currentClassRecords: [AttendanceRecord] {
+        draftClassRecords.filter(\.isAttendanceEntry)
+    }
+
+    private var recordsByStudentID: [UUID: AttendanceRecord] {
+        currentClassRecords.reduce(into: [UUID: AttendanceRecord]()) { partialResult, record in
+            if let studentID = record.studentID {
+                partialResult[studentID] = record
+            }
+        }
+    }
+
+    private var unmarkedCount: Int {
+        students.filter { status(for: $0) == nil }.count
+    }
+
+    private var absentCount: Int {
+        students.filter { status(for: $0) == .absent }.count
+    }
+
+    private var tardyCount: Int {
+        students.filter { status(for: $0) == .tardy }.count
+    }
+
+    private var excusedCount: Int {
+        students.filter { status(for: $0) == .excused }.count
+    }
+
+    private var earlierAbsentStudents: [StudentSupportProfile] {
+        students.filter { student in
+            status(for: student) == nil && earlierAbsentRecord(for: student) != nil
+        }
+    }
+
+    private var markedStudentKeys: Set<String> {
+        Set(
+            currentClassRecords
+                .compactMap { record in
+                    attendanceMatchKey(studentID: record.studentID, studentName: record.studentName)
+                }
+        )
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.className)
+                        .font(.headline)
+                    Text("\(date.formatted(date: .abbreviated, time: .omitted)) • \(item.gradeLevel)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Summary") {
+                LabeledContent("Unmarked", value: "\(unmarkedCount)")
+                LabeledContent("Absent", value: "\(absentCount)")
+                LabeledContent("Tardy", value: "\(tardyCount)")
+                LabeledContent("Excused", value: "\(excusedCount)")
+
+                if !earlierAbsentStudents.isEmpty {
+                    Button("Carry Forward Earlier Absences (\(earlierAbsentStudents.count))") {
+                        carryForwardEarlierAbsences()
+                    }
+                }
+            }
+
+            Section("Class Missing Work") {
+                Button(classMissingWork.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Set Class Missing Work" : "Edit Class Missing Work") {
+                    showingClassNoteEditor = true
+                }
+
+                if !classMissingWork.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(classMissingWork)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Button("Apply to \(absentCount) Absent Student\(absentCount == 1 ? "" : "s")") {
+                        applyClassMissingWorkToAbsentStudents()
+                    }
+                    .disabled(absentCount == 0)
+
+                    if let applyMissingWorkFeedback {
+                        Text(applyMissingWorkFeedback)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section {
+                Button("Mark Remaining Present") {
+                    markRemainingPresent()
+                }
+            }
+
+            Section("Students") {
+                ForEach(students) { student in
+                    studentRow(student)
+                }
+            }
+        }
+        .navigationTitle("Attendance")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") {
+                    commit()
+                    dismiss()
+                }
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button("Export") {
+                    exportAttendance()
+                }
+                .disabled(students.isEmpty)
+            }
+        }
+        .sheet(isPresented: $showingClassNoteEditor) {
+            NavigationStack {
+                AttendanceNoteEditorView(
+                    title: item.className,
+                    helperText: "This note auto-fills when you mark a student absent for this period.",
+                    initialText: classMissingWork,
+                    onSave: {
+                        classMissingWork = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        upsertClassHomeworkRecord()
+                    }
+                )
+            }
+        }
+        .sheet(item: $editingStudentHomework) { student in
+            NavigationStack {
+                AttendanceNoteEditorView(
+                    title: student.name,
+                    helperText: "Edit the saved homework for this absent student.",
+                    initialText: existingRecord(for: student)?.absentHomework ?? classMissingWork,
+                    onSave: { updateHomework($0, for: student) }
+                )
+            }
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let exportURL {
+                ShareSheet(activityItems: [exportURL])
+            }
+        }
+        .onDisappear {
+            commit()
+        }
+    }
+
+    private func studentRow(_ student: StudentSupportProfile) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(student.name)
+                        .font(.body.weight(.semibold))
+                    if !student.accommodations.isEmpty {
+                        Text(student.accommodations)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer()
+
+                Text(statusLabel(for: student))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(StatusChoice.allCases) { choice in
+                    Button(choice.rawValue) {
+                        setStatus(choice.status, for: student)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(status(for: student) == choice.status ? tint(for: choice.status) : .gray)
+                }
+
+                if status(for: student) != nil {
+                    Button("Clear") {
+                        clearStatus(for: student)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .font(.caption)
+
+            if status(for: student) == .absent,
+               !classMissingWork.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(existingRecord(for: student)?.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                        ? (existingRecord(for: student)?.absentHomework ?? classMissingWork)
+                        : classMissingWork)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+
+                    Spacer()
+
+                    Button("Edit") {
+                        editingStudentHomework = student
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func status(for student: StudentSupportProfile) -> AttendanceRecord.Status? {
+        guard let existing = existingRecord(for: student) else { return nil }
+        return existing.status
+    }
+
+    private func attendanceMatchKey(studentID: UUID?, studentName: String) -> String? {
+        if let studentID {
+            return studentID.uuidString.lowercased()
+        }
+
+        let normalizedName = normalizedStudentKey(studentName)
+        return normalizedName.isEmpty ? nil : "name:\(normalizedName)"
+    }
+
+    private func statusLabel(for student: StudentSupportProfile) -> String {
+        status(for: student)?.rawValue ?? "Unmarked"
+    }
+
+    private func setStatus(_ status: AttendanceRecord.Status, for student: StudentSupportProfile) {
+        if let index = recordIndex(for: student) {
+            draftClassRecords[index].status = status
+            if status != .absent {
+                draftClassRecords[index].absentHomework = ""
+            } else if draftClassRecords[index].absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                draftClassRecords[index].absentHomework = classMissingWork
+            }
+        } else {
+            draftClassRecords.append(
+                AttendanceRecord(
+                    dateKey: dateKey,
+                    className: item.className,
+                    gradeLevel: normalizedGrade,
+                    studentName: student.name,
+                    studentID: student.id,
+                    classDefinitionID: item.classDefinitionID,
+                    blockID: item.id,
+                    blockStartTime: item.startTime,
+                    blockEndTime: item.endTime,
+                    status: status,
+                    absentHomework: status == .absent ? classMissingWork : ""
+                )
+            )
+        }
+    }
+
+    private func clearStatus(for student: StudentSupportProfile) {
+        guard let index = recordIndex(for: student) else { return }
+        draftClassRecords.remove(at: index)
+    }
+
+    private func applyClassMissingWorkToAbsentStudents() {
+        let trimmed = classMissingWork.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var appliedCount = 0
+        for student in students where status(for: student) == .absent {
+            if let index = recordIndex(for: student) {
+                draftClassRecords[index].absentHomework = trimmed
+                appliedCount += 1
+            }
+        }
+        upsertClassHomeworkRecord()
+        applyMissingWorkFeedback = appliedCount == 1
+            ? "Applied to 1 absent student."
+            : "Applied to \(appliedCount) absent students."
+    }
+
+    private func markRemainingPresent() {
+        for student in students where status(for: student) == nil {
+            setStatus(.present, for: student)
+        }
+    }
+
+    private func updateHomework(_ text: String, for student: StudentSupportProfile) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = recordIndex(for: student) else { return }
+        draftClassRecords[index].absentHomework = trimmed
+    }
+
+    private func carryForwardEarlierAbsences() {
+        for student in earlierAbsentStudents {
+            setStatus(.absent, for: student)
+            guard let previousRecord = earlierAbsentRecord(for: student),
+                  let index = recordIndex(for: student),
+                  draftClassRecords[index].absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                continue
+            }
+            draftClassRecords[index].absentHomework = previousRecord.absentHomework
+        }
+    }
+
+    private func exportAttendance() {
+        let header = "date,className,gradeLevel,studentName,status,absentHomework"
+        let rows = students.map { student in
+            let record = existingRecord(for: student)
+            return [
+                dateKey,
+                item.className,
+                normalizedGrade,
+                student.name,
+                record?.status.rawValue ?? "",
+                record?.absentHomework ?? ""
+            ]
+            .map(csvEscape)
+            .joined(separator: ",")
+        }
+
+        let csv = ([header] + rows).joined(separator: "\n")
+        let filename = "classtrax-attendance-\(dateKey)-\(item.className.replacingOccurrences(of: " ", with: "-")).csv"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? csv.write(to: url, atomically: true, encoding: .utf8)
+        exportURL = url
+        showingShareSheet = true
+    }
+
+    private func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
+
+    private func commit() {
+        guard !didCommit else { return }
+        didCommit = true
+        upsertClassHomeworkRecord()
+        onCommit(baseRecords + draftClassRecords)
+    }
+
+    private func upsertClassHomeworkRecord() {
+        draftClassRecords.removeAll { $0.isClassHomeworkNote || $0.isHomeworkAssignmentOnly }
+
+        let trimmed = classMissingWork.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        draftClassRecords.append(
+            AttendanceRecord(
+                dateKey: dateKey,
+                className: item.className,
+                gradeLevel: normalizedGrade,
+                studentName: "",
+                studentID: nil,
+                classDefinitionID: item.classDefinitionID,
+                blockID: item.id,
+                blockStartTime: item.startTime,
+                blockEndTime: item.endTime,
+                status: .present,
+                absentHomework: trimmed
+            )
+        )
+
+        for student in students {
+            draftClassRecords.append(
+                AttendanceRecord(
+                    dateKey: dateKey,
+                    className: item.className,
+                    gradeLevel: GradeLevelOption.normalized(student.gradeLevel).isEmpty ? normalizedGrade : GradeLevelOption.normalized(student.gradeLevel),
+                    studentName: student.name,
+                    studentID: student.id,
+                    classDefinitionID: item.classDefinitionID,
+                    blockID: item.id,
+                    blockStartTime: item.startTime,
+                    blockEndTime: item.endTime,
+                    status: .present,
+                    absentHomework: trimmed,
+                    isHomeworkAssignmentOnly: true
+                )
+            )
+        }
+    }
+
+    private func recordIndex(for student: StudentSupportProfile) -> Int? {
+        draftClassRecords.firstIndex(where: { record in
+            guard record.isAttendanceEntry else { return false }
+            if let studentID = record.studentID, studentID == student.id {
+                if let blockID = record.blockID {
+                    return blockID == item.id
+                }
+                if Self.recordMatchesBlockTime(record, item: item) {
+                    return true
+                }
+                if let classDefinitionID = item.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
+                    return classDefinitionID == recordClassDefinitionID
+                }
+                return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className)
+            }
+            return Self.recordMatchesCurrentClass(record, item: item) &&
+                normalizedStudentKey(record.gradeLevel) == normalizedStudentKey(normalizedGrade) &&
+                normalizedStudentKey(record.studentName) == normalizedStudentKey(student.name)
+        })
+    }
+
+    private func existingRecord(for student: StudentSupportProfile) -> AttendanceRecord? {
+        if let record = recordsByStudentID[student.id] {
+            return record
+        }
+        guard let index = recordIndex(for: student) else { return nil }
+        return draftClassRecords[index]
+    }
+
+    private func tint(for status: AttendanceRecord.Status) -> Color {
+        switch status {
+        case .present: return .green
+        case .absent: return .red
+        case .tardy: return .orange
+        case .excused: return .blue
+        }
+    }
+
+    private static func defaultMissingWork(from records: [AttendanceRecord]) -> String {
+        if let classNote = records.first(where: {
+            $0.isClassHomeworkNote &&
+            !$0.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })?.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines),
+           !classNote.isEmpty {
+            return classNote
+        }
+
+        return records.first(where: {
+            $0.status == .absent &&
+            !$0.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })?.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func earlierAbsentRecord(for student: StudentSupportProfile) -> AttendanceRecord? {
+        let priorAbsences = (baseRecords + draftClassRecords)
+            .filter { record in
+                record.dateKey == dateKey &&
+                    record.isAttendanceEntry &&
+                    record.status == .absent &&
+                    attendanceMatchKey(studentID: record.studentID, studentName: record.studentName) ==
+                        attendanceMatchKey(studentID: student.id, studentName: student.name) &&
+                    Self.isEarlierBlockRecord(record, than: item)
+            }
+
+        return priorAbsences.max { lhs, rhs in
+            Self.blockSortDate(for: lhs) < Self.blockSortDate(for: rhs)
+        }
+    }
+
+    private static func splitRecords(
+        _ records: [AttendanceRecord],
+        for item: AlarmItem,
+        dateKey: String
+    ) -> (base: [AttendanceRecord], currentClass: [AttendanceRecord]) {
+        var base: [AttendanceRecord] = []
+        var currentClass: [AttendanceRecord] = []
+
+        for record in records {
+            if record.dateKey == dateKey && recordMatchesCurrentClass(record, item: item) {
+                currentClass.append(record)
+            } else {
+                base.append(record)
+            }
+        }
+
+        return (base, currentClass)
+    }
+
+    private static func recordMatchesCurrentClass(_ record: AttendanceRecord, item: AlarmItem) -> Bool {
+        if let blockID = record.blockID {
+            return blockID == item.id
+        }
+        if recordMatchesBlockTime(record, item: item) {
+            return true
+        }
+        if let classDefinitionID = item.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
+            return classDefinitionID == recordClassDefinitionID
+        }
+        return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className)
+    }
+
+    private static func recordMatchesBlockTime(_ record: AttendanceRecord, item: AlarmItem) -> Bool {
+        guard
+            let recordStartTime = record.blockStartTime,
+            let recordEndTime = record.blockEndTime
+        else {
+            return false
+        }
+
+        return blockTimeSignature(start: recordStartTime, end: recordEndTime) ==
+            blockTimeSignature(start: item.startTime, end: item.endTime)
+    }
+
+    private static func blockTimeSignature(start: Date, end: Date) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let startHour = calendar.component(.hour, from: start)
+        let startMinute = calendar.component(.minute, from: start)
+        let endHour = calendar.component(.hour, from: end)
+        let endMinute = calendar.component(.minute, from: end)
+        return String(format: "%02d:%02d-%02d:%02d", startHour, startMinute, endHour, endMinute)
+    }
+
+    private static func isEarlierBlockRecord(_ record: AttendanceRecord, than item: AlarmItem) -> Bool {
+        guard let recordEndTime = record.blockEndTime else {
+            return false
+        }
+
+        return blockSortDate(for: recordEndTime) <= blockSortDate(for: item.startTime)
+    }
+
+    private static func blockSortDate(for record: AttendanceRecord) -> Date {
+        record.blockEndTime ?? record.blockStartTime ?? .distantPast
+    }
+
+    private static func blockSortDate(for date: Date) -> Date {
+        date
+    }
+}
+
+private struct AttendanceNoteEditorView: View {
+    let title: String
+    let helperText: String
+    let initialText: String
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isEditorFocused: Bool
+    @State private var draftText: String
+
+    init(title: String, helperText: String, initialText: String, onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.helperText = helperText
+        self.initialText = initialText
+        self.onSave = onSave
+        _draftText = State(initialValue: initialText)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                if !helperText.isEmpty {
+                    Text(helperText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            TextEditor(text: $draftText)
+                .focused($isEditorFocused)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.sentences)
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .frame(minHeight: 220)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                )
+
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle("Missing Work")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(draftText)
+                    dismiss()
+                }
+            }
+        }
+        .task {
+            try? await Task.sleep(for: .milliseconds(150))
+            isEditorFocused = true
+        }
+    }
+}
+
+private struct DailyHomeworkReviewView: View {
+    enum BrowseMode: String, CaseIterable, Identifiable {
+        case grade = "Grade"
+        case className = "Class"
+        case student = "Student"
+
+        var id: String { rawValue }
+    }
+
+    @Binding var attendanceRecords: [AttendanceRecord]
+    let classDefinitions: [ClassDefinitionItem]
+    let date: Date
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var browseMode: BrowseMode = .grade
+    @State private var editingTarget: HomeworkReviewTarget?
+
+    private var dateKey: String {
+        AttendanceRecord.dateKey(for: date)
+    }
+
+    private var homeworkRecords: [AttendanceRecord] {
+        attendanceRecords
+            .filter {
+                $0.dateKey == dateKey &&
+                !$0.absentHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .sorted { lhs, rhs in
+                if lhs.className.localizedCaseInsensitiveCompare(rhs.className) != .orderedSame {
+                    return lhs.className.localizedCaseInsensitiveCompare(rhs.className) == .orderedAscending
+                }
+
+                if lhs.studentName.localizedCaseInsensitiveCompare(rhs.studentName) != .orderedSame {
+                    return lhs.studentName.localizedCaseInsensitiveCompare(rhs.studentName) == .orderedAscending
+                }
+
+                return lhs.gradeLevel.localizedCaseInsensitiveCompare(rhs.gradeLevel) == .orderedAscending
+            }
+    }
+
+    private var classHomeworkRecords: [AttendanceRecord] {
+        homeworkRecords.filter(\.isClassHomeworkNote)
+    }
+
+    private var studentHomeworkRecords: [AttendanceRecord] {
+        let studentRecords = homeworkRecords.filter { !$0.isClassHomeworkNote }
+        let grouped = Dictionary(grouping: studentRecords) { record in
+            homeworkGroupingKey(for: record)
+        }
+
+        return grouped.values.compactMap { records in
+            records.sorted { lhs, rhs in
+                if lhs.isHomeworkAssignmentOnly != rhs.isHomeworkAssignmentOnly {
+                    return !lhs.isHomeworkAssignmentOnly && rhs.isHomeworkAssignmentOnly
+                }
+
+                if lhs.studentName.localizedCaseInsensitiveCompare(rhs.studentName) != .orderedSame {
+                    return lhs.studentName.localizedCaseInsensitiveCompare(rhs.studentName) == .orderedAscending
+                }
+
+                return resolvedClassName(for: lhs).localizedCaseInsensitiveCompare(resolvedClassName(for: rhs)) == .orderedAscending
+            }.first
+        }
+    }
+
+    private var gradeGroups: [HomeworkReviewGroup] {
+        groupedRecords {
+            let normalized = GradeLevelOption.normalized($0.gradeLevel)
+            return normalized.isEmpty ? "No Grade" : normalized
+        }
+    }
+
+    private var classGroups: [HomeworkReviewGroup] {
+        groupedRecords {
+            resolvedClassName(for: $0)
+        }
+    }
+
+    private var studentGroups: [HomeworkReviewGroup] {
+        let grouped = Dictionary(grouping: studentHomeworkRecords) { record in
+            let trimmed = record.studentName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "Unnamed Student" : trimmed
+        }
+
+        return grouped.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }.map { key in
+            let records = (grouped[key] ?? []).sorted { lhs, rhs in
+                if lhs.className.localizedCaseInsensitiveCompare(rhs.className) != .orderedSame {
+                    return resolvedClassName(for: lhs).localizedCaseInsensitiveCompare(resolvedClassName(for: rhs)) == .orderedAscending
+                }
+
+                return lhs.gradeLevel.localizedCaseInsensitiveCompare(rhs.gradeLevel) == .orderedAscending
+            }
+
+            return HomeworkReviewGroup(title: key, records: records)
+        }
+    }
+
+    private var activeGroups: [HomeworkReviewGroup] {
+        switch browseMode {
+        case .grade:
+            return gradeGroups
+        case .className:
+            return classGroups
+        case .student:
+            return studentGroups
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Browse By", selection: $browseMode) {
+                    ForEach(BrowseMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if homeworkRecords.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "No Homework Saved",
+                        systemImage: "text.book.closed",
+                        description: Text("Class homework and absent-student missing work for \(date.formatted(date: .abbreviated, time: .omitted)) will appear here.")
+                    )
+                }
+            } else {
+                Section("Summary") {
+                    LabeledContent("Class Homework Notes", value: "\(classHomeworkRecords.count)")
+                    LabeledContent("Student Missing Work", value: "\(studentHomeworkRecords.count)")
+                }
+
+                ForEach(activeGroups) { group in
+                    Section(group.title) {
+                        let classRecords = group.records.filter(\.isClassHomeworkNote)
+                        let studentRecords = group.records.filter { !$0.isClassHomeworkNote }
+
+                        if !classRecords.isEmpty {
+                            ForEach(classRecords) { record in
+                                Button {
+                                    openEditor(for: record)
+                                } label: {
+                                    HomeworkReviewRow(
+                                        title: browseMode == .className ? "Class Homework" : displayClassName(for: record),
+                                        subtitle: record.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Class note" : "\(record.gradeLevel) • Class note",
+                                        detail: record.absentHomework
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        if !studentRecords.isEmpty {
+                            ForEach(studentRecords) { record in
+                                Button {
+                                    openEditor(for: record)
+                                } label: {
+                                    HomeworkReviewRow(
+                                        title: browseMode == .student ? displayClassName(for: record) : record.studentName,
+                                        subtitle: studentSubtitle(for: record),
+                                        detail: record.absentHomework
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Homework Review")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+        .sheet(item: $editingTarget) { target in
+            NavigationStack {
+                AttendanceNoteEditorView(
+                    title: target.title,
+                    helperText: target.helperText,
+                    initialText: target.initialText,
+                    onSave: { saveHomework($0, recordID: target.id) }
+                )
+            }
+        }
+    }
+
+    private func groupedRecords(key: (AttendanceRecord) -> String) -> [HomeworkReviewGroup] {
+        let grouped = Dictionary(grouping: classHomeworkRecords + studentHomeworkRecords, by: key)
+        return grouped.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }.map { groupKey in
+            let records = (grouped[groupKey] ?? []).sorted { lhs, rhs in
+                if lhs.isClassHomeworkNote != rhs.isClassHomeworkNote {
+                    return lhs.isClassHomeworkNote && !rhs.isClassHomeworkNote
+                }
+
+                if lhs.studentName.localizedCaseInsensitiveCompare(rhs.studentName) != .orderedSame {
+                    return lhs.studentName.localizedCaseInsensitiveCompare(rhs.studentName) == .orderedAscending
+                }
+
+                return resolvedClassName(for: lhs).localizedCaseInsensitiveCompare(resolvedClassName(for: rhs)) == .orderedAscending
+            }
+
+            return HomeworkReviewGroup(title: groupKey, records: records)
+        }
+    }
+
+    private func openEditor(for record: AttendanceRecord) {
+        let title: String
+        let helperText: String
+
+        if record.isClassHomeworkNote {
+            title = displayClassName(for: record)
+            helperText = "Edit the class-level homework note for this block."
+        } else {
+            title = record.studentName
+            helperText = "Edit the saved missing work for this student."
+        }
+
+        editingTarget = HomeworkReviewTarget(
+            id: record.id,
+            title: title,
+            helperText: helperText,
+            initialText: record.absentHomework
+        )
+    }
+
+    private func saveHomework(_ text: String, recordID: UUID) {
+        guard let index = attendanceRecords.firstIndex(where: { $0.id == recordID }) else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if attendanceRecords[index].isClassHomeworkNote && trimmed.isEmpty {
+            attendanceRecords.remove(at: index)
+            return
+        }
+
+        attendanceRecords[index].absentHomework = trimmed
+    }
+
+    private func displayClassName(for record: AttendanceRecord) -> String {
+        resolvedClassName(for: record)
+    }
+
+    private func studentSubtitle(for record: AttendanceRecord) -> String {
+        let parts = [displayClassName(for: record), record.gradeLevel]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? "Student homework" : parts.joined(separator: " • ")
+    }
+
+    private func homeworkGroupingKey(for record: AttendanceRecord) -> String {
+        let studentKey = record.studentID?.uuidString.lowercased() ?? normalizedStudentKey(record.studentName)
+        let blockKey: String
+        if let blockID = record.blockID {
+            blockKey = blockID.uuidString.lowercased()
+        } else if let classDefinitionID = record.classDefinitionID {
+            blockKey = classDefinitionID.uuidString.lowercased()
+        } else {
+            blockKey = normalizedStudentKey(resolvedClassName(for: record))
+        }
+
+        return "\(studentKey)|\(blockKey)|\(record.dateKey)"
+    }
+
+    private func resolvedClassName(for record: AttendanceRecord) -> String {
+        if let classDefinitionID = record.classDefinitionID,
+           let definition = classDefinitions.first(where: { $0.id == classDefinitionID }) {
+            let name = definition.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                return name
+            }
+        }
+
+        let rawName = record.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawName.isEmpty || rawName.localizedCaseInsensitiveContains("managedobject") {
+            return "Class Not Set"
+        }
+
+        return rawName
+    }
+}
+
+private struct HomeworkReviewGroup: Identifiable {
+    let title: String
+    let records: [AttendanceRecord]
+
+    var id: String { title }
+}
+
+private struct HomeworkReviewTarget: Identifiable {
+    let id: UUID
+    let title: String
+    let helperText: String
+    let initialText: String
+}
+
+private struct HomeworkReviewRow: View {
+    let title: String
+    let subtitle: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 }
 
@@ -2787,12 +4339,12 @@ private struct TodayClassRosterView: View {
 
             Section("Link Status") {
                 if let linkedClassDefinition {
-                    LabeledContent("Saved Class") {
+                    LabeledContent("Class Roster") {
                         Text(linkedClassDefinition.displayName)
                             .foregroundStyle(.primary)
                     }
                 } else {
-                    LabeledContent("Saved Class") {
+                    LabeledContent("Class Roster") {
                         Text("Not linked")
                             .foregroundStyle(.secondary)
                     }
@@ -2803,7 +4355,7 @@ private struct TodayClassRosterView: View {
                     .foregroundStyle(.secondary)
 
                 if !classDefinitions.isEmpty {
-                    Button(linkedClassDefinition == nil ? "Link to Saved Class" : "Change Saved Class") {
+                    Button(linkedClassDefinition == nil ? "Link Class Roster" : "Change Class Roster") {
                         showingLinkClassSheet = true
                     }
                 }
@@ -3007,20 +4559,8 @@ private struct TodayClassRosterView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !suggestedClassDefinitions.isEmpty {
-                Section("Suggested Matches") {
-                    ForEach(suggestedClassDefinitions) { definition in
-                        Button {
-                            applyClassDefinitionLink(definition)
-                        } label: {
-                            classDefinitionRow(definition)
-                        }
-                    }
-                }
-            }
-
-            Section(suggestedClassDefinitions.isEmpty ? "Saved Classes" : "All Saved Classes") {
-                ForEach(remainingClassDefinitions) { definition in
+            Section("Class Rosters") {
+                ForEach(classDefinitions.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }) { definition in
                     Button {
                         applyClassDefinitionLink(definition)
                     } label: {
@@ -3029,7 +4569,7 @@ private struct TodayClassRosterView: View {
                 }
             }
         }
-        .navigationTitle("Link Saved Class")
+        .navigationTitle("Class Roster")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -3094,7 +4634,6 @@ private struct TodayClassRosterView: View {
         guard let index = alarms.firstIndex(where: { $0.id == item.id }) else { return }
 
         alarms[index].classDefinitionID = definition.id
-        alarms[index].name = definition.name
 
         let normalizedGrade = GradeLevelOption.normalized(definition.gradeLevel)
         if !normalizedGrade.isEmpty {
@@ -3221,574 +4760,6 @@ private struct TodayStudentClassContextView: View {
 
         profiles[index] = updatingProfile(profiles[index], classContext: context)
         dismiss()
-    }
-}
-
-private struct TodayClassAttendanceView: View {
-    private enum AttendanceSelection: String, CaseIterable, Identifiable {
-        case unmarked = "Unmarked"
-        case present = "Present"
-        case absent = "Absent"
-        case tardy = "Tardy"
-        case excused = "Excused"
-
-        var id: String { rawValue }
-
-        var status: AttendanceRecord.Status? {
-            switch self {
-            case .unmarked:
-                return nil
-            case .present:
-                return .present
-            case .absent:
-                return .absent
-            case .tardy:
-                return .tardy
-            case .excused:
-                return .excused
-            }
-        }
-
-        init(status: AttendanceRecord.Status?) {
-            switch status {
-            case .present:
-                self = .present
-            case .absent:
-                self = .absent
-            case .tardy:
-                self = .tardy
-            case .excused:
-                self = .excused
-            case nil:
-                self = .unmarked
-            }
-        }
-    }
-
-    let item: AlarmItem
-    let date: Date
-    let schedule: [AlarmItem]
-    let students: [StudentSupportProfile]
-    @Binding var records: [AttendanceRecord]
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var exportURL: URL?
-    @State private var showingShareSheet = false
-    @State private var feedbackMessage: String?
-
-    private var dateKey: String {
-        AttendanceRecord.dateKey(for: date)
-    }
-
-    var body: some View {
-        List {
-            attendanceHeaderSection
-
-            if let feedbackMessage {
-                Section {
-                    Text(feedbackMessage)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.green)
-                        .padding(.vertical, 6)
-                }
-                .listRowBackground(attendanceCardBackground)
-            }
-
-            attendanceSection
-
-            if !absentWorkRows.isEmpty {
-                Section("Absent Student Work") {
-                    ForEach(absentWorkRows, id: \.studentName) { record in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(record.studentName)
-                                .fontWeight(.semibold)
-                            Text(record.className)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(record.absentHomework.isEmpty ? "No missing work noted yet." : record.absentHomework)
-                                .font(.subheadline)
-                                .foregroundStyle(record.absentHomework.isEmpty ? .secondary : .primary)
-                        }
-                        .padding(.vertical, 4)
-                        .listRowBackground(attendanceCardBackground)
-                    }
-                }
-            }
-        }
-        .navigationTitle("Attendance")
-        .navigationBarTitleDisplayMode(.inline)
-        .scrollContentBackground(.hidden)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(.systemBackground),
-                    (item.type.themeColor == .clear ? Color.blue : item.type.themeColor).opacity(0.06),
-                    Color(.systemGroupedBackground)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-        )
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button("Done") { dismiss() }
-            }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Export") {
-                    exportAttendance()
-                }
-                .disabled(students.isEmpty)
-            }
-        }
-        .sheet(isPresented: $showingShareSheet) {
-            if let exportURL {
-                ShareSheet(activityItems: [exportURL])
-            }
-        }
-    }
-
-    private var attendanceHeaderSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(item.className)
-                    .font(.headline.weight(.bold))
-                Text("\(date.formatted(date: .abbreviated, time: .omitted)) • \(item.gradeLevel)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 6)
-            .listRowBackground(attendanceCardBackground)
-        }
-    }
-
-    private var attendanceSection: some View {
-        Section("Attendance") {
-            if students.isEmpty {
-                Text("No linked students were found for this class and grade.")
-                    .foregroundStyle(.secondary)
-                    .listRowBackground(attendanceCardBackground)
-            } else {
-                attendanceSummaryRow
-                    .listRowBackground(attendanceCardBackground)
-
-                Button {
-                    markAllPresent()
-                } label: {
-                    Label("Mark Remaining Present", systemImage: "checkmark.circle")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .listRowBackground(attendanceCardBackground)
-
-                ForEach(students) { student in
-                    attendanceRow(for: student)
-                        .listRowBackground(attendanceCardBackground)
-                }
-            }
-        }
-    }
-
-    private var attendanceSummaryRow: some View {
-        HStack(spacing: 12) {
-            attendanceSummaryChip(title: "Unmarked", count: summaryCount(for: nil), accent: .secondary)
-            attendanceSummaryChip(title: "Absent", count: summaryCount(for: .absent), accent: .red)
-            attendanceSummaryChip(title: "Tardy", count: summaryCount(for: .tardy), accent: .orange)
-            attendanceSummaryChip(title: "Excused", count: summaryCount(for: .excused), accent: .blue)
-        }
-    }
-
-    private func attendanceRow(for student: StudentSupportProfile) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text(student.name)
-                            .fontWeight(.semibold)
-
-                        gradePill(student.gradeLevel)
-                    }
-                    if !student.accommodations.isEmpty {
-                        Text(student.accommodations)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-
-                Spacer()
-
-                attendanceStatusMenu(for: student)
-            }
-
-            if attendanceStatus(for: student) == .absent {
-                TextField(
-                    "Homework / assignment for absent student",
-                    text: homeworkBinding(for: student),
-                    axis: .vertical
-                )
-                .lineLimit(2...4)
-                .textFieldStyle(.roundedBorder)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-    }
-
-    private func attendanceStatusMenu(for student: StudentSupportProfile) -> some View {
-        let currentSelection = selection(for: student)
-        let accent = statusAccent(for: student)
-
-        return Menu {
-            ForEach(AttendanceSelection.allCases) { selection in
-                Button {
-                    setSelection(selection, for: student)
-                } label: {
-                    if selection == currentSelection {
-                        Label(selection.rawValue, systemImage: "checkmark")
-                    } else {
-                        Text(selection.rawValue)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Text(currentSelection.rawValue)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.bold))
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(accent)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(accent.opacity(0.14))
-            )
-        }
-    }
-
-    private func attendanceStatus(for student: StudentSupportProfile) -> AttendanceRecord.Status? {
-        record(for: student)?.status
-    }
-
-    private func selection(for student: StudentSupportProfile) -> AttendanceSelection {
-        AttendanceSelection(status: attendanceStatus(for: student))
-    }
-
-    private func setSelection(_ selection: AttendanceSelection, for student: StudentSupportProfile) {
-        if let status = selection.status {
-            setStatus(status, for: student)
-        } else {
-            clearStatus(for: student)
-        }
-    }
-
-    private func setStatus(_ status: AttendanceRecord.Status, for student: StudentSupportProfile) {
-        let normalizedGrade = GradeLevelOption.normalized(item.gradeLevel)
-        if let index = recordIndex(for: student) {
-            records[index].status = status
-            if status != .absent {
-                records[index].absentHomework = ""
-            }
-        } else {
-            records.append(
-                AttendanceRecord(
-                    dateKey: dateKey,
-                    className: item.className,
-                    gradeLevel: normalizedGrade,
-                    studentName: student.name,
-                    studentID: student.id,
-                    classDefinitionID: item.classDefinitionID,
-                    status: status
-                )
-            )
-        }
-
-        if status == .absent {
-            propagateAbsentStatus(for: student, normalizedGrade: normalizedGrade)
-            feedbackMessage = "\(student.name) marked absent for this block and later blocks today."
-        } else {
-            clearPropagatedAbsence(for: student, normalizedGrade: normalizedGrade)
-            feedbackMessage = "\(student.name) updated to \(status.rawValue). Later auto-absences were cleared."
-        }
-    }
-
-    private func clearStatus(for student: StudentSupportProfile) {
-        let normalizedGrade = GradeLevelOption.normalized(item.gradeLevel)
-        if let index = recordIndex(for: student) {
-            records.remove(at: index)
-        }
-        clearPropagatedAbsence(for: student, normalizedGrade: normalizedGrade)
-        feedbackMessage = "\(student.name) is now unmarked for this block."
-    }
-
-    private func homeworkBinding(for student: StudentSupportProfile) -> Binding<String> {
-        Binding(
-            get: { record(for: student)?.absentHomework ?? "" },
-            set: { newValue in
-                let trimmedValue = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let index = recordIndex(for: student) {
-                    records[index].status = .absent
-                    records[index].absentHomework = trimmedValue
-                } else {
-                    records.append(
-                        AttendanceRecord(
-                            dateKey: dateKey,
-                            className: item.className,
-                            gradeLevel: GradeLevelOption.normalized(item.gradeLevel),
-                            studentName: student.name,
-                            studentID: student.id,
-                            classDefinitionID: item.classDefinitionID,
-                            status: .absent,
-                            absentHomework: trimmedValue
-                        )
-                    )
-                }
-
-                propagateAbsentHomework(for: student, homework: trimmedValue)
-            }
-        )
-    }
-
-    private func exportAttendance() {
-        let header = "date,className,gradeLevel,studentName,status,absentHomework"
-        let rows = students.map { student in
-            let record = record(for: student)
-            return [
-                dateKey,
-                item.className,
-                GradeLevelOption.normalized(item.gradeLevel),
-                student.name,
-                record?.status.rawValue ?? "",
-                record?.absentHomework ?? ""
-            ]
-            .map(csvEscape)
-            .joined(separator: ",")
-        }
-        let csv = ([header] + rows).joined(separator: "\n")
-        let filename = "classtrax-attendance-\(dateKey)-\(item.className.replacingOccurrences(of: " ", with: "-")).csv"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        try? csv.write(to: url, atomically: true, encoding: .utf8)
-        exportURL = url
-        showingShareSheet = true
-        feedbackMessage = "Attendance export is ready to share."
-    }
-
-    private func markAllPresent() {
-        for student in students where attendanceStatus(for: student) == nil {
-            let normalizedGrade = GradeLevelOption.normalized(item.gradeLevel)
-            records.append(
-                AttendanceRecord(
-                    dateKey: dateKey,
-                    className: item.className,
-                    gradeLevel: normalizedGrade,
-                    studentName: student.name,
-                    studentID: student.id,
-                    classDefinitionID: item.classDefinitionID,
-                    status: .present
-                )
-            )
-        }
-        feedbackMessage = "Remaining students were marked present for this block."
-    }
-
-    private func csvEscape(_ value: String) -> String {
-        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-        return "\"\(escaped)\""
-    }
-
-    private func record(for student: StudentSupportProfile) -> AttendanceRecord? {
-        guard let index = recordIndex(for: student) else { return nil }
-        return records[index]
-    }
-
-    private func recordIndex(for student: StudentSupportProfile) -> Int? {
-        let normalizedGrade = GradeLevelOption.normalized(item.gradeLevel)
-        return records.firstIndex(where: { record in
-            guard record.dateKey == dateKey else { return false }
-
-            if let studentID = record.studentID, studentID == student.id {
-                if let classDefinitionID = item.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
-                    return classDefinitionID == recordClassDefinitionID
-                }
-                return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className)
-            }
-
-            return classNamesMatch(scheduleClassName: item.className, profileClassName: record.className) &&
-                normalizedStudentKey(record.gradeLevel) == normalizedStudentKey(normalizedGrade) &&
-                normalizedStudentKey(record.studentName) == normalizedStudentKey(student.name)
-        })
-    }
-
-    private func propagateAbsentStatus(for student: StudentSupportProfile, normalizedGrade: String) {
-        let currentEnd = item.endTime
-        let subsequentBlocks = schedule.filter { block in
-            block.endTime > currentEnd
-        }
-
-        for block in subsequentBlocks {
-            if let index = propagatedRecordIndex(for: student, block: block, normalizedGrade: normalizedGrade) {
-                records[index].status = .absent
-            } else {
-                records.append(
-                    AttendanceRecord(
-                        dateKey: dateKey,
-                        className: block.className,
-                        gradeLevel: GradeLevelOption.normalized(block.gradeLevel),
-                        studentName: student.name,
-                        studentID: student.id,
-                        classDefinitionID: block.classDefinitionID,
-                        status: .absent
-                    )
-                )
-            }
-        }
-    }
-
-    private func clearPropagatedAbsence(for student: StudentSupportProfile, normalizedGrade: String) {
-        let currentEnd = item.endTime
-        let subsequentBlocks = schedule.filter { block in
-            block.endTime > currentEnd
-        }
-
-        for block in subsequentBlocks {
-            guard let index = propagatedRecordIndex(for: student, block: block, normalizedGrade: normalizedGrade) else {
-                continue
-            }
-
-            records[index].status = .present
-            records[index].absentHomework = ""
-        }
-    }
-
-    private func propagateAbsentHomework(for student: StudentSupportProfile, homework: String) {
-        let currentEnd = item.endTime
-        let subsequentBlocks = schedule.filter { block in
-            block.endTime > currentEnd
-        }
-
-        for block in subsequentBlocks {
-            guard let index = propagatedRecordIndex(
-                for: student,
-                block: block,
-                normalizedGrade: GradeLevelOption.normalized(block.gradeLevel)
-            ) else {
-                continue
-            }
-
-            guard records[index].status == .absent else { continue }
-            records[index].absentHomework = homework
-        }
-    }
-
-    private func propagatedRecordIndex(
-        for student: StudentSupportProfile,
-        block: AlarmItem,
-        normalizedGrade: String
-    ) -> Int? {
-        records.firstIndex(where: { record in
-            guard record.dateKey == dateKey else { return false }
-
-            if let studentID = record.studentID, studentID == student.id {
-                if let classDefinitionID = block.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
-                    return classDefinitionID == recordClassDefinitionID
-                }
-                return classNamesMatch(scheduleClassName: block.className, profileClassName: record.className)
-            }
-
-            return classNamesMatch(scheduleClassName: block.className, profileClassName: record.className) &&
-                normalizedStudentKey(record.gradeLevel) == normalizedStudentKey(normalizedGrade) &&
-                normalizedStudentKey(record.studentName) == normalizedStudentKey(student.name)
-        })
-    }
-
-    private var attendanceCardBackground: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        (item.type.themeColor == .clear ? Color.blue : item.type.themeColor).opacity(0.10),
-                        Color(.secondarySystemBackground).opacity(0.94)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke((item.type.themeColor == .clear ? Color.blue : item.type.themeColor).opacity(0.12), lineWidth: 1)
-            )
-    }
-
-    @ViewBuilder
-    private func gradePill(_ gradeLevel: String) -> some View {
-        let color = GradeLevelOption.color(for: gradeLevel)
-        let label = GradeLevelOption.pillLabel(for: gradeLevel)
-
-        Text(label)
-            .font(.caption2.weight(.black))
-            .foregroundStyle(color == .yellow ? Color.black.opacity(0.8) : .white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color, in: Capsule(style: .continuous))
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
-            )
-    }
-
-    private func summaryCount(for targetStatus: AttendanceRecord.Status?) -> Int {
-        students.filter { attendanceStatus(for: $0) == targetStatus }.count
-    }
-
-    private func attendanceSummaryChip(title: String, count: Int, accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-            Text("\(count)")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(accent)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(accent.opacity(0.12))
-        )
-    }
-
-    private func statusAccent(for student: StudentSupportProfile) -> Color {
-        switch attendanceStatus(for: student) {
-        case .present:
-            return .green
-        case .absent:
-            return .red
-        case .tardy:
-            return .orange
-        case .excused:
-            return .blue
-        case nil:
-            return .secondary
-        }
-    }
-
-    private var absentWorkRows: [AttendanceRecord] {
-        records
-            .filter {
-                $0.dateKey == dateKey &&
-                $0.status == .absent &&
-                (!$0.absentHomework.isEmpty || classNamesMatch(scheduleClassName: item.className, profileClassName: $0.className))
-            }
-            .sorted { first, second in
-                if first.className.localizedCaseInsensitiveCompare(second.className) != .orderedSame {
-                    return first.className.localizedCaseInsensitiveCompare(second.className) == .orderedAscending
-                }
-                return first.studentName.localizedCaseInsensitiveCompare(second.studentName) == .orderedAscending
-            }
     }
 }
 
@@ -4207,24 +5178,28 @@ private struct TodayClassSubPlanView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Menu("Share Packet") {
-                    Button("Text Packet") {
-                        focusedField = nil
-                        save()
-                        exportTextPlan()
-                    }
+                Button("Share Text") {
+                    focusedField = nil
+                    save()
+                    exportTextPlan()
+                }
 
+                Menu {
                     Button("PDF Packet") {
                         focusedField = nil
                         save()
                         exportPDFPlan()
                     }
-                }
 
-                Button("Save Packet") {
-                    focusedField = nil
-                    save()
-                    dismiss()
+                    Divider()
+
+                    Button("Save Packet") {
+                        focusedField = nil
+                        save()
+                        dismiss()
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
                 }
             }
         }
@@ -4935,15 +5910,21 @@ private struct TodayDailySubPlanView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Menu("Share Packet") {
+                Button("Share Text") {
+                    focusedField = nil
+                    save()
+                    exportTextPlan()
+                }
+
+                Menu {
                     Menu("Whole Day") {
-                        Button("Primary Packet (Text)") {
+                        Button("Text Packet") {
                             focusedField = nil
                             save()
                             exportTextPlan()
                         }
 
-                        Button("Primary Packet (PDF)") {
+                        Button("PDF Packet") {
                             focusedField = nil
                             save()
                             exportPDFPlan()
@@ -4976,12 +5957,16 @@ private struct TodayDailySubPlanView: View {
                         focusedField = nil
                         exportMissingWork()
                     }
-                }
+                    
+                    Divider()
 
-                Button("Save Packet") {
-                    focusedField = nil
-                    save()
-                    dismiss()
+                    Button("Save Packet") {
+                        focusedField = nil
+                        save()
+                        dismiss()
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
                 }
             }
         }
@@ -5600,6 +6585,7 @@ private struct TodayDailySubPlanView: View {
     private func attendanceForBlock(_ block: AlarmItem) -> [AttendanceRecord] {
         attendanceRecords.filter {
             $0.dateKey == dateKey &&
+            $0.isAttendanceEntry &&
             classNamesMatch(scheduleClassName: block.className, profileClassName: $0.className) &&
             normalizedStudentKey($0.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(block.gradeLevel))
         }
@@ -5718,21 +6704,150 @@ private func makeSubPlanPDF(title: String, filename: String, body: String) -> UR
 
 private func drawSubPlanAttributedString(_ string: NSAttributedString, in rect: CGRect, range: NSRange) -> NSRange {
     let framesetter = CTFramesetterCreateWithAttributedString(string)
-    let path = CGPath(rect: rect, transform: nil)
-    let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(range.location, range.length), path, nil)
     guard let context = UIGraphicsGetCurrentContext() else {
         return range
     }
 
+    let pageBounds = UIGraphicsGetPDFContextBounds()
+    let coreTextRect = CGRect(
+        x: rect.minX,
+        y: pageBounds.height - rect.maxY,
+        width: rect.width,
+        height: rect.height
+    )
+    let path = CGPath(rect: coreTextRect, transform: nil)
+    let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(range.location, range.length), path, nil)
+
     context.saveGState()
     context.textMatrix = .identity
-    context.translateBy(x: 0, y: rect.maxY * 2)
+    context.translateBy(x: 0, y: pageBounds.height)
     context.scaleBy(x: 1, y: -1)
     CTFrameDraw(frame, context)
     context.restoreGState()
 
     let visibleRange = CTFrameGetVisibleStringRange(frame)
     return NSRange(location: range.location + visibleRange.length, length: string.length - range.location - visibleRange.length)
+}
+
+private func makeStyledSubPlanAttributedString(title: String, body: String) -> NSAttributedString {
+    let result = NSMutableAttributedString()
+
+    let titleParagraph = NSMutableParagraphStyle()
+    titleParagraph.alignment = .left
+    titleParagraph.lineBreakMode = .byWordWrapping
+    titleParagraph.paragraphSpacing = 10
+
+    let headingParagraph = NSMutableParagraphStyle()
+    headingParagraph.alignment = .left
+    headingParagraph.lineBreakMode = .byWordWrapping
+    headingParagraph.paragraphSpacing = 6
+    headingParagraph.paragraphSpacingBefore = 10
+
+    let bodyParagraph = NSMutableParagraphStyle()
+    bodyParagraph.alignment = .left
+    bodyParagraph.lineBreakMode = .byWordWrapping
+    bodyParagraph.lineSpacing = 3
+    bodyParagraph.paragraphSpacing = 8
+
+    let bulletParagraph = NSMutableParagraphStyle()
+    bulletParagraph.alignment = .left
+    bulletParagraph.lineBreakMode = .byWordWrapping
+    bulletParagraph.lineSpacing = 2
+    bulletParagraph.paragraphSpacing = 4
+    bulletParagraph.headIndent = 16
+    bulletParagraph.firstLineHeadIndent = 0
+
+    let titleAttributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 22, weight: .bold),
+        .foregroundColor: UIColor.label,
+        .paragraphStyle: titleParagraph
+    ]
+
+    let headingAttributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 15, weight: .semibold),
+        .foregroundColor: UIColor.label,
+        .paragraphStyle: headingParagraph
+    ]
+
+    let bodyAttributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 12.5, weight: .regular),
+        .foregroundColor: UIColor.label,
+        .paragraphStyle: bodyParagraph
+    ]
+
+    let bulletAttributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+        .foregroundColor: UIColor.label,
+        .paragraphStyle: bulletParagraph
+    ]
+
+    result.append(NSAttributedString(string: "\(title)\n", attributes: titleAttributes))
+
+    let blocks = body
+        .components(separatedBy: "\n\n")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+    for block in blocks {
+        let lines = block.components(separatedBy: .newlines)
+        guard let firstLine = lines.first else { continue }
+        let remainingLines = Array(lines.dropFirst())
+
+        if !remainingLines.isEmpty {
+            result.append(NSAttributedString(string: "\(firstLine)\n", attributes: headingAttributes))
+            appendSubPlanBodyLines(remainingLines, to: result, bodyAttributes: bodyAttributes, bulletAttributes: bulletAttributes)
+        } else {
+            let isBullet = firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("-")
+            let attributes = isBullet ? bulletAttributes : bodyAttributes
+            result.append(NSAttributedString(string: "\(firstLine)\n", attributes: attributes))
+        }
+
+        result.append(NSAttributedString(string: "\n", attributes: bodyAttributes))
+    }
+
+    return result
+}
+
+private func appendSubPlanBodyLines(
+    _ lines: [String],
+    to result: NSMutableAttributedString,
+    bodyAttributes: [NSAttributedString.Key: Any],
+    bulletAttributes: [NSAttributedString.Key: Any]
+) {
+    for line in lines {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        let isBullet = trimmedLine.hasPrefix("-")
+        let isIndented = line.hasPrefix("  ")
+        let attributes = (isBullet || isIndented) ? bulletAttributes : bodyAttributes
+        result.append(NSAttributedString(string: "\(line)\n", attributes: attributes))
+    }
+}
+
+private func drawSubPlanPageHeader(title: String, pageNumber: Int, in rect: CGRect) {
+    let headerText = "\(title)    Page \(pageNumber)"
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .right
+
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 9, weight: .medium),
+        .foregroundColor: UIColor.secondaryLabel,
+        .paragraphStyle: paragraph
+    ]
+
+    let headerRect = CGRect(x: rect.minX, y: 18, width: rect.width, height: 16)
+    headerText.draw(in: headerRect, withAttributes: attributes)
+}
+
+private func exportContextPill(title: String, systemImage: String, tint: Color) -> some View {
+    Label(title, systemImage: systemImage)
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(0.12))
+        )
 }
 
 struct TodayLayoutCustomizationView: View {
@@ -5843,6 +6958,102 @@ struct TodayLayoutCustomizationView: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
+private struct TodayCommitmentsManagerView: View {
+    @Binding var commitments: [CommitmentItem]
+    let onAdd: () -> Void
+    let onEdit: (CommitmentItem) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private var groupedCommitments: [(day: WeekdayTab, items: [CommitmentItem])] {
+        WeekdayTab.allCases.compactMap { day in
+            let items = commitments
+                .filter { $0.dayOfWeek == day.rawValue }
+                .sorted {
+                    if $0.startTime == $1.startTime {
+                        return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                    }
+                    return $0.startTime < $1.startTime
+                }
+
+            guard !items.isEmpty else { return nil }
+            return (day, items)
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Text("Commitments can repeat weekly or be saved as one-time events for a specific date.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if groupedCommitments.isEmpty {
+                Section("No Commitments Yet") {
+                    Text("Add duties, meetings, conferences, or coverage blocks so they stay attached to the correct weekday.")
+                        .foregroundStyle(.secondary)
+
+                    Button("Add Commitment", systemImage: "plus.circle.fill") {
+                        onAdd()
+                    }
+                }
+            } else {
+                ForEach(groupedCommitments, id: \.day) { section in
+                    Section(section.day.title) {
+                        ForEach(section.items) { commitment in
+                            Button {
+                                onEdit(commitment)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(commitment.title)
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(.primary)
+
+                                    Text(
+                                        "\(commitment.startTime.formatted(date: .omitted, time: .shortened)) - \(commitment.endTime.formatted(date: .omitted, time: .shortened)) • \(commitment.kind.displayName)"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                    Text(commitment.recurrence == .oneTime
+                                        ? "One Time • \((commitment.specificDate ?? Date()).formatted(date: .abbreviated, time: .omitted))"
+                                        : "Recurring Weekly")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+
+                                    if !commitment.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                        Text(commitment.location)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Commitments")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    onAdd()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
             }
         }
     }

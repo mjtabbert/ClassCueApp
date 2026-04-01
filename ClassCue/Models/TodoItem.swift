@@ -20,6 +20,9 @@ struct TodoItem: Identifiable, Codable, Equatable {
     var workspace: Workspace = .school
     var linkedContext: String = ""
     var studentOrGroup: String = ""
+    var classLink: String = ""
+    var studentGroupLink: String = ""
+    var studentLink: String = ""
     var followUpNote: String = ""
     var reminder: Reminder = .none
 
@@ -173,6 +176,9 @@ struct TodoItem: Identifiable, Codable, Equatable {
         workspace: Workspace = .school,
         linkedContext: String = "",
         studentOrGroup: String = "",
+        classLink: String = "",
+        studentGroupLink: String = "",
+        studentLink: String = "",
         followUpNote: String = "",
         reminder: Reminder = .none
     ) {
@@ -184,8 +190,18 @@ struct TodoItem: Identifiable, Codable, Equatable {
         self.category = category
         self.bucket = bucket
         self.workspace = workspace
-        self.linkedContext = linkedContext
-        self.studentOrGroup = studentOrGroup
+        let normalizedClassLink = classLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedStudentGroup = studentGroupLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedStudentLink = studentLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLegacyContext = linkedContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLegacyStudent = studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.classLink = normalizedClassLink.isEmpty ? normalizedLegacyContext : normalizedClassLink
+        self.studentGroupLink = normalizedStudentGroup
+        self.studentLink = normalizedStudentLink
+        self.linkedContext = self.classLink
+        self.studentOrGroup = !self.studentLink.isEmpty
+            ? self.studentLink
+            : (!self.studentGroupLink.isEmpty ? self.studentGroupLink : normalizedLegacyStudent)
         self.followUpNote = followUpNote
         self.reminder = reminder
     }
@@ -202,7 +218,40 @@ struct TodoItem: Identifiable, Codable, Equatable {
         workspace = try container.decodeIfPresent(Workspace.self, forKey: .workspace) ?? .school
         linkedContext = try container.decodeIfPresent(String.self, forKey: .linkedContext) ?? ""
         studentOrGroup = try container.decodeIfPresent(String.self, forKey: .studentOrGroup) ?? ""
+        classLink = try container.decodeIfPresent(String.self, forKey: .classLink) ?? linkedContext
+        studentGroupLink = try container.decodeIfPresent(String.self, forKey: .studentGroupLink) ?? ""
+        studentLink = try container.decodeIfPresent(String.self, forKey: .studentLink) ?? ""
+        if studentLink.isEmpty && studentGroupLink.isEmpty {
+            studentLink = studentOrGroup
+        }
         followUpNote = try container.decodeIfPresent(String.self, forKey: .followUpNote) ?? ""
         reminder = try container.decodeIfPresent(Reminder.self, forKey: .reminder) ?? .none
+    }
+
+    var effectiveClassLink: String {
+        let explicit = classLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicit.isEmpty { return explicit }
+        return linkedContext.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var effectiveStudentGroupLink: String {
+        studentGroupLink.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var effectiveStudentLink: String {
+        let explicit = studentLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicit.isEmpty { return explicit }
+        if effectiveStudentGroupLink.isEmpty {
+            return studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+
+    var effectiveStudentOrGroup: String {
+        let student = effectiveStudentLink
+        if !student.isEmpty { return student }
+        let group = effectiveStudentGroupLink
+        if !group.isEmpty { return group }
+        return studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

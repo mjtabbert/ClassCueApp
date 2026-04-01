@@ -35,7 +35,7 @@ struct TimelineRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(item.className)
+                    Text(item.displayClassName)
                         .font(isHero ? .headline : .subheadline)
                         .fontWeight(isCurrent ? .black : .bold)
                         .italic(isTransition)

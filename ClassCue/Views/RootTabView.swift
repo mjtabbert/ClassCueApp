@@ -16,6 +16,7 @@ import WidgetKit
 
 enum AppTab: Hashable {
     case today
+    case attendance
     case schedule
     case students
     case todo
@@ -29,9 +30,11 @@ struct RootTabView: View {
     private static let cloudSyncRefreshInterval: Duration = .seconds(15)
     private static let localMutationRefreshPauseSeconds: TimeInterval = 4
     private static let runtimeSyncHeartbeatInterval: Duration = .seconds(10)
+    private static let persistenceDebounceInterval: Duration = .milliseconds(450)
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab: AppTab = .today
     @State private var selectedScheduleDay: WeekdayTab = .today
     @State private var showingSettings = false
@@ -64,6 +67,9 @@ struct RootTabView: View {
     @State private var isRefreshingFromPersistence = false
     @State private var pendingLiveActivityStopTask: Task<Void, Never>?
     @State private var pendingNotificationRefreshTask: Task<Void, Never>?
+    @State private var pendingFirstSliceSaveTask: Task<Void, Never>?
+    @State private var pendingSecondSliceSaveTask: Task<Void, Never>?
+    @State private var pendingThirdSliceSaveTask: Task<Void, Never>?
     @State private var lastSyncedWidgetSnapshot: ClassTraxWidgetSnapshot?
     @State private var lastSyncedLiveActivitySnapshot: RootLiveActivitySnapshot?
     @State private var lastNotificationRefreshSignature: NotificationRefreshSignature?
@@ -97,7 +103,7 @@ struct RootTabView: View {
 
     private var suggestedStudents: [String] {
         let taskStudents = todos
-            .map(\.studentOrGroup)
+            .flatMap { [$0.effectiveStudentLink, $0.effectiveStudentGroupLink, $0.effectiveStudentOrGroup] }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
@@ -106,12 +112,15 @@ struct RootTabView: View {
     }
 
     private var studentSupportsByName: [String: StudentSupportProfile] {
-        Dictionary(uniqueKeysWithValues: studentProfiles.map { ($0.name, $0) })
+        studentProfiles.reduce(into: [String: StudentSupportProfile]()) { partialResult, profile in
+            partialResult[profile.name] = profile
+        }
     }
 
     private var baseTabView: some View {
         TabView(selection: $selectedTab) {
             todayTab
+            attendanceTab
             scheduleTab
             studentsTab
             todoTab
@@ -217,6 +226,7 @@ struct RootTabView: View {
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase != .active {
+                        flushPendingPersistenceSaves()
                         syncLiveActivity(now: Date())
                     }
                 }
@@ -226,38 +236,17 @@ struct RootTabView: View {
                 .onChange(of: attendanceRecords) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
                     recordLocalMutation()
-                    if let encoded = try? JSONEncoder().encode(newValue) {
-                        savedAttendance = encoded
-                    }
-                    saveThirdPersistenceSlice(
-                        attendanceRecords: newValue,
-                        profiles: profiles,
-                        overrides: overrides
-                    )
+                    saveAttendanceRecords(newValue)
                 }
                 .onChange(of: subPlans) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
                     recordLocalMutation()
-                    if let encoded = try? JSONEncoder().encode(newValue) {
-                        savedSubPlans = encoded
-                    }
-                    saveSecondPersistenceSlice(
-                        todos: todos,
-                        subPlans: newValue,
-                        dailySubPlans: dailySubPlans
-                    )
+                    saveSubPlans(newValue)
                 }
                 .onChange(of: dailySubPlans) { _, newValue in
                     guard !isRefreshingFromPersistence else { return }
                     recordLocalMutation()
-                    if let encoded = try? JSONEncoder().encode(newValue) {
-                        savedDailySubPlans = encoded
-                    }
-                    saveSecondPersistenceSlice(
-                        todos: todos,
-                        subPlans: subPlans,
-                        dailySubPlans: newValue
-                    )
+                    saveDailySubPlans(newValue)
                     syncSharedSnapshot()
                 }
         )
@@ -376,7 +365,8 @@ struct RootTabView: View {
                 symbolName: item.scheduleType.symbolName,
                 startTime: startDateToday(for: item, now: now),
                 endTime: endDateToday(for: item, now: now),
-                typeName: item.typeLabel
+                typeName: item.typeLabel,
+                isHeld: SessionControlStore.isHeld(itemID: item.id)
             )
         }
 
@@ -548,6 +538,27 @@ struct RootTabView: View {
         .tag(AppTab.schedule)
     }
 
+    private var attendanceTab: some View {
+        NavigationStack {
+            AttendanceWorkspaceView(
+                alarms: $alarms,
+                studentProfiles: $studentProfiles,
+                attendanceRecords: $attendanceRecords,
+                overrideSchedule: activeDayOverride?.alarms
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    overflowMenu
+                }
+            }
+        }
+        .tabItem {
+            tabLabel(title: "Attendance", systemImage: "checklist.checked")
+        }
+        .accessibilityLabel("Attendance")
+        .tag(AppTab.attendance)
+    }
+
     private var studentsTab: some View {
         NavigationStack {
             StudentsHubView(
@@ -613,7 +624,7 @@ struct RootTabView: View {
             }
         }
         .tabItem {
-            tabLabel(title: "Notes", systemImage: "note.text")
+            tabLabel(title: "Notes", systemImage: "square.and.pencil")
         }
         .accessibilityLabel("Notes")
         .tag(AppTab.notes)
@@ -753,12 +764,12 @@ struct RootTabView: View {
         todos = secondSliceSnapshot.todos
         savedFollowUpNotes = (try? JSONEncoder().encode(secondSliceSnapshot.followUpNotes)) ?? Data()
         reconcileClassDefinitionLinks()
-        attendanceRecords = thirdSliceSnapshot.attendanceRecords
+        attendanceRecords = AttendanceRecord.pruneToCurrentWeek(thirdSliceSnapshot.attendanceRecords)
         subPlans = secondSliceSnapshot.subPlans
         dailySubPlans = secondSliceSnapshot.dailySubPlans
         profiles = thirdSliceSnapshot.profiles
         overrides = thirdSliceSnapshot.overrides
-        savedAttendance = (try? JSONEncoder().encode(thirdSliceSnapshot.attendanceRecords)) ?? Data()
+        savedAttendance = (try? JSONEncoder().encode(attendanceRecords)) ?? Data()
         savedProfiles = (try? JSONEncoder().encode(thirdSliceSnapshot.profiles)) ?? Data()
         savedOverrides = (try? JSONEncoder().encode(thirdSliceSnapshot.overrides)) ?? Data()
 
@@ -771,10 +782,15 @@ struct RootTabView: View {
 
     private func saveAlarms(_ alarms: [AlarmItem]) {
         let normalized = normalizedAlarms(alarms)
-        saveFirstPersistenceSlice(alarms: normalized, studentProfiles: studentProfiles, classDefinitions: classDefinitions, commitments: commitments)
         if let encoded = try? JSONEncoder().encode(normalized) {
             savedAlarms = encoded
         }
+        scheduleFirstPersistenceSave(
+            alarms: normalized,
+            studentProfiles: studentProfiles,
+            classDefinitions: classDefinitions,
+            commitments: commitments
+        )
     }
 
     private func normalizedAlarms(_ alarms: [AlarmItem]) -> [AlarmItem] {
@@ -792,22 +808,27 @@ struct RootTabView: View {
     // MARK: - Save Todos
 
     private func saveTodos(_ todos: [TodoItem]) {
-        saveSecondPersistenceSlice(
+        if let encoded = try? JSONEncoder().encode(todos) {
+            savedTodos = encoded
+        }
+
+        scheduleSecondPersistenceSave(
             todos: todos,
             subPlans: subPlans,
             dailySubPlans: dailySubPlans
         )
-
-        if let encoded = try? JSONEncoder().encode(todos) {
-            savedTodos = encoded
-        }
     }
 
     private func saveCommitments(_ commitments: [CommitmentItem]) {
-        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: studentProfiles, classDefinitions: classDefinitions, commitments: commitments)
         if let encoded = try? JSONEncoder().encode(commitments) {
             savedCommitments = encoded
         }
+        scheduleFirstPersistenceSave(
+            alarms: alarms,
+            studentProfiles: studentProfiles,
+            classDefinitions: classDefinitions,
+            commitments: commitments
+        )
     }
 
     private func loadStudentProfiles() {
@@ -842,17 +863,61 @@ struct RootTabView: View {
     }
 
     private func saveStudentProfiles(_ profiles: [StudentSupportProfile]) {
-        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: profiles, classDefinitions: classDefinitions, commitments: commitments)
         savedStudentProfiles = (try? JSONEncoder().encode(profiles.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         })) ?? Data()
+        scheduleFirstPersistenceSave(
+            alarms: alarms,
+            studentProfiles: profiles,
+            classDefinitions: classDefinitions,
+            commitments: commitments
+        )
     }
 
     private func saveClassDefinitions(_ definitions: [ClassDefinitionItem]) {
-        saveFirstPersistenceSlice(alarms: alarms, studentProfiles: studentProfiles, classDefinitions: definitions, commitments: commitments)
         savedClassDefinitions = (try? JSONEncoder().encode(definitions.sorted {
             $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         })) ?? Data()
+        scheduleFirstPersistenceSave(
+            alarms: alarms,
+            studentProfiles: studentProfiles,
+            classDefinitions: definitions,
+            commitments: commitments
+        )
+    }
+
+    private func saveAttendanceRecords(_ records: [AttendanceRecord]) {
+        let prunedRecords = AttendanceRecord.pruneToCurrentWeek(records)
+        if let encoded = try? JSONEncoder().encode(prunedRecords) {
+            savedAttendance = encoded
+        }
+        scheduleThirdPersistenceSave(
+            attendanceRecords: prunedRecords,
+            profiles: profiles,
+            overrides: overrides
+        )
+    }
+
+    private func saveSubPlans(_ plans: [SubPlanItem]) {
+        if let encoded = try? JSONEncoder().encode(plans) {
+            savedSubPlans = encoded
+        }
+        scheduleSecondPersistenceSave(
+            todos: todos,
+            subPlans: plans,
+            dailySubPlans: dailySubPlans
+        )
+    }
+
+    private func saveDailySubPlans(_ plans: [DailySubPlanItem]) {
+        if let encoded = try? JSONEncoder().encode(plans) {
+            savedDailySubPlans = encoded
+        }
+        scheduleSecondPersistenceSave(
+            todos: todos,
+            subPlans: subPlans,
+            dailySubPlans: plans
+        )
     }
 
     private func saveFirstPersistenceSlice(
@@ -962,6 +1027,23 @@ struct RootTabView: View {
                     in: classDefinitions
                 )?.id
             }
+            if let classDefinitionID = updated.classDefinitionID,
+               let definition = classDefinitions.first(where: { $0.id == classDefinitionID }) {
+                let trimmedName = updated.className.trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedName = trimmedName
+                    .lowercased()
+                    .replacingOccurrences(of: "_", with: "")
+                    .replacingOccurrences(of: " ", with: "")
+
+                if trimmedName.isEmpty || normalizedName == "nsmanagedobject" || normalizedName == "managedobject" {
+                    updated.name = definition.name
+                }
+                if updated.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    updated.gradeLevelValue = definition.gradeLevel
+                }
+            } else if updated.className.localizedCaseInsensitiveContains("managedobject") {
+                updated.name = ""
+            }
             return updated
         }
 
@@ -976,6 +1058,7 @@ struct RootTabView: View {
                 updated.classDefinitionID = matchedID
                 updated.classDefinitionIDs = [matchedID]
             }
+            updated.className = classSummary(for: updated, in: classDefinitions)
             return updated
         }
     }
@@ -1051,8 +1134,92 @@ struct RootTabView: View {
         )
     }
 
+    private func scheduleFirstPersistenceSave(
+        alarms: [AlarmItem],
+        studentProfiles: [StudentSupportProfile],
+        classDefinitions: [ClassDefinitionItem],
+        commitments: [CommitmentItem]
+    ) {
+        pendingFirstSliceSaveTask?.cancel()
+        pendingFirstSliceSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.persistenceDebounceInterval)
+            guard !Task.isCancelled else { return }
+            saveFirstPersistenceSlice(
+                alarms: alarms,
+                studentProfiles: studentProfiles,
+                classDefinitions: classDefinitions,
+                commitments: commitments
+            )
+            pendingFirstSliceSaveTask = nil
+        }
+    }
+
+    private func scheduleSecondPersistenceSave(
+        todos: [TodoItem],
+        subPlans: [SubPlanItem],
+        dailySubPlans: [DailySubPlanItem]
+    ) {
+        pendingSecondSliceSaveTask?.cancel()
+        pendingSecondSliceSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.persistenceDebounceInterval)
+            guard !Task.isCancelled else { return }
+            saveSecondPersistenceSlice(
+                todos: todos,
+                subPlans: subPlans,
+                dailySubPlans: dailySubPlans
+            )
+            pendingSecondSliceSaveTask = nil
+        }
+    }
+
+    private func scheduleThirdPersistenceSave(
+        attendanceRecords: [AttendanceRecord],
+        profiles: [ScheduleProfile],
+        overrides: [DayOverride]
+    ) {
+        pendingThirdSliceSaveTask?.cancel()
+        pendingThirdSliceSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.persistenceDebounceInterval)
+            guard !Task.isCancelled else { return }
+            saveThirdPersistenceSlice(
+                attendanceRecords: attendanceRecords,
+                profiles: profiles,
+                overrides: overrides
+            )
+            pendingThirdSliceSaveTask = nil
+        }
+    }
+
+    private func flushPendingPersistenceSaves() {
+        pendingFirstSliceSaveTask?.cancel()
+        pendingSecondSliceSaveTask?.cancel()
+        pendingThirdSliceSaveTask?.cancel()
+        pendingFirstSliceSaveTask = nil
+        pendingSecondSliceSaveTask = nil
+        pendingThirdSliceSaveTask = nil
+
+        saveFirstPersistenceSlice(
+            alarms: normalizedAlarms(alarms),
+            studentProfiles: studentProfiles,
+            classDefinitions: classDefinitions,
+            commitments: commitments
+        )
+        saveSecondPersistenceSlice(
+            todos: todos,
+            subPlans: subPlans,
+            dailySubPlans: dailySubPlans
+        )
+        saveThirdPersistenceSlice(
+            attendanceRecords: attendanceRecords,
+            profiles: profiles,
+            overrides: overrides
+        )
+    }
+
     private func decodeLegacyAttendanceRecords() -> [AttendanceRecord] {
-        (try? JSONDecoder().decode([AttendanceRecord].self, from: savedAttendance)) ?? []
+        AttendanceRecord.pruneToCurrentWeek(
+            (try? JSONDecoder().decode([AttendanceRecord].self, from: savedAttendance)) ?? []
+        )
     }
 
     private func decodeLegacyProfiles() -> [ScheduleProfile] {
@@ -1062,6 +1229,264 @@ struct RootTabView: View {
     private func decodeLegacyOverrides() -> [DayOverride] {
         (try? JSONDecoder().decode([DayOverride].self, from: savedOverrides)) ?? []
     }
+}
+
+struct AttendanceWorkspaceView: View {
+    @Binding var alarms: [AlarmItem]
+    @Binding var studentProfiles: [StudentSupportProfile]
+    @Binding var attendanceRecords: [AttendanceRecord]
+    let overrideSchedule: [AlarmItem]?
+
+    @State private var selectedBlock: AttendanceBlockSession?
+
+    private var now: Date { Date() }
+
+    private var todaySchedule: [AlarmItem] {
+        let weekday = Calendar.current.component(.weekday, from: now)
+        return (overrideSchedule ?? alarms)
+            .filter { $0.dayOfWeek == weekday }
+            .sorted { $0.startTime < $1.startTime }
+    }
+
+    private var activeBlock: AlarmItem? {
+        todaySchedule.first { now >= startDate(for: $0) && now <= endDate(for: $0) }
+    }
+
+    private var earlierBlocks: [AlarmItem] {
+        todaySchedule.filter { endDate(for: $0) < now && !rosterStudents(for: $0).isEmpty }
+    }
+
+    private var laterBlocks: [AlarmItem] {
+        todaySchedule.filter { startDate(for: $0) > now && !rosterStudents(for: $0).isEmpty }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(now.formatted(date: .complete, time: .omitted))
+                        .font(.headline)
+                    Text("Attendance is now a dedicated workspace. Open a class, mark students quickly, and add missing work only when needed.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Current Block") {
+                if let activeBlock {
+                    blockButton(for: activeBlock)
+                } else {
+                    Text("No class is active right now.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !earlierBlocks.isEmpty {
+                Section("Catch Up") {
+                    ForEach(earlierBlocks) { block in
+                        blockButton(for: block)
+                    }
+                }
+            }
+
+            if !laterBlocks.isEmpty {
+                Section("Later Today") {
+                    ForEach(laterBlocks) { block in
+                        blockButton(for: block)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Attendance")
+        .sheet(item: $selectedBlock) { session in
+            NavigationStack {
+                AttendanceEditorView(
+                    item: session.item,
+                    date: session.date,
+                    students: session.students,
+                    records: attendanceRecords,
+                    onCommit: { attendanceRecords = $0 }
+                )
+            }
+        }
+    }
+
+    private func blockButton(for block: AlarmItem) -> some View {
+        let students = rosterStudents(for: block)
+        let completion = attendanceCompletion(for: block, students: students)
+
+        return Button {
+            selectedBlock = AttendanceBlockSession(
+                item: block,
+                date: now,
+                students: students
+            )
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(block.className)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(completion.badgeText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(completion.tint)
+                }
+
+                Text("\(startDate(for: block).formatted(date: .omitted, time: .shortened)) - \(endDate(for: block).formatted(date: .omitted, time: .shortened))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                if !block.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(block.gradeLevel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(completion.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .disabled(students.isEmpty)
+    }
+
+    private func attendanceCompletion(for block: AlarmItem, students: [StudentSupportProfile]) -> (badgeText: String, detailText: String, tint: Color) {
+        guard !students.isEmpty else {
+            return ("No Roster", "Link students to this block before taking attendance.", .secondary)
+        }
+
+        let dateKey = AttendanceRecord.dateKey(for: now)
+        let markedKeys = Set(
+            attendanceRecords
+                .filter {
+                    !$0.isClassHomeworkNote &&
+                    $0.dateKey == dateKey &&
+                    recordMatches(block: block, record: $0)
+                }
+                .compactMap { record in
+                    attendanceMatchKey(studentID: record.studentID, studentName: record.studentName)
+                }
+        )
+        let markedCount = students.filter { student in
+            guard let key = attendanceMatchKey(studentID: student.id, studentName: student.name) else { return false }
+            return markedKeys.contains(key)
+        }.count
+        let isComplete = markedCount >= students.count
+
+        return (
+            isComplete ? "Done" : "\(markedCount)/\(students.count)",
+            isComplete ? "Attendance completed for this block." : "\(students.count - markedCount) student\(students.count - markedCount == 1 ? "" : "s") still unmarked.",
+            isComplete ? .green : .orange
+        )
+    }
+
+    private func recordMatches(block: AlarmItem, record: AttendanceRecord) -> Bool {
+        if let blockID = record.blockID {
+            return blockID == block.id
+        }
+
+        if recordMatchesBlockTime(record, block: block) {
+            return true
+        }
+
+        if let classDefinitionID = block.classDefinitionID, let recordClassDefinitionID = record.classDefinitionID {
+            return classDefinitionID == recordClassDefinitionID
+        }
+
+        return record.dateKey == AttendanceRecord.dateKey(for: now) &&
+            classNamesMatch(scheduleClassName: block.className, profileClassName: record.className) &&
+            normalizedStudentKey(record.gradeLevel) == normalizedStudentKey(GradeLevelOption.normalized(block.gradeLevel))
+    }
+
+    private func recordMatchesBlockTime(_ record: AttendanceRecord, block: AlarmItem) -> Bool {
+        guard
+            let recordStartTime = record.blockStartTime,
+            let recordEndTime = record.blockEndTime
+        else {
+            return false
+        }
+
+        return blockTimeSignature(start: recordStartTime, end: recordEndTime) ==
+            blockTimeSignature(start: block.startTime, end: block.endTime)
+    }
+
+    private func blockTimeSignature(start: Date, end: Date) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let startHour = calendar.component(.hour, from: start)
+        let startMinute = calendar.component(.minute, from: start)
+        let endHour = calendar.component(.hour, from: end)
+        let endMinute = calendar.component(.minute, from: end)
+        return String(format: "%02d:%02d-%02d:%02d", startHour, startMinute, endHour, endMinute)
+    }
+
+    private func attendanceMatchKey(studentID: UUID?, studentName: String) -> String? {
+        if let studentID {
+            return studentID.uuidString.lowercased()
+        }
+
+        let normalizedName = normalizedStudentKey(studentName)
+        return normalizedName.isEmpty ? nil : "name:\(normalizedName)"
+    }
+
+    private func rosterStudents(for item: AlarmItem) -> [StudentSupportProfile] {
+        if !item.linkedStudentIDs.isEmpty {
+            let linkedIDs = Set(item.linkedStudentIDs)
+            let linkedProfiles = studentProfiles
+                .filter { linkedIDs.contains($0.id) }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+            if !linkedProfiles.isEmpty {
+                return linkedProfiles
+            }
+        }
+
+        let gradeKey = normalizedStudentKey(GradeLevelOption.normalized(item.gradeLevel))
+
+        return studentProfiles
+            .filter { profile in
+                if let classDefinitionID = item.classDefinitionID {
+                    guard profileMatches(classDefinitionID: classDefinitionID, profile: profile) else { return false }
+                    if gradeKey.isEmpty { return true }
+                    let profileGradeKey = normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel))
+                    return profileGradeKey.isEmpty || profileGradeKey == gradeKey
+                }
+
+                guard classNamesMatch(scheduleClassName: item.className, profileClassName: profile.className) else { return false }
+                let profileGradeKey = normalizedStudentKey(GradeLevelOption.normalized(profile.gradeLevel))
+                return gradeKey.isEmpty || profileGradeKey.isEmpty || profileGradeKey == gradeKey
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func startDate(for item: AlarmItem) -> Date {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: item.startTime)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: now
+        ) ?? now
+    }
+
+    private func endDate(for item: AlarmItem) -> Date {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: item.endTime)
+        return Calendar.current.date(
+            bySettingHour: components.hour ?? 0,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: now
+        ) ?? now
+    }
+}
+
+private struct AttendanceBlockSession: Identifiable {
+    let item: AlarmItem
+    let date: Date
+    let students: [StudentSupportProfile]
+
+    var id: UUID { item.id }
 }
 
 private struct RootLiveActivitySnapshot: Equatable {

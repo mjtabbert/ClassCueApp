@@ -113,18 +113,6 @@ struct SettingsView: View {
 
     private var stabilitySettingsContent: some View {
         List {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Settings")
-                        .font(.headline.weight(.bold))
-
-                    Text("This screen is temporarily simplified while the full settings flow is stabilized.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
-
             Section("Daily Use") {
                 NavigationLink("Alerts") {
                     settingsDestinationView(.alerts)
@@ -931,7 +919,15 @@ struct SettingsView: View {
                 ExportView(alarms: $alarms)
             }
 
-            Text("These CSV tools apply to the schedule. Student and class roster CSV import lives in Student Directory.")
+            NavigationLink("Student Roster Data") {
+                StudentDirectoryView(
+                    profiles: $studentProfiles,
+                    classDefinitions: $classDefinitions,
+                    showsRosterDataTools: true
+                )
+            }
+
+            Text("Schedule CSV tools stay here, and student roster CSV import/export now lives here too. Class List stays focused on managing students and saved classes.")
                 .font(.footnote)
                 .foregroundColor(.secondary)
         }

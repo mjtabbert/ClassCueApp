@@ -229,7 +229,24 @@ struct AlarmItem: Identifiable, Codable, Hashable {
     // MARK: - Compatibility Aliases
 
     // Older UI files expect these names
-    var className: String { name }
+    var className: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        if normalized == "nsmanagedobject" || normalized == "managedobject" {
+            return ""
+        }
+
+        return trimmed
+    }
+
+    var displayClassName: String {
+        let value = className
+        return value.isEmpty ? "Class Not Set" : value
+    }
     var startTime: Date { start }
     var endTime: Date { end }
 
