@@ -4653,21 +4653,55 @@ private struct TodayClassRosterView: View {
     }
 
     private func applyClassDefinitionLink(_ definition: ClassDefinitionItem) {
-        guard let index = alarms.firstIndex(where: { $0.id == item.id }) else { return }
-
-        alarms[index].classDefinitionID = definition.id
-
         let normalizedGrade = GradeLevelOption.normalized(definition.gradeLevel)
-        if !normalizedGrade.isEmpty {
-            alarms[index].gradeLevelValue = normalizedGrade
-        }
+        let matchingIDs = weeklyMatchingIDs(for: item)
 
-        if alarms[index].location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            alarms[index].location = definition.defaultLocation
+        for index in alarms.indices {
+            guard matchingIDs.contains(alarms[index].id) else { continue }
+
+            alarms[index].classDefinitionID = definition.id
+
+            if !normalizedGrade.isEmpty {
+                alarms[index].gradeLevelValue = normalizedGrade
+            }
+
+            if alarms[index].location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                alarms[index].location = definition.defaultLocation
+            }
         }
 
         showingLinkClassSheet = false
         dismiss()
+    }
+
+    private func weeklyMatchingIDs(for source: AlarmItem) -> Set<UUID> {
+        let sourceDefinition = source.classDefinitionID.flatMap { id in
+            classDefinitions.first(where: { $0.id == id })
+        }
+        let sourceName = sourceDefinition?.name ?? source.className
+        let sourceGrade = sourceDefinition?.gradeLevel ?? source.gradeLevel
+
+        return Set(
+            alarms.filter { candidate in
+                if candidate.id == source.id {
+                    return true
+                }
+
+                if let sourceDefinitionID = source.classDefinitionID, candidate.classDefinitionID == sourceDefinitionID {
+                    return true
+                }
+
+                let candidateDefinition = candidate.classDefinitionID.flatMap { id in
+                    classDefinitions.first(where: { $0.id == id })
+                }
+                let candidateName = candidateDefinition?.name ?? candidate.className
+                let candidateGrade = candidateDefinition?.gradeLevel ?? candidate.gradeLevel
+
+                return classNamesMatch(scheduleClassName: sourceName, profileClassName: candidateName) &&
+                    gradeLevelsCompatible(sourceGrade, candidateGrade)
+            }
+            .map(\.id)
+        )
     }
 
     private func rosterCardBackground(accent: Color) -> some View {
@@ -5636,6 +5670,7 @@ private struct TodayDailySubPlanView: View {
     @State private var includeSupports = true
     @State private var includeCommitments = true
     @State private var includeSubProfile = true
+    @State private var selectedBlockIDs: Set<UUID> = []
     @State private var blockPlans: [UUID: BlockSubPlanDraft] = [:]
     @State private var exportURL: URL?
     @State private var showingShareSheet = false
@@ -5702,6 +5737,10 @@ private struct TodayDailySubPlanView: View {
         Calendar.current.isDate(selectedDate, inSameDayAs: date) ? activeOverrideName : nil
     }
 
+    private var selectedBlocksForPlan: [AlarmItem] {
+        schedule.filter { selectedBlockIDs.contains($0.id) }
+    }
+
     private var followUpNotes: [FollowUpNoteItem] {
         decodeFollowUpNotesFromDefaults()
     }
@@ -5740,7 +5779,7 @@ private struct TodayDailySubPlanView: View {
 
                     dailyInfoRow(
                         title: "Class Blocks",
-                        value: "\(schedule.count) total • \(savedBlockCount) saved • \(draftBlockCount) draft",
+                        value: "\(selectedBlocksForPlan.count) selected of \(schedule.count) • \(savedBlockCount) saved • \(draftBlockCount) draft",
                         systemImage: "square.stack.3d.up"
                     )
 
@@ -5843,14 +5882,21 @@ private struct TodayDailySubPlanView: View {
                         let draft = binding(for: block)
                         DisclosureGroup {
                             VStack(spacing: 10) {
+                                Toggle("Needs class notes", isOn: selectionBinding(for: block))
+                                    .font(.subheadline.weight(.semibold))
+
                                 TextField("Overview", text: draft.overview, axis: .vertical)
                                     .lineLimit(2...4)
+                                    .disabled(!selectedBlockIDs.contains(block.id))
                                 TextField("Lesson plan", text: draft.lessonPlan, axis: .vertical)
                                     .lineLimit(3...6)
+                                    .disabled(!selectedBlockIDs.contains(block.id))
                                 TextField("Materials", text: draft.materials, axis: .vertical)
                                     .lineLimit(2...4)
+                                    .disabled(!selectedBlockIDs.contains(block.id))
                                 TextField("Sub notes", text: draft.subNotes, axis: .vertical)
                                     .lineLimit(3...6)
+                                    .disabled(!selectedBlockIDs.contains(block.id))
                             }
                             .padding(.top, 6)
                         } label: {
@@ -5868,12 +5914,12 @@ private struct TodayDailySubPlanView: View {
 
                                     Text(blockDraftStatus(for: block))
                                         .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(blockHasSavedDraft(block) ? .green : .secondary)
+                                        .foregroundStyle(blockHasSavedDraft(block) ? .green : (selectedBlockIDs.contains(block.id) ? .blue : .secondary))
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
                                         .background(
                                             Capsule()
-                                                .fill((blockHasSavedDraft(block) ? Color.green : Color.secondary).opacity(0.12))
+                                                .fill((blockHasSavedDraft(block) ? Color.green : (selectedBlockIDs.contains(block.id) ? Color.blue : Color.secondary)).opacity(0.12))
                                         )
                                 }
                             }
@@ -6003,6 +6049,7 @@ private struct TodayDailySubPlanView: View {
         includeSupports = true
         includeCommitments = true
         includeSubProfile = true
+        selectedBlockIDs = Set(schedule.map(\.id))
         blockPlans = [:]
 
         if let existingDailyPlan {
@@ -6016,6 +6063,11 @@ private struct TodayDailySubPlanView: View {
             includeSupports = existingDailyPlan.includeSupports
             includeCommitments = existingDailyPlan.includeCommitments
             includeSubProfile = existingDailyPlan.includeSubProfile
+            if existingDailyPlan.selectedBlockIDs.isEmpty {
+                selectedBlockIDs = Set(schedule.map(\.id))
+            } else {
+                selectedBlockIDs = Set(existingDailyPlan.selectedBlockIDs).intersection(schedule.map(\.id))
+            }
         }
 
         for block in schedule {
@@ -6058,16 +6110,29 @@ private struct TodayDailySubPlanView: View {
         )
     }
 
+    private func selectionBinding(for block: AlarmItem) -> Binding<Bool> {
+        Binding(
+            get: { selectedBlockIDs.contains(block.id) },
+            set: { isSelected in
+                if isSelected {
+                    selectedBlockIDs.insert(block.id)
+                } else {
+                    selectedBlockIDs.remove(block.id)
+                }
+            }
+        )
+    }
+
     private func blockHasSavedDraft(_ block: AlarmItem) -> Bool {
         subPlans.contains { $0.dateKey == dateKey && $0.linkedAlarmID == block.id }
     }
 
     private var savedBlockCount: Int {
-        schedule.filter(blockHasSavedDraft).count
+        selectedBlocksForPlan.filter(blockHasSavedDraft).count
     }
 
     private var draftBlockCount: Int {
-        schedule.filter { block in
+        selectedBlocksForPlan.filter { block in
             let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
             let hasTypedContent = !draft.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                 !draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -6078,6 +6143,10 @@ private struct TodayDailySubPlanView: View {
     }
 
     private func blockDraftStatus(for block: AlarmItem) -> String {
+        guard selectedBlockIDs.contains(block.id) else {
+            return blockHasSavedDraft(block) ? "Saved" : "Skipped"
+        }
+
         let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
         let hasTypedContent = !draft.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !draft.lessonPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -6105,6 +6174,7 @@ private struct TodayDailySubPlanView: View {
             includeSupports: includeSupports,
             includeCommitments: includeCommitments,
             includeSubProfile: includeSubProfile,
+            selectedBlockIDs: selectedBlockIDs.sorted { $0.uuidString < $1.uuidString },
             createdAt: existingDailyPlan?.createdAt ?? Date(),
             updatedAt: Date()
         )
@@ -6115,7 +6185,15 @@ private struct TodayDailySubPlanView: View {
             dailySubPlans.insert(updatedDaily, at: 0)
         }
 
-        for block in schedule {
+        let selectedIDs = Set(selectedBlockIDs)
+        subPlans.removeAll { plan in
+            guard let linkedAlarmID = plan.linkedAlarmID else { return false }
+            return plan.dateKey == dateKey &&
+                schedule.contains(where: { $0.id == linkedAlarmID }) &&
+                !selectedIDs.contains(linkedAlarmID)
+        }
+
+        for block in selectedBlocksForPlan {
             let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
             let existing = subPlans.first(where: { $0.dateKey == dateKey && $0.linkedAlarmID == block.id })
             let updated = SubPlanItem(
@@ -6224,7 +6302,7 @@ private struct TodayDailySubPlanView: View {
         \(staticNotesBlock())
         """ : ""
 
-        let blockText = schedule.map { block in
+        let blockText = selectedBlocksForPlan.map { block in
             let draft = blockPlans[block.id] ?? BlockSubPlanDraft()
             let roster = rosterForBlock(block)
             let attendance = attendanceForBlock(block)
@@ -6309,7 +6387,7 @@ private struct TodayDailySubPlanView: View {
         }.joined(separator: "\n\n--------------------\n\n")
 
         let renderedBlockText = blockText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "No class blocks are scheduled for this date."
+            ? "No class-specific notes are selected for this date."
             : blockText
 
         return """

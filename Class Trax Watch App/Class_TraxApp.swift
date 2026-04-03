@@ -27,13 +27,18 @@ struct Class_Trax_Watch_AppApp: App {
 }
 
 struct WatchNotificationLaunchView: View {
+    let launchAction: () -> Void
+
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: "bell.badge.fill")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.blue)
+            Button(action: launchAction) {
+                Image(systemName: "bell.badge.fill")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
 
-            Text("Opening ClassTrax")
+            Text("Tap the bell to open ClassTrax")
                 .font(.caption.weight(.semibold))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
@@ -48,15 +53,18 @@ final class ClassTraxBellNotificationController: WKUserNotificationHostingContro
     private var hasLaunchedApp = false
 
     override var body: WatchNotificationLaunchView {
-        WatchNotificationLaunchView()
+        WatchNotificationLaunchView { [weak self] in
+            self?.launchApp()
+        }
     }
 
     override func didReceive(_ notification: UNNotification) {
+        hasLaunchedApp = false
+    }
+
+    private func launchApp() {
         guard !hasLaunchedApp else { return }
         hasLaunchedApp = true
-
-        Task { @MainActor in
-            performNotificationDefaultAction()
-        }
+        performNotificationDefaultAction()
     }
 }

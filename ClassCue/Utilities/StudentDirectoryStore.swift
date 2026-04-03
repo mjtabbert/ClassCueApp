@@ -86,6 +86,17 @@ func classNamesMatch(scheduleClassName: String, profileClassName: String) -> Boo
     }
 }
 
+func gradeLevelsCompatible(_ lhs: String, _ rhs: String) -> Bool {
+    let left = normalizedStudentKey(GradeLevelOption.normalized(lhs))
+    let right = normalizedStudentKey(GradeLevelOption.normalized(rhs))
+
+    if left.isEmpty || right.isEmpty {
+        return true
+    }
+
+    return left == right
+}
+
 func linkedClassDefinitionIDs(for profile: StudentSupportProfile) -> [UUID] {
     let ids = profile.classDefinitionIDs + (profile.classDefinitionID.map { [$0] } ?? [])
     var seen = Set<UUID>()

@@ -386,6 +386,7 @@ final class PersistedDailySubPlanItem: PersistedUUIDModel {
     var includeSupports: Bool = true
     var includeCommitments: Bool = true
     var includeSubProfile: Bool = true
+    var selectedBlockIDsRawValue: String = ""
     var createdAt: Date = Date.distantPast
     var updatedAt: Date = Date.distantPast
 
@@ -406,6 +407,9 @@ final class PersistedDailySubPlanItem: PersistedUUIDModel {
         self.includeSupports = item.includeSupports
         self.includeCommitments = item.includeCommitments
         self.includeSubProfile = item.includeSubProfile
+        self.selectedBlockIDsRawValue = item.selectedBlockIDs
+            .map(\.uuidString)
+            .joined(separator: ",")
         self.createdAt = item.createdAt
         self.updatedAt = item.updatedAt
     }
@@ -424,6 +428,9 @@ final class PersistedDailySubPlanItem: PersistedUUIDModel {
             includeSupports: includeSupports,
             includeCommitments: includeCommitments,
             includeSubProfile: includeSubProfile,
+            selectedBlockIDs: selectedBlockIDsRawValue
+                .split(separator: ",")
+                .compactMap { UUID(uuidString: String($0)) },
             createdAt: createdAt,
             updatedAt: updatedAt
         )

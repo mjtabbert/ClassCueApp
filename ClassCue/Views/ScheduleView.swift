@@ -35,7 +35,7 @@ struct ScheduleView: View {
     @State private var showingAddSheet = false
     @State private var editingItem: AlarmItem?
     @State private var profiles: [ScheduleProfile] = []
-    @State private var showingCopyDayDialog = false
+    @State private var showingCopyWholeDaySheet = false
     @State private var showingEraseDayDialog = false
     @State private var showingSaveDayProfileAlert = false
     @State private var showingSaveWeekProfileAlert = false
@@ -97,10 +97,10 @@ struct ScheduleView: View {
                         }
 
                         Menu {
-                            Button("Copy Day", systemImage: "doc.on.doc") {
-                                showingCopyDayDialog = true
+                            Button("Copy Whole Day", systemImage: "doc.on.doc") {
+                                showingCopyWholeDaySheet = true
                             }
-                            .disabled(availableCopyDays.isEmpty || isViewingActiveOverride)
+                            .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
 
                             Button("Save Day as Profile", systemImage: "square.and.arrow.down") {
                                 profileName = defaultDayProfileName
@@ -206,6 +206,17 @@ struct ScheduleView: View {
                     StudentDirectoryView(profiles: $studentProfiles, classDefinitions: $classDefinitions)
                 }
             }
+            .sheet(isPresented: $showingCopyWholeDaySheet) {
+                NavigationStack {
+                    CopyWholeDaySheet(
+                        sourceDay: selectedDay,
+                        availableDays: WeekdayTab.allCases.filter { $0 != selectedDay },
+                        onCopy: { destinations in
+                            copySchedule(from: selectedDay, to: destinations)
+                        }
+                    )
+                }
+            }
             .alert("Delete Block?", isPresented: isShowingDeleteBlockAlert) {
                 Button("Delete", role: .destructive) {
                     if let pendingDeleteItem {
@@ -220,19 +231,6 @@ struct ScheduleView: View {
             }
             .onChange(of: overrides) { _, newValue in
                 saveOverrides(newValue)
-            }
-            .confirmationDialog(
-                "Copy to \(selectedDay.title)",
-                isPresented: $showingCopyDayDialog,
-                titleVisibility: .visible
-            ) {
-                ForEach(availableCopyDays, id: \.self) { day in
-                    Button(day.title) {
-                        copySchedule(from: day, to: selectedDay)
-                    }
-                }
-            } message: {
-                Text("Replace \(selectedDay.title) with another day’s schedule.")
             }
             .confirmationDialog(
                 "Erase \(selectedDay.title)?",
@@ -745,6 +743,12 @@ struct ScheduleView: View {
         "Weekly Schedule"
     }
 
+    private func copySchedule(from sourceDay: WeekdayTab, to targetDays: [WeekdayTab]) {
+        for targetDay in targetDays {
+            copySchedule(from: sourceDay, to: targetDay)
+        }
+    }
+
     private func copySchedule(from sourceDay: WeekdayTab, to targetDay: WeekdayTab) {
         let sourceItems = alarms
             .filter { $0.dayOfWeek == sourceDay.rawValue }
@@ -835,5 +839,59 @@ struct ScheduleView: View {
             }
             return lhs.dayOfWeek < rhs.dayOfWeek
         }
+    }
+}
+
+private struct CopyWholeDaySheet: View {
+    let sourceDay: WeekdayTab
+    let availableDays: [WeekdayTab]
+    let onCopy: ([WeekdayTab]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedDays: Set<WeekdayTab> = []
+
+    var body: some View {
+        Form {
+            Section("Copy \(sourceDay.title) To") {
+                ForEach(availableDays, id: \.self) { day in
+                    Toggle(day.title, isOn: binding(for: day))
+                }
+            }
+
+            Section {
+                Text("This replaces each destination day with \(sourceDay.title)’s full schedule.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Copy Whole Day")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") { dismiss() }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Copy") {
+                    onCopy(selectedDays.sorted { $0.rawValue < $1.rawValue })
+                    dismiss()
+                }
+                .disabled(selectedDays.isEmpty)
+                .fontWeight(.semibold)
+            }
+        }
+    }
+
+    private func binding(for day: WeekdayTab) -> Binding<Bool> {
+        Binding(
+            get: { selectedDays.contains(day) },
+            set: { isSelected in
+                if isSelected {
+                    selectedDays.insert(day)
+                } else {
+                    selectedDays.remove(day)
+                }
+            }
+        )
     }
 }

@@ -356,6 +356,7 @@ struct AddEditView: View {
         }
 
         let warningLeadTimes = currentWarningLeadTimes
+        let matchedClassDefinitionID = resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade)
 
         guard !selectedDays.isEmpty || isEditing else {
             validationMessage = "Choose at least one day before saving."
@@ -374,12 +375,36 @@ struct AddEditView: View {
                 startTime: start,
                 endTime: end,
                 type: type,
-                classDefinitionID: resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade),
+                classDefinitionID: matchedClassDefinitionID,
                 linkedStudentIDs: Array(linkedStudentIDs),
                 warningLeadTimes: warningLeadTimes
             )
+            let matchingIDs = weeklyMatchingIDs(for: existing)
             var updatedAlarms = alarms
-            updatedAlarms[index] = newItem
+
+            for alarmIndex in updatedAlarms.indices {
+                guard matchingIDs.contains(updatedAlarms[alarmIndex].id) else { continue }
+
+                let current = updatedAlarms[alarmIndex]
+                updatedAlarms[alarmIndex] = AlarmItem(
+                    id: current.id,
+                    dayOfWeek: current.dayOfWeek,
+                    className: trimmedName,
+                    location: trimmedRoom,
+                    gradeLevel: trimmedGrade,
+                    startTime: current.startTime,
+                    endTime: current.endTime,
+                    type: type,
+                    classDefinitionID: matchedClassDefinitionID,
+                    linkedStudentIDs: Array(linkedStudentIDs),
+                    warningLeadTimes: warningLeadTimes
+                )
+            }
+
+            if !matchingIDs.contains(existing.id) {
+                updatedAlarms[index] = newItem
+            }
+
             alarms = sortedAlarms(updatedAlarms)
         } else {
             let createdItems = selectedDays.sorted().map { weekday in
@@ -392,7 +417,7 @@ struct AddEditView: View {
                     startTime: start,
                     endTime: end,
                     type: type,
-                    classDefinitionID: resolvedClassDefinitionID(trimmedName: trimmedName, trimmedGrade: trimmedGrade),
+                    classDefinitionID: matchedClassDefinitionID,
                     linkedStudentIDs: Array(linkedStudentIDs),
                     warningLeadTimes: warningLeadTimes
                 )
@@ -487,6 +512,36 @@ struct AddEditView: View {
             }
             return lhs.dayOfWeek < rhs.dayOfWeek
         }
+    }
+
+    private func weeklyMatchingIDs(for source: AlarmItem) -> Set<UUID> {
+        let sourceDefinition = source.classDefinitionID.flatMap { id in
+            classDefinitions.first(where: { $0.id == id })
+        }
+        let sourceName = sourceDefinition?.name ?? source.className
+        let sourceGrade = sourceDefinition?.gradeLevel ?? source.gradeLevel
+
+        return Set(
+            alarms.filter { candidate in
+                if candidate.id == source.id {
+                    return true
+                }
+
+                if let sourceDefinitionID = source.classDefinitionID, candidate.classDefinitionID == sourceDefinitionID {
+                    return true
+                }
+
+                let candidateDefinition = candidate.classDefinitionID.flatMap { id in
+                    classDefinitions.first(where: { $0.id == id })
+                }
+                let candidateName = candidateDefinition?.name ?? candidate.className
+                let candidateGrade = candidateDefinition?.gradeLevel ?? candidate.gradeLevel
+
+                return classNamesMatch(scheduleClassName: sourceName, profileClassName: candidateName) &&
+                    gradeLevelsCompatible(sourceGrade, candidateGrade)
+            }
+            .map(\.id)
+        )
     }
 
     private var currentWarningLeadTimes: [Int] {
