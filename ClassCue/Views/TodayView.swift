@@ -1641,22 +1641,7 @@ struct TodayView: View {
                 openSettingsTab()
             }
         } label: {
-            Label("Actions", systemImage: "plus")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(red: 0.18, green: 0.42, blue: 0.72), Color(red: 0.23, green: 0.52, blue: 0.62)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                )
-                .shadow(color: Color.black.opacity(0.14), radius: 10, y: 4)
+            ToolbarPrimaryActionLabel(title: "Actions", systemImage: "plus")
         }
     }
 

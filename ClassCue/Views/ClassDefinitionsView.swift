@@ -82,7 +82,7 @@ struct ClassDefinitionsView: View {
                 Button {
                     showingAdd = true
                 } label: {
-                    toolbarButtonLabel(systemImage: "plus")
+                    ToolbarMenuLabel(title: "Add", systemImage: "plus", expanded: false)
                 }
             }
         }
@@ -203,18 +203,6 @@ struct ClassDefinitionsView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(accent.opacity(0.12), lineWidth: 1)
         )
-    }
-
-    private func toolbarButtonLabel(systemImage: String) -> some View {
-        ZStack {
-            Circle()
-                .fill(Color.accentColor.opacity(0.10))
-                .frame(width: 32, height: 32)
-
-            Image(systemName: systemImage)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.accentColor)
-        }
     }
 
     private func sectionCardBackground(accent: Color) -> some View {

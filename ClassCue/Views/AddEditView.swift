@@ -37,6 +37,7 @@ struct AddEditView: View {
     @State private var firstWarningMinutes = 5
     @State private var secondWarningMinutes = 2
     @State private var thirdWarningMinutes = 1
+    @State private var draftSaveTask: Task<Void, Never>?
     @State private var showingSuggestedRosterGroups = true
     @State private var showingAllRosterGroups = false
     @State private var showingIndividualStudents = false
@@ -272,12 +273,17 @@ struct AddEditView: View {
                 restoreDraftIfNeeded()
             }
             .onChange(of: currentDraft) { _, _ in
-                persistDraft()
+                scheduleDraftPersistence()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase != .active {
+                    draftSaveTask?.cancel()
                     persistDraft()
                 }
+            }
+            .onDisappear {
+                draftSaveTask?.cancel()
+                persistDraft()
             }
             .onChange(of: classDefinitions) { _, newValue in
                 if !newValue.isEmpty {
@@ -379,7 +385,7 @@ struct AddEditView: View {
                 linkedStudentIDs: Array(linkedStudentIDs),
                 warningLeadTimes: warningLeadTimes
             )
-            let matchingIDs = weeklyMatchingIDs(for: existing)
+            let matchingIDs = linkedBlockIDs(for: existing)
             var updatedAlarms = alarms
 
             for alarmIndex in updatedAlarms.indices {
@@ -501,6 +507,15 @@ struct AddEditView: View {
         savedDraftData = encoded
     }
 
+    private func scheduleDraftPersistence() {
+        draftSaveTask?.cancel()
+        draftSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            persistDraft()
+        }
+    }
+
     private func clearDraft() {
         savedDraftData = Data()
     }
@@ -514,33 +529,15 @@ struct AddEditView: View {
         }
     }
 
-    private func weeklyMatchingIDs(for source: AlarmItem) -> Set<UUID> {
-        let sourceDefinition = source.classDefinitionID.flatMap { id in
-            classDefinitions.first(where: { $0.id == id })
+    private func linkedBlockIDs(for source: AlarmItem) -> Set<UUID> {
+        guard let sourceDefinitionID = source.classDefinitionID else {
+            return [source.id]
         }
-        let sourceName = sourceDefinition?.name ?? source.className
-        let sourceGrade = sourceDefinition?.gradeLevel ?? source.gradeLevel
 
         return Set(
-            alarms.filter { candidate in
-                if candidate.id == source.id {
-                    return true
-                }
-
-                if let sourceDefinitionID = source.classDefinitionID, candidate.classDefinitionID == sourceDefinitionID {
-                    return true
-                }
-
-                let candidateDefinition = candidate.classDefinitionID.flatMap { id in
-                    classDefinitions.first(where: { $0.id == id })
-                }
-                let candidateName = candidateDefinition?.name ?? candidate.className
-                let candidateGrade = candidateDefinition?.gradeLevel ?? candidate.gradeLevel
-
-                return classNamesMatch(scheduleClassName: sourceName, profileClassName: candidateName) &&
-                    gradeLevelsCompatible(sourceGrade, candidateGrade)
-            }
-            .map(\.id)
+            alarms
+                .filter { $0.classDefinitionID == sourceDefinitionID }
+                .map(\.id)
         )
     }
 

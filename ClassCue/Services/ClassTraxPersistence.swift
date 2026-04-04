@@ -857,6 +857,7 @@ enum ClassTraxPersistence {
                         PersistedAlarmItem.self,
                         PersistedStudentSupportProfile.self,
                         PersistedClassDefinitionItem.self,
+                        PersistedSupportStaffMember.self,
                         PersistedCommitmentItem.self,
                         PersistedTodoItem.self,
                         PersistedFollowUpNoteItem.self,
@@ -884,6 +885,7 @@ enum ClassTraxPersistence {
                         PersistedAlarmItem.self,
                         PersistedStudentSupportProfile.self,
                         PersistedClassDefinitionItem.self,
+                        PersistedSupportStaffMember.self,
                         PersistedCommitmentItem.self,
                         PersistedTodoItem.self,
                         PersistedFollowUpNoteItem.self,
@@ -1044,6 +1046,77 @@ enum ClassTraxPersistence {
         )
         syncModels(PersistedAlarmItem.self, values: alarms, in: context, create: PersistedAlarmItem.init, update: { $0.update(from: $1) })
         syncModels(PersistedCommitmentItem.self, values: commitments, in: context, create: PersistedCommitmentItem.init, update: { $0.update(from: $1) })
+        save(context)
+        UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
+    }
+
+    @MainActor
+    static func saveFirstSliceAlarms(_ alarms: [AlarmItem], into context: ModelContext) {
+        syncModels(
+            PersistedAlarmItem.self,
+            values: alarms,
+            in: context,
+            create: PersistedAlarmItem.init,
+            update: { $0.update(from: $1) }
+        )
+        save(context)
+        UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
+    }
+
+    @MainActor
+    static func saveFirstSliceStudentProfiles(_ studentProfiles: [StudentSupportProfile], into context: ModelContext) {
+        syncModels(
+            PersistedStudentSupportProfile.self,
+            values: studentProfiles,
+            in: context,
+            create: PersistedStudentSupportProfile.init,
+            update: { $0.update(from: $1) }
+        )
+        save(context)
+        UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
+    }
+
+    @MainActor
+    static func saveFirstSliceClassDefinitions(_ classDefinitions: [ClassDefinitionItem], into context: ModelContext) {
+        syncModels(
+            PersistedClassDefinitionItem.self,
+            values: classDefinitions,
+            in: context,
+            create: PersistedClassDefinitionItem.init,
+            update: { $0.update(from: $1) }
+        )
+        save(context)
+        UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
+    }
+
+    @MainActor
+    static func saveFirstSliceSupportStaff(
+        teacherContacts: [ClassStaffContact],
+        paraContacts: [ClassStaffContact],
+        into context: ModelContext
+    ) {
+        let staffValues = teacherContacts.map { (role: SupportStaffRole.teacher, contact: $0) }
+            + paraContacts.map { (role: SupportStaffRole.para, contact: $0) }
+        syncModels(
+            PersistedSupportStaffMember.self,
+            values: staffValues,
+            in: context,
+            create: { PersistedSupportStaffMember(role: $0.role, contact: $0.contact) },
+            update: { $0.update(role: $1.role, contact: $1.contact) }
+        )
+        save(context)
+        UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
+    }
+
+    @MainActor
+    static func saveFirstSliceCommitments(_ commitments: [CommitmentItem], into context: ModelContext) {
+        syncModels(
+            PersistedCommitmentItem.self,
+            values: commitments,
+            in: context,
+            create: PersistedCommitmentItem.init,
+            update: { $0.update(from: $1) }
+        )
         save(context)
         UserDefaults.standard.set(true, forKey: firstSliceMigrationKey)
     }

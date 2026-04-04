@@ -21,15 +21,27 @@ enum AppTab: Hashable {
     case students
     case todo
     case notes
+    case settings
 }
 
 // MARK: - Root Tab View
 
 struct RootTabView: View {
 
-    private static let cloudSyncRefreshInterval: Duration = .seconds(15)
+    private struct FirstSliceDomain: OptionSet {
+        let rawValue: Int
+
+        static let alarms = FirstSliceDomain(rawValue: 1 << 0)
+        static let studentProfiles = FirstSliceDomain(rawValue: 1 << 1)
+        static let classDefinitions = FirstSliceDomain(rawValue: 1 << 2)
+        static let supportStaff = FirstSliceDomain(rawValue: 1 << 3)
+        static let commitments = FirstSliceDomain(rawValue: 1 << 4)
+        static let all: FirstSliceDomain = [.alarms, .studentProfiles, .classDefinitions, .supportStaff, .commitments]
+    }
+
+    private static let cloudSyncRefreshInterval: Duration = .seconds(30)
     private static let localMutationRefreshPauseSeconds: TimeInterval = 4
-    private static let runtimeSyncHeartbeatInterval: Duration = .seconds(10)
+    private static let runtimeSyncHeartbeatInterval: Duration = .seconds(30)
     private static let persistenceDebounceInterval: Duration = .milliseconds(450)
 
     @Environment(\.modelContext) private var modelContext
@@ -37,8 +49,6 @@ struct RootTabView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab: AppTab = .today
     @State private var selectedScheduleDay: WeekdayTab = .today
-    @State private var showingSettings = false
-
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
     @AppStorage("todo_v6_data") private var savedTodos: Data = Data()
     @AppStorage("commitments_v1_data") private var savedCommitments: Data = Data()
@@ -72,6 +82,7 @@ struct RootTabView: View {
     @State private var pendingLiveActivityStopTask: Task<Void, Never>?
     @State private var pendingNotificationRefreshTask: Task<Void, Never>?
     @State private var pendingFirstSliceSaveTask: Task<Void, Never>?
+    @State private var pendingFirstSliceDomains: FirstSliceDomain = []
     @State private var pendingSecondSliceSaveTask: Task<Void, Never>?
     @State private var pendingThirdSliceSaveTask: Task<Void, Never>?
     @State private var lastSyncedWidgetSnapshot: ClassTraxWidgetSnapshot?
@@ -129,6 +140,7 @@ struct RootTabView: View {
             studentsTab
             todoTab
             notesTab
+            settingsTab
         }
     }
 
@@ -173,6 +185,16 @@ struct RootTabView: View {
                     saveClassDefinitions(newValue)
                     reconcileClassDefinitionLinks()
                     syncSharedSnapshot()
+                }
+                .onChange(of: teacherContacts) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
+                    saveSupportStaff(teacherContacts: newValue, paraContacts: paraContacts)
+                }
+                .onChange(of: paraContacts) { _, newValue in
+                    guard !isRefreshingFromPersistence else { return }
+                    recordLocalMutation()
+                    saveSupportStaff(teacherContacts: teacherContacts, paraContacts: newValue)
                 }
                 .onChange(of: savedStudentProfiles) { _, _ in
                     guard !isRefreshingFromPersistence else { return }
@@ -229,11 +251,12 @@ struct RootTabView: View {
                     guard scenePhase == .active else { return }
                     await runCloudSyncRefreshLoop()
                 }
-                .task(id: scenePhase) {
-                    guard scenePhase == .active else { return }
+                .task(id: runtimeHeartbeatTaskID) {
+                    guard scenePhase == .active, shouldRunRuntimeHeartbeat else { return }
                     while scenePhase == .active && !Task.isCancelled {
                         syncRuntimeState(now: Date())
                         try? await Task.sleep(for: Self.runtimeSyncHeartbeatInterval)
+                        guard shouldRunRuntimeHeartbeat else { return }
                     }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
@@ -266,12 +289,6 @@ struct RootTabView: View {
 
     var body: some View {
         makeObservedTabView()
-            .sheet(isPresented: $showingSettings) {
-                NavigationStack {
-                    SettingsView()
-                        .navigationBarTitleDisplayMode(.inline)
-                }
-            }
     }
 
     private func handleOnAppear() {
@@ -296,6 +313,11 @@ struct RootTabView: View {
     private func handleSelectedTabChange(_ newTab: AppTab) {
         if newTab == .schedule {
             selectedScheduleDay = .today
+        }
+
+        if newTab != .settings {
+            refreshFromCloudBackedStore(force: true)
+            syncRuntimeState(now: Date())
         }
     }
 
@@ -505,14 +527,9 @@ struct RootTabView: View {
                 }, openNotesTab: {
                     selectedTab = .notes
                 }, openSettingsTab: {
-                    showingSettings = true
+                    selectedTab = .settings
                 })
             .toolbar(.hidden, for: .tabBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    overflowMenu
-                }
-            }
         }
         .tabItem {
             tabLabel(title: "Today", systemImage: "house")
@@ -542,11 +559,6 @@ struct RootTabView: View {
             openTodoTab: { selectedTab = .todo },
             openNotesTab: { selectedTab = .notes }
         )
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                overflowMenu
-            }
-        }
         .tabItem {
             tabLabel(title: "Schedule", systemImage: "calendar")
         }
@@ -562,11 +574,6 @@ struct RootTabView: View {
                 attendanceRecords: $attendanceRecords,
                 overrideSchedule: activeDayOverride?.alarms
             )
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    overflowMenu
-                }
-            }
         }
         .tabItem {
             tabLabel(title: "Attendance", systemImage: "checklist.checked")
@@ -583,11 +590,6 @@ struct RootTabView: View {
                 teacherContacts: $teacherContacts,
                 paraContacts: $paraContacts
             )
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    overflowMenu
-                }
-            }
         }
         .tabItem {
             tabLabel(title: "Students", systemImage: "person.3")
@@ -612,11 +614,6 @@ struct RootTabView: View {
                 },
                 openTodayTab: { selectedTab = .today }
             )
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    overflowMenu
-                }
-            }
         }
         .tabItem {
             tabLabel(title: "Tasks", systemImage: "checklist")
@@ -639,11 +636,6 @@ struct RootTabView: View {
                 },
                 openTodayTab: { selectedTab = .today }
             )
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    overflowMenu
-                }
-            }
         }
         .tabItem {
             tabLabel(title: "Notes", systemImage: "square.and.pencil")
@@ -652,21 +644,16 @@ struct RootTabView: View {
         .tag(AppTab.notes)
     }
 
-    private var overflowMenu: some View {
-        Button {
-            showingSettings = true
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.10))
-                    .frame(width: 32, height: 32)
-
-                Image(systemName: "gearshape")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.accentColor)
-            }
+    private var settingsTab: some View {
+        NavigationStack {
+            SettingsView()
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        .tabItem {
+            tabLabel(title: "Settings", systemImage: "gearshape")
         }
         .accessibilityLabel("Settings")
+        .tag(AppTab.settings)
     }
 
     private func tabLabel(title: String, systemImage: String) -> some View {
@@ -741,6 +728,7 @@ struct RootTabView: View {
             try? await Task.sleep(for: Self.cloudSyncRefreshInterval)
             guard !Task.isCancelled, scenePhase == .active else { return }
             guard ClassTraxPersistence.activeContainerMode == .cloudKit else { continue }
+            guard selectedTab != .settings else { continue }
             guard Date().timeIntervalSince(lastLocalMutationAt) >= Self.localMutationRefreshPauseSeconds else {
                 continue
             }
@@ -828,14 +816,7 @@ struct RootTabView: View {
         if let encoded = try? JSONEncoder().encode(normalized) {
             savedAlarms = encoded
         }
-        scheduleFirstPersistenceSave(
-            alarms: normalized,
-            studentProfiles: studentProfiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
+        scheduleFirstPersistenceSave(for: .alarms)
     }
 
     private func normalizedAlarms(_ alarms: [AlarmItem]) -> [AlarmItem] {
@@ -868,14 +849,7 @@ struct RootTabView: View {
         if let encoded = try? JSONEncoder().encode(commitments) {
             savedCommitments = encoded
         }
-        scheduleFirstPersistenceSave(
-            alarms: alarms,
-            studentProfiles: studentProfiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
+        scheduleFirstPersistenceSave(for: .commitments)
     }
 
     private func loadStudentProfiles() {
@@ -917,52 +891,18 @@ struct RootTabView: View {
         savedStudentProfiles = (try? JSONEncoder().encode(profiles.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         })) ?? Data()
-        scheduleFirstPersistenceSave(
-            alarms: alarms,
-            studentProfiles: profiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
+        scheduleFirstPersistenceSave(for: .studentProfiles)
     }
 
     private func saveClassDefinitions(_ definitions: [ClassDefinitionItem]) {
         savedClassDefinitions = (try? JSONEncoder().encode(definitions.sorted {
             $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         })) ?? Data()
-        scheduleFirstPersistenceSave(
-            alarms: alarms,
-            studentProfiles: studentProfiles,
-            classDefinitions: definitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
+        scheduleFirstPersistenceSave(for: .classDefinitions)
     }
 
-    private func saveTeacherContacts(_ contacts: [ClassStaffContact]) {
-        teacherContacts = contacts.sorted { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
-        scheduleFirstPersistenceSave(
-            alarms: alarms,
-            studentProfiles: studentProfiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
-    }
-
-    private func saveParaContacts(_ contacts: [ClassStaffContact]) {
-        paraContacts = contacts.sorted { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
-        scheduleFirstPersistenceSave(
-            alarms: alarms,
-            studentProfiles: studentProfiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
+    private func saveSupportStaff(teacherContacts: [ClassStaffContact], paraContacts: [ClassStaffContact]) {
+        scheduleFirstPersistenceSave(for: .supportStaff)
     }
 
     private func saveAttendanceRecords(_ records: [AttendanceRecord]) {
@@ -999,23 +939,26 @@ struct RootTabView: View {
         )
     }
 
-    private func saveFirstPersistenceSlice(
-        alarms: [AlarmItem],
-        studentProfiles: [StudentSupportProfile],
-        classDefinitions: [ClassDefinitionItem],
-        teacherContacts: [ClassStaffContact],
-        paraContacts: [ClassStaffContact],
-        commitments: [CommitmentItem]
-    ) {
-        ClassTraxPersistence.saveFirstSlice(
-            alarms: alarms,
-            studentProfiles: studentProfiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments,
-            into: modelContext
-        )
+    private func saveFirstPersistenceSlice(domains: FirstSliceDomain) {
+        if domains.contains(.alarms) {
+            ClassTraxPersistence.saveFirstSliceAlarms(normalizedAlarms(alarms), into: modelContext)
+        }
+        if domains.contains(.studentProfiles) {
+            ClassTraxPersistence.saveFirstSliceStudentProfiles(studentProfiles, into: modelContext)
+        }
+        if domains.contains(.classDefinitions) {
+            ClassTraxPersistence.saveFirstSliceClassDefinitions(classDefinitions, into: modelContext)
+        }
+        if domains.contains(.supportStaff) {
+            ClassTraxPersistence.saveFirstSliceSupportStaff(
+                teacherContacts: teacherContacts,
+                paraContacts: paraContacts,
+                into: modelContext
+            )
+        }
+        if domains.contains(.commitments) {
+            ClassTraxPersistence.saveFirstSliceCommitments(commitments, into: modelContext)
+        }
     }
 
     private func saveSecondPersistenceSlice(
@@ -1230,26 +1173,15 @@ struct RootTabView: View {
         )
     }
 
-    private func scheduleFirstPersistenceSave(
-        alarms: [AlarmItem],
-        studentProfiles: [StudentSupportProfile],
-        classDefinitions: [ClassDefinitionItem],
-        teacherContacts: [ClassStaffContact],
-        paraContacts: [ClassStaffContact],
-        commitments: [CommitmentItem]
-    ) {
+    private func scheduleFirstPersistenceSave(for domains: FirstSliceDomain) {
+        pendingFirstSliceDomains.formUnion(domains)
         pendingFirstSliceSaveTask?.cancel()
         pendingFirstSliceSaveTask = Task { @MainActor in
             try? await Task.sleep(for: Self.persistenceDebounceInterval)
             guard !Task.isCancelled else { return }
-            saveFirstPersistenceSlice(
-                alarms: alarms,
-                studentProfiles: studentProfiles,
-                classDefinitions: classDefinitions,
-                teacherContacts: teacherContacts,
-                paraContacts: paraContacts,
-                commitments: commitments
-            )
+            let domainsToSave = pendingFirstSliceDomains
+            pendingFirstSliceDomains = []
+            saveFirstPersistenceSlice(domains: domainsToSave)
             pendingFirstSliceSaveTask = nil
         }
     }
@@ -1298,14 +1230,8 @@ struct RootTabView: View {
         pendingSecondSliceSaveTask = nil
         pendingThirdSliceSaveTask = nil
 
-        saveFirstPersistenceSlice(
-            alarms: normalizedAlarms(alarms),
-            studentProfiles: studentProfiles,
-            classDefinitions: classDefinitions,
-            teacherContacts: teacherContacts,
-            paraContacts: paraContacts,
-            commitments: commitments
-        )
+        pendingFirstSliceDomains = []
+        saveFirstPersistenceSlice(domains: .all)
         saveSecondPersistenceSlice(
             todos: todos,
             subPlans: subPlans,
@@ -1330,6 +1256,19 @@ struct RootTabView: View {
 
     private func decodeLegacyOverrides() -> [DayOverride] {
         (try? JSONDecoder().decode([DayOverride].self, from: savedOverrides)) ?? []
+    }
+
+    private var shouldRunRuntimeHeartbeat: Bool {
+        switch selectedTab {
+        case .today, .schedule, .attendance:
+            return true
+        case .students, .todo, .notes, .settings:
+            return false
+        }
+    }
+
+    private var runtimeHeartbeatTaskID: String {
+        "\(scenePhase == .active)-\(selectedTab)"
     }
 }
 

@@ -84,7 +84,7 @@ struct DayOverridesView: View {
 
                     if let suggestedProfile {
                         VStack(alignment: .leading, spacing: 8) {
-                            Label("Suggested Profile", systemImage: "wand.and.stars")
+                            Label("Suggested Profile", systemImage: "calendar.badge.clock")
                                 .font(.subheadline.weight(.semibold))
 
                             Text(suggestedProfileSummary)

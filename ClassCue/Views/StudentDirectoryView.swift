@@ -117,8 +117,14 @@ struct StudentDirectoryView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button("New Student", systemImage: "plus") {
+                            showingAdd = true
+                        }
+
+                        Divider()
+
                         Button("Manage Saved Classes") {
                             showingSavedClasses = true
                         }
@@ -133,33 +139,29 @@ struct StudentDirectoryView: View {
 
                         Divider()
 
-                        Button("Import Roster CSV") {
+                        Button("Import Student Roster CSV") {
                             showingFileImporter = true
                         }
 
-                        Button("Paste Roster CSV") {
+                        Button("Paste Student Roster CSV") {
                             showingPasteImporter = true
                         }
 
-                        Button("Share Roster Template") {
+                        Button("Share Student Roster Template") {
                             showingTemplateShareSheet = true
                         }
 
                         Divider()
 
-                        Button("Export Roster CSV") {
+                        Button("Export Student Roster CSV") {
                             showingExportOptions = true
                         }
                     } label: {
-                        toolbarActionButton()
-                    }
-                }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAdd = true
-                    } label: {
-                        toolbarMenuLabel(title: "New Student", systemImage: "plus")
+                        ToolbarMenuLabel(
+                            title: "More",
+                            systemImage: "ellipsis",
+                            expanded: prefersExpandedToolbar
+                        )
                     }
                 }
             }
@@ -337,44 +339,6 @@ struct StudentDirectoryView: View {
             } message: {
                 Text(importSuccessMessage)
             }
-    }
-
-    @ViewBuilder
-    private func toolbarMenuLabel(title: String, systemImage: String) -> some View {
-        if prefersExpandedToolbar {
-            Label(title, systemImage: systemImage)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.accentColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.accentColor.opacity(0.10))
-                )
-        } else {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.10))
-                    .frame(width: 32, height: 32)
-
-                Image(systemName: systemImage)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.accentColor)
-            }
-        }
-    }
-
-    private func toolbarActionButton() -> some View {
-        ZStack {
-            Circle()
-                .fill(Color.accentColor.opacity(0.10))
-                .frame(width: 32, height: 32)
-
-            Image(systemName: "ellipsis")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.accentColor)
-        }
-        .accessibilityLabel("Actions")
     }
 
     private var prefersExpandedToolbar: Bool {
@@ -1514,6 +1478,23 @@ private struct SupportStaffDirectoryView: View {
     @Binding var contacts: [ClassStaffContact]
 
     @Environment(\.dismiss) private var dismiss
+    @State private var draftContacts: [ClassStaffContact]
+    @State private var expandedContactIDs: Set<UUID>
+
+    init(title: String, role: SupportStaffRole, contacts: Binding<[ClassStaffContact]>) {
+        self.title = title
+        self.role = role
+        _contacts = contacts
+        let initialDrafts = contacts.wrappedValue
+        _draftContacts = State(initialValue: initialDrafts)
+        _expandedContactIDs = State(
+            initialValue: Set(
+                initialDrafts
+                    .filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .map(\.id)
+            )
+        )
+    }
 
     var body: some View {
         Form {
@@ -1523,35 +1504,63 @@ private struct SupportStaffDirectoryView: View {
             }
 
             Section(role.pluralTitle) {
-                if contacts.isEmpty {
+                if draftContacts.isEmpty {
                     Text("No \(role.pluralTitle.lowercased()) added yet.")
                         .foregroundStyle(.secondary)
                 }
 
-                ForEach($contacts) { $contact in
-                    VStack(alignment: .leading, spacing: 10) {
-                        TextField("Name", text: $contact.name)
-                        TextField("Room", text: $contact.room)
-                        TextField("Cell", text: $contact.cell)
-                            .keyboardType(.phonePad)
-                        TextField("Extension", text: $contact.extensionNumber)
-                        TextField("Email Address", text: $contact.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.emailAddress)
-                        TextField("Subject", text: $contact.subject)
+                ForEach($draftContacts) { $contact in
+                    DisclosureGroup(
+                        isExpanded: expansionBinding(for: contact.id)
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            TextField("Name", text: $contact.name)
+                            TextField("Room", text: $contact.room)
+                            TextField("Cell", text: $contact.cell)
+                                .keyboardType(.phonePad)
+                            TextField("Extension", text: $contact.extensionNumber)
+                            TextField("Email Address", text: $contact.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                            TextField("Subject", text: $contact.subject)
 
-                        Button(role: .destructive) {
-                            contacts.removeAll { $0.id == contact.id }
-                        } label: {
-                            Label("Remove \(role.title)", systemImage: "trash")
+                            Button {
+                                saveDraftContact(contact.id)
+                            } label: {
+                                Label("Save \(role.title)", systemImage: "checkmark.circle.fill")
+                            }
+                            .font(.caption.weight(.semibold))
+                            .disabled(contact.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            Button(role: .destructive) {
+                                draftContacts.removeAll { $0.id == contact.id }
+                                expandedContactIDs.remove(contact.id)
+                            } label: {
+                                Label("Remove \(role.title)", systemImage: "trash")
+                            }
+                            .font(.caption.weight(.semibold))
                         }
-                        .font(.caption.weight(.semibold))
+                        .padding(.vertical, 6)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(contact.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New \(role.title)" : contact.name)
+                                .font(.headline)
+
+                            let summary = contactSummary(contact)
+                            if !summary.isEmpty {
+                                Text(summary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
-                    .padding(.vertical, 6)
                 }
 
                 Button {
-                    contacts.append(ClassStaffContact())
+                    let newContact = ClassStaffContact()
+                    draftContacts.append(newContact)
+                    expandedContactIDs.insert(newContact.id)
                 } label: {
                     Label("Add \(role.title)", systemImage: "plus.circle.fill")
                 }
@@ -1560,34 +1569,75 @@ private struct SupportStaffDirectoryView: View {
         .navigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Done") {
-                    contacts = contacts
-                        .map {
-                            ClassStaffContact(
-                                id: $0.id,
-                                name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                                room: $0.room.trimmingCharacters(in: .whitespacesAndNewlines),
-                                cell: $0.cell.trimmingCharacters(in: .whitespacesAndNewlines),
-                                extensionNumber: $0.extensionNumber.trimmingCharacters(in: .whitespacesAndNewlines),
-                                emailAddress: $0.emailAddress.trimmingCharacters(in: .whitespacesAndNewlines),
-                                subject: $0.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-                            )
-                        }
-                        .filter {
-                            ![
-                                $0.name,
-                                $0.room,
-                                $0.cell,
-                                $0.extensionNumber,
-                                $0.emailAddress,
-                                $0.subject
-                            ].allSatisfy(\.isEmpty)
-                        }
-                        .sorted { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
+                    commitDraftContacts()
                     dismiss()
                 }
             }
         }
+    }
+
+    private func expansionBinding(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { expandedContactIDs.contains(id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedContactIDs.insert(id)
+                } else {
+                    expandedContactIDs.remove(id)
+                }
+            }
+        )
+    }
+
+    private func saveDraftContact(_ id: UUID) {
+        guard let index = draftContacts.firstIndex(where: { $0.id == id }) else { return }
+        draftContacts[index] = normalizedContact(draftContacts[index])
+        expandedContactIDs.remove(id)
+    }
+
+    private func commitDraftContacts() {
+        contacts = draftContacts
+            .map(normalizedContact(_:))
+            .filter {
+                ![
+                    $0.name,
+                    $0.room,
+                    $0.cell,
+                    $0.extensionNumber,
+                    $0.emailAddress,
+                    $0.subject
+                ].allSatisfy(\.isEmpty)
+            }
+            .sorted { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
+    }
+
+    private func normalizedContact(_ contact: ClassStaffContact) -> ClassStaffContact {
+        ClassStaffContact(
+            id: contact.id,
+            name: contact.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            room: contact.room.trimmingCharacters(in: .whitespacesAndNewlines),
+            cell: contact.cell.trimmingCharacters(in: .whitespacesAndNewlines),
+            extensionNumber: contact.extensionNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+            emailAddress: contact.emailAddress.trimmingCharacters(in: .whitespacesAndNewlines),
+            subject: contact.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private func contactSummary(_ contact: ClassStaffContact) -> String {
+        [
+            contact.room.trimmingCharacters(in: .whitespacesAndNewlines),
+            contact.subject.trimmingCharacters(in: .whitespacesAndNewlines),
+            contact.emailAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: " • ")
     }
 }
 

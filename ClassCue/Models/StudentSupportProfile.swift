@@ -29,6 +29,11 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
     var parentPhoneNumbers: String = ""
     var parentEmails: String = ""
     var studentEmail: String = ""
+    var isSped: Bool = false
+    var supportTeacherIDs: [UUID] = []
+    var supportParaIDs: [UUID] = []
+    var supportRooms: String = ""
+    var supportScheduleNotes: String = ""
     var accommodations: String = ""
     var prompts: String = ""
 
@@ -45,6 +50,11 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         parentPhoneNumbers: String = "",
         parentEmails: String = "",
         studentEmail: String = "",
+        isSped: Bool = false,
+        supportTeacherIDs: [UUID] = [],
+        supportParaIDs: [UUID] = [],
+        supportRooms: String = "",
+        supportScheduleNotes: String = "",
         accommodations: String = "",
         prompts: String = ""
     ) {
@@ -60,6 +70,11 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         self.parentPhoneNumbers = parentPhoneNumbers
         self.parentEmails = parentEmails
         self.studentEmail = studentEmail
+        self.isSped = isSped
+        self.supportTeacherIDs = supportTeacherIDs
+        self.supportParaIDs = supportParaIDs
+        self.supportRooms = supportRooms
+        self.supportScheduleNotes = supportScheduleNotes
         self.accommodations = accommodations
         self.prompts = prompts
     }
@@ -81,6 +96,11 @@ struct StudentSupportProfile: Identifiable, Codable, Equatable {
         parentPhoneNumbers = try container.decodeIfPresent(String.self, forKey: .parentPhoneNumbers) ?? ""
         parentEmails = try container.decodeIfPresent(String.self, forKey: .parentEmails) ?? ""
         studentEmail = try container.decodeIfPresent(String.self, forKey: .studentEmail) ?? ""
+        isSped = try container.decodeIfPresent(Bool.self, forKey: .isSped) ?? false
+        supportTeacherIDs = try container.decodeIfPresent([UUID].self, forKey: .supportTeacherIDs) ?? []
+        supportParaIDs = try container.decodeIfPresent([UUID].self, forKey: .supportParaIDs) ?? []
+        supportRooms = try container.decodeIfPresent(String.self, forKey: .supportRooms) ?? ""
+        supportScheduleNotes = try container.decodeIfPresent(String.self, forKey: .supportScheduleNotes) ?? ""
         accommodations = try container.decodeIfPresent(String.self, forKey: .accommodations) ?? ""
         prompts = try container.decodeIfPresent(String.self, forKey: .prompts) ?? ""
     }

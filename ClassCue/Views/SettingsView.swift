@@ -58,7 +58,6 @@ struct SettingsView: View {
     }
 
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
     @AppStorage("pref_haptic") private var selectedHapticRawValue: String = HapticPattern.doubleThump.rawValue
     @AppStorage("pref_sound") private var selectedSoundRawValue: String = SoundPattern.classicAlarm.rawValue
     @AppStorage("pref_warning_sound_5min") private var warningFiveSoundRawValue: String = SoundPattern.softChime.rawValue
@@ -114,10 +113,10 @@ struct SettingsView: View {
     @State private var hasLoadedInitialState = false
 
     var body: some View {
-        settingsPersistenceContent
+        settingsContent
     }
 
-    private var stabilitySettingsContent: some View {
+    private var settingsListContent: some View {
         List {
             Section("Daily Use") {
                 NavigationLink("Alerts") {
@@ -197,38 +196,12 @@ struct SettingsView: View {
             configureHolidayMode()
         }
         .navigationTitle("Settings")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
-                    dismiss()
-                }
-            }
-        }
         .scrollContentBackground(.hidden)
         .background(settingsBackground)
     }
 
-    private var settingsBaseContent: some View {
-        settingsPersistenceContent
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(settingsBackground)
-            .onAppear {
-                ignoreUntil = ScheduleSnoozeStore.synchronize()
-                loadTodayLayoutSettings()
-                configureHolidayMode()
-            }
-    }
-
-    private var settingsPersistenceContent: some View {
-        stabilitySettingsContent
+    private var settingsContent: some View {
+        settingsListContent
             .onChange(of: alarms) { _, newValue in
                 guard !isLoadingInitialState else { return }
                 saveAlarms(newValue)

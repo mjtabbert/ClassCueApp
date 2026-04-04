@@ -448,7 +448,7 @@ final class NotificationManager {
         content.title = "🔔 Class Trax"
         content.subtitle = "\(alarm.className) Ending"
 
-        content.body = "Next block starting"
+        content.body = "Tap to see what is next in ClassTrax."
 
         content.sound = selectedNotificationSound()
 
@@ -478,7 +478,7 @@ final class NotificationManager {
         let content = UNMutableNotificationContent()
         content.title = "🔔 Class Trax"
         content.subtitle = "\(alarm.className) Ending"
-        content.body = "Next block starting"
+        content.body = "Tap to see what is next in ClassTrax."
         content.sound = selectedNotificationSound()
         content.categoryIdentifier = "CLASSTRAX_BELL"
         content.interruptionLevel = .timeSensitive

@@ -91,78 +91,73 @@ struct ScheduleView: View {
             .navigationTitle("Schedule")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
-                        Menu {
-                            Button("Copy Whole Day", systemImage: "doc.on.doc") {
-                                showingCopyWholeDaySheet = true
-                            }
-                            .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
-
-                            Button("Save Day as Profile", systemImage: "square.and.arrow.down") {
-                                profileName = defaultDayProfileName
-                                showingSaveDayProfileAlert = true
-                            }
-                            .disabled(filteredSchedule.isEmpty)
-
-                            Button("Save Week as Profile", systemImage: "tray.and.arrow.down") {
-                                profileName = defaultWeekProfileName
-                                showingSaveWeekProfileAlert = true
-                            }
-                            .disabled(alarms.isEmpty)
-                        } label: {
-                            toolbarIconButton(systemImage: "tray.full", title: "Profiles")
-                        }
-
-                        Menu {
-                            Button("Day Overrides", systemImage: "calendar.badge.clock") {
-                                showingOverridesSheet = true
-                            }
-
-                            Button("Export Schedule CSV", systemImage: "square.and.arrow.up") {
-                                showingExportSheet = true
-                            }
-                            .disabled(alarms.isEmpty)
-
-                            Divider()
-
-                            Button("Import Schedule CSV", systemImage: "square.and.arrow.down") {
-                                showingImportSheet = true
-                            }
-
-                            Divider()
-
-                            Button("Students", systemImage: "person.3") {
-                                showingStudentDirectory = true
-                            }
-
-                            Button("Refresh", systemImage: "arrow.clockwise") {
-                                onRefresh()
-                            }
-
-                            Button("Sub Plan", systemImage: "doc.text") {
-                                selectedDay = .today
-                                openTodayTab()
-                            }
-
-                            Divider()
-
-                            Button("Erase Day", systemImage: "trash", role: .destructive) {
-                                showingEraseDayDialog = true
-                            }
-                            .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
-                        } label: {
-                            toolbarIconButton(systemImage: "ellipsis", title: "Data")
-                        }
-
-                        Button {
+                    Menu {
+                        Button("New Block", systemImage: "plus") {
                             showingAddSheet = true
-                        } label: {
-                            toolbarCapsuleLabel(
-                                title: "New Block",
-                                systemImage: "plus"
-                            )
                         }
                         .disabled(isViewingActiveOverride)
+
+                        Divider()
+
+                        Button("Copy Whole Day", systemImage: "doc.on.doc") {
+                            showingCopyWholeDaySheet = true
+                        }
+                        .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
+
+                        Button("Save Day as Profile", systemImage: "square.and.arrow.down") {
+                            profileName = defaultDayProfileName
+                            showingSaveDayProfileAlert = true
+                        }
+                        .disabled(filteredSchedule.isEmpty)
+
+                        Button("Save Week as Profile", systemImage: "tray.and.arrow.down") {
+                            profileName = defaultWeekProfileName
+                            showingSaveWeekProfileAlert = true
+                        }
+                        .disabled(alarms.isEmpty)
+
+                        Divider()
+
+                        Button("Day Overrides", systemImage: "calendar.badge.clock") {
+                            showingOverridesSheet = true
+                        }
+
+                        Button("Export Schedule CSV", systemImage: "square.and.arrow.up") {
+                            showingExportSheet = true
+                        }
+                        .disabled(alarms.isEmpty)
+
+                        Button("Import Schedule CSV", systemImage: "square.and.arrow.down") {
+                            showingImportSheet = true
+                        }
+
+                        Divider()
+
+                        Button("Students", systemImage: "person.3") {
+                            showingStudentDirectory = true
+                        }
+
+                        Button("Refresh", systemImage: "arrow.clockwise") {
+                            onRefresh()
+                        }
+
+                        Button("Sub Plan", systemImage: "doc.text") {
+                            selectedDay = .today
+                            openTodayTab()
+                        }
+
+                        Divider()
+
+                        Button("Erase Day", systemImage: "trash", role: .destructive) {
+                            showingEraseDayDialog = true
+                        }
+                        .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
+                    } label: {
+                        ToolbarMenuLabel(
+                            title: "More",
+                            systemImage: "ellipsis",
+                            expanded: prefersExpandedToolbar
+                        )
                     }
                 }
             }
@@ -322,35 +317,6 @@ struct ScheduleView: View {
                     }
                     .buttonStyle(.plain)
                 }
-            }
-        }
-    }
-
-    private func toolbarCapsuleLabel(title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption.weight(.bold))
-            .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
-            )
-    }
-
-    @ViewBuilder
-    private func toolbarIconButton(systemImage: String, title: String) -> some View {
-        if prefersExpandedToolbar {
-            toolbarCapsuleLabel(title: title, systemImage: systemImage)
-        } else {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.10))
-                    .frame(width: 30, height: 30)
-
-                Image(systemName: systemImage)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.accentColor)
             }
         }
     }
