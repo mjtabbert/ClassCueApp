@@ -66,6 +66,8 @@ struct RootTabView: View {
     @AppStorage("live_activities_enabled") private var liveActivitiesEnabled = true
     @AppStorage("cloud_sync_last_local_mutation_at") private var storedLastLocalMutationAt: Double = 0
     @AppStorage("cloud_sync_last_refresh_at") private var storedLastCloudRefreshAt: Double = 0
+    @AppStorage("cloudkit_last_event_summary_v1") private var lastCloudKitEventSummary: String = "No CloudKit sync events observed yet."
+    @AppStorage("cloudkit_last_event_timestamp_v1") private var lastCloudKitEventTimestamp: Double = 0
 
     @State private var alarms: [AlarmItem] = []
     @State private var todos: [TodoItem] = []
@@ -238,6 +240,10 @@ struct RootTabView: View {
                         refreshFromCloudBackedStore()
                         syncSharedSnapshot()
                     }
+                }
+                .onChange(of: lastCloudKitEventTimestamp) { _, newValue in
+                    guard scenePhase == .active else { return }
+                    handleCloudKitEventChange(timestamp: newValue, summary: lastCloudKitEventSummary)
                 }
                 .task {
                     for await _ in NotificationCenter.default.notifications(
@@ -751,6 +757,23 @@ struct RootTabView: View {
     private func recordLocalMutation() {
         lastLocalMutationAt = Date()
         storedLastLocalMutationAt = lastLocalMutationAt.timeIntervalSince1970
+    }
+
+    private func handleCloudKitEventChange(timestamp: Double, summary: String) {
+        guard ClassTraxPersistence.activeContainerMode == .cloudKit else { return }
+        guard timestamp > 0 else { return }
+
+        let eventDate = Date(timeIntervalSince1970: timestamp)
+        guard eventDate > lastCloudBackedRefreshAt else { return }
+
+        let normalizedSummary = summary.lowercased()
+        let shouldRefreshImmediately =
+            normalizedSummary.contains("import succeeded") ||
+            normalizedSummary.contains("setup succeeded")
+
+        if shouldRefreshImmediately {
+            refreshFromCloudBackedStore(force: true, bypassLocalMutationPause: true)
+        }
     }
 
     private func handleLegacyStorageChange(_ applyLegacySnapshot: () -> Void) {

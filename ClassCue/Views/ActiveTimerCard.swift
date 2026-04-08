@@ -22,6 +22,7 @@ struct ActiveTimerCard: View {
 
     @Environment(\.horizontalSizeClass) var sizeClass
     @State private var pulse = false
+    @State private var displayNow: Date?
 
     // MARK: - Timing
 
@@ -38,7 +39,7 @@ struct ActiveTimerCard: View {
     }
 
     private var remaining: TimeInterval {
-        max(end.timeIntervalSince(now), 0)
+        max(end.timeIntervalSince(effectiveNow), 0)
     }
 
     private var progress: CGFloat {
@@ -143,6 +144,17 @@ struct ActiveTimerCard: View {
         }
         .onAppear {
             pulse = true
+            displayNow = now
+        }
+        .onChange(of: now) { _, newValue in
+            displayNow = newValue
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { break }
+                displayNow = Date()
+            }
         }
     }
 
@@ -228,6 +240,10 @@ struct ActiveTimerCard: View {
 
     private var timeRangeText: String {
         "\(start.formatted(date: .omitted, time: .shortened)) - \(end.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var effectiveNow: Date {
+        displayNow ?? now
     }
 
     private func landscapeTimerSize(for geo: GeometryProxy) -> CGFloat {

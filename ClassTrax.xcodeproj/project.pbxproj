@@ -134,6 +134,7 @@
 				Views/SettingsView.swift,
 				Views/TimelineRow.swift,
 				Views/TodayView.swift,
+				Views/TodayViewSupportViews.swift,
 				Views/TodoListView.swift,
 				Views/TypeBadge.swift,
 			);
