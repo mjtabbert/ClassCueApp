@@ -56,6 +56,7 @@ struct RootTabView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab: AppTab = .today
     @State private var selectedScheduleDay: WeekdayTab = .today
+    @State private var focusedScheduleItemID: UUID?
     @State private var managePath = NavigationPath()
     @State private var requestedManageDestination: ManageDestination?
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
@@ -540,7 +541,13 @@ struct RootTabView: View {
                 },
                 openScheduleTab: {
                     selectedTab = .schedule
-                }, openStudentsTab: {
+                },
+                openScheduleBlock: { item in
+                    focusedScheduleItemID = item.id
+                    selectedScheduleDay = WeekdayTab(rawValue: item.dayOfWeek) ?? .today
+                    selectedTab = .schedule
+                },
+                openStudentsTab: {
                     managePath = NavigationPath()
                     requestedManageDestination = .students
                     selectedTab = .manage
@@ -565,6 +572,7 @@ struct RootTabView: View {
     private var scheduleTab: some View {
         ScheduleView(
             selectedDay: $selectedScheduleDay,
+            focusedItemID: $focusedScheduleItemID,
             alarms: $alarms,
             todos: $todos,
             subPlans: $subPlans,
@@ -595,7 +603,17 @@ struct RootTabView: View {
             alarms: $alarms,
             studentProfiles: $studentProfiles,
             attendanceRecords: $attendanceRecords,
-            overrideSchedule: activeDayOverride?.alarms
+            overrideSchedule: activeDayOverride?.alarms,
+            openTodayTab: { selectedTab = .today },
+            openScheduleSetup: {
+                selectedScheduleDay = .today
+                selectedTab = .schedule
+            },
+            openStudentsSetup: {
+                managePath = NavigationPath()
+                requestedManageDestination = .students
+                selectedTab = .manage
+            }
         )
     }
 
@@ -627,6 +645,16 @@ struct RootTabView: View {
                 flushPendingPersistenceSaves()
             }
         )
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    selectedTab = .today
+                } label: {
+                    Image(systemName: "house")
+                }
+                .accessibilityLabel("Today")
+            }
+        }
     }
 
     private var todoTab: some View {
@@ -683,6 +711,16 @@ struct RootTabView: View {
             paraContacts: $paraContacts
         )
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    selectedTab = .today
+                } label: {
+                    Image(systemName: "house")
+                }
+                .accessibilityLabel("Today")
+            }
+        }
     }
 
     private var manageTab: some View {
@@ -718,6 +756,16 @@ struct RootTabView: View {
             }
             .navigationTitle("More")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        selectedTab = .today
+                    } label: {
+                        Image(systemName: "house")
+                    }
+                    .accessibilityLabel("Today")
+                }
+            }
             .navigationDestination(for: ManageDestination.self) { destination in
                 switch destination {
                 case .rollCall:
@@ -1471,6 +1519,9 @@ struct AttendanceWorkspaceView: View {
     @Binding var studentProfiles: [StudentSupportProfile]
     @Binding var attendanceRecords: [AttendanceRecord]
     let overrideSchedule: [AlarmItem]?
+    let openTodayTab: () -> Void
+    let openScheduleSetup: () -> Void
+    let openStudentsSetup: () -> Void
 
     @State private var selectedBlock: AttendanceBlockSession?
     @State private var groupActionSession: TodayGroupActionSession?
@@ -1489,11 +1540,11 @@ struct AttendanceWorkspaceView: View {
     }
 
     private var earlierBlocks: [AlarmItem] {
-        todaySchedule.filter { endDate(for: $0) < now && !rosterStudents(for: $0).isEmpty }
+        todaySchedule.filter { endDate(for: $0) < now }
     }
 
     private var laterBlocks: [AlarmItem] {
-        todaySchedule.filter { startDate(for: $0) > now && !rosterStudents(for: $0).isEmpty }
+        todaySchedule.filter { startDate(for: $0) > now }
     }
 
     var body: some View {
@@ -1512,6 +1563,14 @@ struct AttendanceWorkspaceView: View {
             Section("Current Class / Group") {
                 if let activeBlock {
                     blockButton(for: activeBlock)
+                } else if todaySchedule.isEmpty {
+                    setupPrompt(
+                        title: "No classes scheduled for today.",
+                        detail: "Set up today's blocks first, then attendance will open the matching class or group.",
+                        primaryTitle: "Open Schedule Setup",
+                        primarySystemImage: "calendar.badge.plus",
+                        primaryAction: openScheduleSetup
+                    )
                 } else {
                     Text("No class or group is active right now.")
                         .foregroundStyle(.secondary)
@@ -1533,9 +1592,58 @@ struct AttendanceWorkspaceView: View {
                     }
                 }
             }
+
+            if !todaySchedule.isEmpty && todaySchedule.allSatisfy({ rosterStudents(for: $0).isEmpty }) {
+                Section("Set Up Attendance") {
+                    setupPrompt(
+                        title: "Today's classes need roster links.",
+                        detail: "Open Schedule to assign the block, then open Students & Supports if you still need to build the class roster.",
+                        primaryTitle: "Open Schedule",
+                        primarySystemImage: "calendar",
+                        primaryAction: openScheduleSetup,
+                        secondaryTitle: "Students & Supports",
+                        secondarySystemImage: "person.3",
+                        secondaryAction: openStudentsSetup
+                    )
+                }
+            }
         }
         .navigationTitle("Attendance")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    openTodayTab()
+                } label: {
+                    Image(systemName: "house")
+                }
+                .accessibilityLabel("Today")
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if todaySchedule.isEmpty {
+                        Text("No classes scheduled for today")
+                    } else {
+                        Section("Review Today's Classes") {
+                            ForEach(todaySchedule) { block in
+                                Button {
+                                    openAttendanceBlock(block)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(block.className)
+                                        Text("\(startDate(for: block).formatted(date: .omitted, time: .shortened)) - \(endDate(for: block).formatted(date: .omitted, time: .shortened))")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Attendance Actions")
+            }
+        }
         .sheet(item: $selectedBlock) { session in
             NavigationStack {
                 AttendanceEditorView(
@@ -1567,17 +1675,7 @@ struct AttendanceWorkspaceView: View {
         let completion = attendanceCompletion(for: block, students: students)
 
         return Button {
-            if let session = makeGroupActionSession(for: block) {
-                groupActionSession = session
-            } else {
-                selectedBlock = AttendanceBlockSession(
-                    item: block,
-                    date: now,
-                    students: students,
-                    targetClassDefinitionID: nil,
-                    targetTitle: nil
-                )
-            }
+            openAttendanceBlock(block)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -1605,7 +1703,62 @@ struct AttendanceWorkspaceView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .disabled(students.isEmpty)
+    }
+
+    private func openAttendanceBlock(_ block: AlarmItem) {
+        let students = rosterStudents(for: block)
+        if students.isEmpty {
+            openScheduleSetup()
+        } else if let session = makeGroupActionSession(for: block) {
+            groupActionSession = session
+        } else {
+            selectedBlock = AttendanceBlockSession(
+                item: block,
+                date: now,
+                students: students,
+                targetClassDefinitionID: nil,
+                targetTitle: nil
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func setupPrompt(
+        title: String,
+        detail: String,
+        primaryTitle: String,
+        primarySystemImage: String,
+        primaryAction: @escaping () -> Void,
+        secondaryTitle: String? = nil,
+        secondarySystemImage: String? = nil,
+        secondaryAction: (() -> Void)? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button {
+                primaryAction()
+            } label: {
+                Label(primaryTitle, systemImage: primarySystemImage)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            if let secondaryTitle, let secondarySystemImage, let secondaryAction {
+                Button {
+                    secondaryAction()
+                } label: {
+                    Label(secondaryTitle, systemImage: secondarySystemImage)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func attendanceCompletion(for block: AlarmItem, students: [StudentSupportProfile]) -> (badgeText: String, detailText: String, tint: Color) {

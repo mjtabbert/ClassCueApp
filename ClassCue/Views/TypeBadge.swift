@@ -55,7 +55,7 @@ struct TypeBadge: View {
 
     var foregroundColor: Color {
         switch type {
-        case .science, .blank, .studyTime, .assembly:
+        case .science, .blank, .studyTime:
             return .primary
         case .transition:
             return .secondary

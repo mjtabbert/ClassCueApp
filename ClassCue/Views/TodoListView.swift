@@ -236,11 +236,20 @@ struct TodoListView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    if todos.contains(where: { $0.isCompleted }) {
-                        Button("Clear Done") {
-                            todos = todos.filter { !$0.isCompleted }
+                    HStack {
+                        Button {
+                            openTodayTab()
+                        } label: {
+                            Image(systemName: "house")
                         }
-                        .foregroundColor(.red)
+                        .accessibilityLabel("Today")
+
+                        if todos.contains(where: { $0.isCompleted }) {
+                            Button("Clear Done") {
+                                todos = todos.filter { !$0.isCompleted }
+                            }
+                            .foregroundColor(.red)
+                        }
                     }
                 }
                 

@@ -55,7 +55,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
             case .socialStudies:
                 return .green
             case .assembly:
-                return .pink
+                return Color(red: 0.47, green: 0.33, blue: 0.86)
             case .prep:
                 return .blue
             case .studyTime:

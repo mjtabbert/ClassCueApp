@@ -129,6 +129,13 @@ struct NotesView: View {
             .background(notesBackground)
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
+                    Button {
+                        openTodayTab()
+                    } label: {
+                        Image(systemName: "house")
+                    }
+                    .accessibilityLabel("Today")
+
                     if notesMode != .all && !currentModeNotes.isEmpty {
                         Button("Clear") {
                             showClearConfirm = true

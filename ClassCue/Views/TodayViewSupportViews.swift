@@ -4695,9 +4695,10 @@ extension TodayView {
                     }
 
                     if let completionText = attendanceCompletionText(for: item, now: now) {
-                        Label(completionText, systemImage: "checkmark.circle")
+                        let attendanceComplete = completionText == "Attendance complete"
+                        Label(completionText, systemImage: attendanceComplete ? "checkmark.circle.fill" : "checkmark.circle")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(attendanceComplete ? .green : .secondary)
                     }
 
                     Label(
@@ -4899,16 +4900,22 @@ extension TodayView {
             })
 
             Menu {
-                Button("Attendance Summary (.txt)", systemImage: "doc.text") {
-                    exportTodayAttendance(as: .text, schedule: schedule, now: now)
+                Button("All Attendance (.txt)", systemImage: "doc.text") {
+                    exportTodayAttendance(as: .text, scope: .all, schedule: schedule, now: now)
                 }
 
-                Button("Attendance Summary (.csv)", systemImage: "tablecells") {
-                    exportTodayAttendance(as: .csv, schedule: schedule, now: now)
+                Button("All Attendance (.csv)", systemImage: "tablecells") {
+                    exportTodayAttendance(as: .csv, scope: .all, schedule: schedule, now: now)
                 }
 
-                Button("Attendance Summary (.pdf)", systemImage: "doc.richtext") {
-                    exportTodayAttendance(as: .pdf, schedule: schedule, now: now)
+                Divider()
+
+                Button("Absent Only (.txt)", systemImage: "doc.text.magnifyingglass") {
+                    exportTodayAttendance(as: .text, scope: .absentOnly, schedule: schedule, now: now)
+                }
+
+                Button("Absent Only (.csv)", systemImage: "tablecells.badge.ellipsis") {
+                    exportTodayAttendance(as: .csv, scope: .absentOnly, schedule: schedule, now: now)
                 }
             } label: {
                 Label("Export Attendance", systemImage: "square.and.arrow.up")
@@ -4946,7 +4953,7 @@ extension TodayView {
                 showingDailySubPlan = true
             } label: {
                 Label(
-                    "Open \(dailySubPlanDate.formatted(date: .abbreviated, time: .omitted)) Prep & Handoff",
+                    "Open \(shortPlanDateLabel(for: dailySubPlanDate)) Prep & Handoff",
                     systemImage: "square.and.pencil"
                 )
                     .frame(maxWidth: .infinity)
@@ -5970,22 +5977,22 @@ extension TodayView {
                 onRefresh()
             }
 
-            Menu("Set Up") {
-                Button("Customize Today", systemImage: "slider.horizontal.3") {
-                    showingLayoutCustomization = true
-                }
+            Divider()
 
-                Button("Schedule", systemImage: "calendar") {
-                    openScheduleTab()
-                }
+            Button("Customize Today", systemImage: "slider.horizontal.3") {
+                showingLayoutCustomization = true
+            }
 
-                Button("Students & Supports", systemImage: "person.3") {
-                    openStudentsTab()
-                }
+            Button("Schedule", systemImage: "calendar") {
+                openScheduleTab()
+            }
 
-                Button("Settings", systemImage: "gearshape") {
-                    openSettingsTab()
-                }
+            Button("Students & Supports", systemImage: "person.3") {
+                openStudentsTab()
+            }
+
+            Button("Settings", systemImage: "gearshape") {
+                openSettingsTab()
             }
         } label: {
             ToolbarPrimaryActionLabel(
@@ -6094,7 +6101,7 @@ extension TodayView {
     }
 
     func openBlock(_ item: AlarmItem) {
-        editingAlarm = item
+        openScheduleBlock(item)
     }
 }
 
@@ -6674,7 +6681,7 @@ extension TodayView {
         if let activeItem,
            !rosterStudents(for: activeItem).isEmpty,
            let completionText = attendanceCompletionText(for: activeItem, now: now),
-           completionText != "Roll call complete" {
+           completionText != "Attendance complete" {
             prompts.append(
                     TodayActionPrompt(
                         id: "attendance-\(activeItem.id.uuidString)",
@@ -6684,26 +6691,6 @@ extension TodayView {
                     tint: dashboardPrimaryTint,
                     action: {
                         presentRollCall(for: activeItem, now: now, schedule: schedule)
-                    }
-                )
-            )
-        }
-
-        if let activeItem {
-            let hasHomework = !classHomeworkText(for: activeItem, now: now)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
-            prompts.append(
-                TodayActionPrompt(
-                    id: "missing-work-\(activeItem.id.uuidString)",
-                    title: hasHomework ? "Edit homework" : "Add homework",
-                    detail: hasHomework
-                        ? "Update homework for \(activeItem.className) and revise missing-work details if needed."
-                        : "Add homework for \(activeItem.className) before the block ends.",
-                    systemImage: "text.book.closed",
-                    tint: .teal,
-                    action: {
-                        presentHomeworkCapture(for: activeItem, now: now)
                     }
                 )
             )
@@ -6726,14 +6713,14 @@ extension TodayView {
             prompts.append(
                 TodayActionPrompt(
                     id: "prep-\(nextItem.id.uuidString)",
-                    title: "Get next \(teacherWorkflowMode == .classroom ? "class" : "group") ready",
+                    title: "Open next \(teacherWorkflowMode == .classroom ? "class" : "group")",
                     detail: ([nextItem.className, extraDetails.isEmpty ? nil : extraDetails.joined(separator: " • "), "Starts \(nextStart)"] as [String?])
                         .compactMap { $0 }
                         .joined(separator: " • "),
                     systemImage: "arrowshape.right.fill",
                     tint: .blue,
                     action: {
-                        presentHomeworkCapture(for: nextItem, now: now)
+                        openScheduleBlock(nextItem)
                     }
                 )
             )
@@ -6779,6 +6766,14 @@ extension TodayView {
         }
 
         return Array(prompts.prefix(5))
+    }
+
+    func shortPlanDateLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale.autoupdatingCurrent
+        formatter.setLocalizedDateFormatFromTemplate("Mdy")
+        return formatter.string(from: date)
     }
 
     func header(now: Date) -> some View {
@@ -8074,36 +8069,41 @@ extension TodayView {
             return markedKeys.contains(key)
         }.count
         return markedCount >= roster.count
-            ? "Roll call complete"
-            : "Roll call \(markedCount)/\(roster.count)"
+            ? "Attendance complete"
+            : "Attendance \(markedCount)/\(roster.count)"
+    }
+
+    enum TodayAttendanceExportScope {
+        case all
+        case absentOnly
     }
 
     enum TodayAttendanceExportFormat {
         case text
         case csv
-        case pdf
     }
 
-    func exportTodayAttendance(as format: TodayAttendanceExportFormat, schedule: [AlarmItem], now: Date) {
-        let records = attendanceRecordsForToday(now: now)
+    func exportTodayAttendance(
+        as format: TodayAttendanceExportFormat,
+        scope: TodayAttendanceExportScope,
+        schedule: [AlarmItem],
+        now: Date
+    ) {
+        let records = filteredAttendanceRecordsForExport(scope: scope, now: now)
         guard !records.isEmpty else { return }
 
         let titleDate = now.formatted(date: .abbreviated, time: .omitted)
         let filenameDate = AttendanceRecord.dateKey(for: now)
-        let title = "Attendance Summary - \(titleDate)"
-        let body = todayAttendanceExportBody(records: records, schedule: schedule)
+        let summaryLabel = scope == .all ? "Attendance Summary" : "Absent Attendance Summary"
+        let fileLabel = scope == .all ? "attendance-summary" : "attendance-absent-summary"
+        let title = "\(summaryLabel) - \(titleDate)"
+        let body = todayAttendanceExportBody(records: records, schedule: schedule, scope: scope)
 
         let exportURL: URL?
         switch format {
-        case .pdf:
-            exportURL = makeSubPlanPDF(
-                title: title,
-                filename: "classtrax-roll-call-summary-\(filenameDate)",
-                body: body
-            )
         case .text:
             let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("classtrax-roll-call-summary-\(filenameDate)-\(UUID().uuidString).txt")
+                .appendingPathComponent("classtrax-\(fileLabel)-\(filenameDate)-\(UUID().uuidString).txt")
             do {
                 try "\(title)\n\n\(body)".write(to: url, atomically: true, encoding: .utf8)
                 exportURL = url
@@ -8112,7 +8112,7 @@ extension TodayView {
             }
         case .csv:
             let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("classtrax-roll-call-summary-\(filenameDate)-\(UUID().uuidString).csv")
+                .appendingPathComponent("classtrax-\(fileLabel)-\(filenameDate)-\(UUID().uuidString).csv")
             do {
                 try todayAttendanceCSV(records: records, schedule: schedule).write(to: url, atomically: true, encoding: .utf8)
                 exportURL = url
@@ -8126,7 +8126,23 @@ extension TodayView {
         showingTodayAttendanceShareSheet = true
     }
 
-    func todayAttendanceExportBody(records: [AttendanceRecord], schedule: [AlarmItem]) -> String {
+    func filteredAttendanceRecordsForExport(scope: TodayAttendanceExportScope, now: Date) -> [AttendanceRecord] {
+        let records = attendanceRecordsForToday(now: now)
+        switch scope {
+        case .all:
+            return records
+        case .absentOnly:
+            return records.filter {
+                $0.isClassHomeworkNote || ($0.isAttendanceEntry && $0.status == .absent)
+            }
+        }
+    }
+
+    func todayAttendanceExportBody(
+        records: [AttendanceRecord],
+        schedule: [AlarmItem],
+        scope: TodayAttendanceExportScope
+    ) -> String {
         let classOrder = Dictionary(
             uniqueKeysWithValues: schedule.enumerated().map { index, block in
                 (normalizedStudentKey(block.className), index)
@@ -8161,7 +8177,9 @@ extension TodayView {
 
                 let studentName = sortedRecords.first?.studentName ?? "Student"
                 let gradeLevel = sortedRecords.first?.gradeLevel ?? ""
-                let attendanceExceptions = sortedRecords.filter { $0.status != .present }
+                let attendanceExceptions = sortedRecords.filter {
+                    scope == .all ? $0.status != .present : $0.status == .absent
+                }
                 let statusLines = attendanceExceptions.map {
                     "\(resolvedAttendanceClassName(for: $0)): \($0.status.rawValue)"
                 }
@@ -8206,7 +8224,16 @@ extension TodayView {
             }
         }
 
-        return sections.isEmpty ? "All recorded students were marked present." : sections.joined(separator: "\n\n")
+        if !sections.isEmpty {
+            return sections.joined(separator: "\n\n")
+        }
+
+        switch scope {
+        case .all:
+            return "All recorded students were marked present."
+        case .absentOnly:
+            return "No absent students were recorded for today."
+        }
     }
 
     func todayAttendanceCSV(records: [AttendanceRecord], schedule: [AlarmItem]) -> String {

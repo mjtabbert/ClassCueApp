@@ -15,6 +15,7 @@ struct ScheduleView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Binding var selectedDay: WeekdayTab
+    @Binding var focusedItemID: UUID?
     @Binding var alarms: [AlarmItem]
     @Binding var todos: [TodoItem]
     @Binding var subPlans: [SubPlanItem]
@@ -86,16 +87,36 @@ struct ScheduleView: View {
 
         NavigationStack {
 
-            TimelineView(.periodic(from: .now, by: 30)) { context in
-                scheduleScrollContent(now: context.date)
-                .refreshable {
-                    onRefresh()
+            ScrollViewReader { scrollProxy in
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    scheduleScrollContent(now: context.date)
+                        .refreshable {
+                            onRefresh()
+                        }
+                        .background(scheduleBackground)
                 }
-                .background(scheduleBackground)
+                .onAppear {
+                    scrollToFocusedItem(using: scrollProxy)
+                }
+                .onChange(of: focusedItemID) { _, _ in
+                    scrollToFocusedItem(using: scrollProxy)
+                }
+                .onChange(of: selectedDay) { _, _ in
+                    scrollToFocusedItem(using: scrollProxy)
+                }
             }
             .navigationTitle("Schedule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        openTodayTab()
+                    } label: {
+                        Image(systemName: "house")
+                    }
+                    .accessibilityLabel("Today")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddSheet = true
@@ -684,6 +705,7 @@ struct ScheduleView: View {
                 )
                 .contentShape(Rectangle())
             }
+            .id(item.id)
             .buttonStyle(.plain)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button("Edit") {
@@ -701,6 +723,19 @@ struct ScheduleView: View {
     private func deleteBlock(_ item: AlarmItem) {
         alarms.removeAll { $0.id == item.id }
         pendingDeleteItem = nil
+    }
+
+    private func scrollToFocusedItem(using proxy: ScrollViewProxy) {
+        guard let focusedItemID, filteredSchedule.contains(where: { $0.id == focusedItemID }) else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(focusedItemID, anchor: .center)
+            }
+            self.focusedItemID = nil
+        }
     }
 
     private var isShowingDeleteBlockAlert: Binding<Bool> {

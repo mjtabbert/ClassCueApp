@@ -48,6 +48,7 @@ struct TodayView: View {
     let onRefresh: @MainActor () -> Void
     let openAttendanceTab: () -> Void
     let openScheduleTab: () -> Void
+    let openScheduleBlock: (AlarmItem) -> Void
     let openStudentsTab: () -> Void
     let openTodoTab: () -> Void
     let openNotesTab: () -> Void

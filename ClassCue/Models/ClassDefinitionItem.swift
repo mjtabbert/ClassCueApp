@@ -223,25 +223,32 @@ struct ClassDefinitionItem: Identifiable, Codable, Equatable, Hashable {
     }
 
     var themeColor: Color {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let letter = trimmedName
-            .uppercased()
-            .unicodeScalars
-            .first(where: { CharacterSet.letters.contains($0) }),
-              letter.value >= 65,
-              letter.value <= 90 else {
-            switch scheduleKind {
-            case .transition: return Color(.systemGray4)
-            case .other: return Color(.systemGray)
-            case .blank: return .clear
-            default: return .blue
-            }
+        switch scheduleKind {
+        case .math:
+            return .red
+        case .ela:
+            return .orange
+        case .science:
+            return .yellow
+        case .socialStudies:
+            return .green
+        case .assembly:
+            return Color(red: 0.47, green: 0.33, blue: 0.86)
+        case .prep:
+            return .blue
+        case .studyTime:
+            return .teal
+        case .recess:
+            return .indigo
+        case .lunch:
+            return .purple
+        case .transition:
+            return Color(.systemGray4)
+        case .other:
+            return Color(.systemGray)
+        case .blank:
+            return .clear
         }
-
-        let clampedIndex = max(0, min(25, Int(letter.value) - 65))
-        let progress = Double(clampedIndex) / 25.0
-        let hue = 0.0 + (0.78 - 0.0) * progress
-        return Color(hue: hue, saturation: 0.84, brightness: 0.92)
     }
 
     func instructionalContextKind(for workflowMode: TeacherWorkflowMode) -> InstructionalContextKind {

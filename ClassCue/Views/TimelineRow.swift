@@ -24,6 +24,7 @@ struct TimelineRow: View {
         let isTransition = item.type == .transition
         let countdownText = timeUntilStartText()
         let context = item.instructionalContextSummary(using: classDefinitions, workflowMode: workflowMode)
+        let displayTitle = resolvedDisplayTitle(from: context.displayTitle)
         let linkedContextNames = item.linkedInstructionalContextNames(using: classDefinitions, workflowMode: workflowMode)
         let hasMultipleContexts = linkedContextNames.count > 1
         let linkedContextSummary = hasMultipleContexts ? linkedContextNames.joined(separator: " • ") : ""
@@ -41,7 +42,7 @@ struct TimelineRow: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(context.displayTitle)
+                    Text(displayTitle)
                         .font(isHero ? .headline : .subheadline)
                         .fontWeight(isCurrent ? .black : .bold)
                         .italic(isTransition)
@@ -200,5 +201,19 @@ struct TimelineRow: View {
             return item.type.themeColor.opacity(0.42)
         }
         return Color.white.opacity(0.08)
+    }
+
+    private func resolvedDisplayTitle(from contextTitle: String) -> String {
+        let trimmedClassName = item.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedClassName.isEmpty {
+            return trimmedClassName
+        }
+
+        let trimmedContext = contextTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedContext.isEmpty {
+            return trimmedContext
+        }
+
+        return item.typeLabel
     }
 }

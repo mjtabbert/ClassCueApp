@@ -509,7 +509,7 @@ struct AddEditView: View {
 
         if let existing,
            let index = alarms.firstIndex(where: { $0.id == existing.id }) {
-            let newItem = AlarmItem(
+            alarms[index] = AlarmItem(
                 id: existing.id,
                 dayOfWeek: existing.dayOfWeek,
                 className: trimmedName,
@@ -523,34 +523,7 @@ struct AddEditView: View {
                 linkedStudentIDs: Array(linkedStudentIDs),
                 warningLeadTimes: warningLeadTimes
             )
-            let matchingIDs = linkedBlockIDs(for: existing)
-            var updatedAlarms = alarms
-
-            for alarmIndex in updatedAlarms.indices {
-                guard matchingIDs.contains(updatedAlarms[alarmIndex].id) else { continue }
-
-                let current = updatedAlarms[alarmIndex]
-                updatedAlarms[alarmIndex] = AlarmItem(
-                    id: current.id,
-                    dayOfWeek: current.dayOfWeek,
-                    className: trimmedName,
-                    location: trimmedRoom,
-                    gradeLevel: trimmedGrade,
-                    startTime: current.id == existing.id ? start : current.startTime,
-                    endTime: current.id == existing.id ? end : current.endTime,
-                    type: type,
-                    classDefinitionID: matchedClassDefinitionID,
-                    classDefinitionIDs: matchedClassDefinitionIDs,
-                    linkedStudentIDs: Array(linkedStudentIDs),
-                    warningLeadTimes: warningLeadTimes
-                )
-            }
-
-            if !matchingIDs.contains(existing.id) {
-                updatedAlarms[index] = newItem
-            }
-
-            alarms = sortedAlarms(updatedAlarms)
+            alarms = sortedAlarms(alarms)
         } else {
             let createdItems = selectedDays.sorted().map { weekday in
                 AlarmItem(
@@ -667,18 +640,6 @@ struct AddEditView: View {
             }
             return lhs.dayOfWeek < rhs.dayOfWeek
         }
-    }
-
-    private func linkedBlockIDs(for source: AlarmItem) -> Set<UUID> {
-        guard let sourceDefinitionID = source.classDefinitionID else {
-            return [source.id]
-        }
-
-        return Set(
-            alarms
-                .filter { $0.classDefinitionID == sourceDefinitionID }
-                .map(\.id)
-        )
     }
 
     private var currentWarningLeadTimes: [Int] {
