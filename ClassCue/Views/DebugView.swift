@@ -36,6 +36,13 @@ struct DebugView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    debugOverviewCard
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+
                 Section("Testing Readiness") {
                     LabeledContent("Notifications", value: notificationSnapshot?.authorizationStatus ?? "Loading…")
                     LabeledContent("Alerts", value: notificationSnapshot?.alertSetting ?? "Loading…")
@@ -60,6 +67,7 @@ struct DebugView: View {
                     Button("Refresh Debug Status") {
                         loadData()
                     }
+                    .tint(ClassTraxSemanticColor.primaryAction)
 
                     Button("Refresh Live Activity") {
                         LiveActivityManager.refreshFromLastKnownState()
@@ -69,6 +77,7 @@ struct DebugView: View {
                         }
                     }
                     .disabled(liveActivityDebugState == nil)
+                    .tint(ClassTraxSemanticColor.secondaryAction)
 
                     Button("Restart Live Activity") {
                         LiveActivityManager.restartFromLastKnownState()
@@ -78,6 +87,7 @@ struct DebugView: View {
                         }
                     }
                     .disabled(liveActivityDebugState == nil)
+                    .tint(ClassTraxSemanticColor.reviewWarning)
                 }
 
                 Section("App State") {
@@ -180,6 +190,44 @@ struct DebugView: View {
                 loadData()
             }
         }
+    }
+
+    private var debugOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Inspect runtime state quickly.")
+                .font(.headline.weight(.semibold))
+
+            Text("This screen is for internal testing, notification checks, widget validation, and live activity troubleshooting while the app is in development.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                debugMetric(title: "Alarms", value: "\(alarms.count)", accent: ClassTraxSemanticColor.primaryAction)
+                debugMetric(title: "Todos", value: "\(todos.count)", accent: ClassTraxSemanticColor.secondaryAction)
+                debugMetric(title: "Live", value: liveActivityDebugState?.isActive == true ? "Active" : "Idle", accent: ClassTraxSemanticColor.reviewWarning)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func debugMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
 
     private func loadData() {

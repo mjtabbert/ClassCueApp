@@ -10,10 +10,34 @@ import SwiftUI
 struct EditStudentSupportView: View {
     private enum FormSection: String, Hashable {
         case student
+        case classes
         case contacts
         case supports
         case accommodations
         case prompts
+    }
+
+    private enum QuickAddSupportRole: Identifiable {
+        case teacher
+        case para
+
+        var id: String {
+            switch self {
+            case .teacher:
+                return "teacher"
+            case .para:
+                return "para"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .teacher:
+                return "Teacher"
+            case .para:
+                return "Para"
+            }
+        }
     }
 
     @Binding var profiles: [StudentSupportProfile]
@@ -46,6 +70,7 @@ struct EditStudentSupportView: View {
     @State private var prompts = ""
     @State private var expandedSections: Set<FormSection> = [.student]
     @State private var showOptionalDetails = false
+    @State private var quickAddSupportRole: QuickAddSupportRole?
 
     init(
         profiles: Binding<[StudentSupportProfile]>,
@@ -73,33 +98,29 @@ struct EditStudentSupportView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text(existing == nil
-                         ? "Start with the basics. You can save with just a name and class, then add support details later."
-                         : "Update the student first, then expand any support details that need attention.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    studentOverviewCard
                 }
 
-                collapsibleSection(.student, title: "Student", systemImage: "person.text.rectangle") {
+                collapsibleSection(.student, title: "Student Information", systemImage: "person.text.rectangle") {
                     TextField("Name", text: $name)
 
-                    TextField("Class", text: $className)
+                    Picker("Grade", selection: $gradeLevel) {
+                        Text("None").tag("")
+                        ForEach(GradeLevelOption.optionsForPicker(), id: \.self) { option in
+                            Text(option).tag(option)
+                        }
+                    }
+
+                    TextField("Graduation Year", text: $graduationYear)
+                        .keyboardType(.numberPad)
+                    Toggle("Additional Supports / SPED", isOn: $isSped)
+                }
+
+                collapsibleSection(.classes, title: "Classes & Groups", systemImage: "books.vertical") {
+                    TextField("Class Summary", text: $className)
 
                     if !classDefinitions.isEmpty {
-                        DisclosureGroup("Choose Saved Classes (Optional)") {
-                            if !candidateClassDefinitions.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Suggested matches")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-
-                                    ForEach(candidateClassDefinitions) { definition in
-                                        linkedClassToggleRow(definition)
-                                    }
-                                }
-                                .padding(.bottom, 8)
-                            }
-
+                        DisclosureGroup("Choose Saved Classes or Groups") {
                             ForEach(classDefinitions) { definition in
                                 linkedClassToggleRow(definition)
                             }
@@ -111,16 +132,6 @@ struct EditStudentSupportView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-
-                    Picker("Grade", selection: $gradeLevel) {
-                        Text("None").tag("")
-                        ForEach(GradeLevelOption.optionsForPicker(), id: \.self) { option in
-                            Text(option).tag(option)
-                        }
-                    }
-                    TextField("Graduation Year", text: $graduationYear)
-                        .keyboardType(.numberPad)
-                    Toggle("Additional Supports", isOn: $isSped)
                 }
 
                 if existing == nil && !hasOptionalDetails {
@@ -129,11 +140,12 @@ struct EditStudentSupportView: View {
                             showOptionalDetails = true
                             expandedSections.formUnion([.contacts, .supports, .accommodations, .prompts])
                         }
+                        .tint(ClassTraxSemanticColor.secondaryAction)
                     }
                 }
 
                 if showOptionalDetails || existing != nil || hasOptionalDetails {
-                    collapsibleSection(.contacts, title: "Contacts", systemImage: "person.crop.circle.badge") {
+                    collapsibleSection(.contacts, title: "Contacts & Family", systemImage: "person.crop.circle.badge") {
                         TextField("Parent / Guardian Names", text: $parentNames)
                         TextField("Parent Phone Numbers", text: $parentPhoneNumbers)
                         TextField("Parent Emails", text: $parentEmails)
@@ -146,10 +158,30 @@ struct EditStudentSupportView: View {
                 }
 
                 if isSped && (showOptionalDetails || existing != nil || hasOptionalDetails) {
-                    collapsibleSection(.supports, title: "Supports", systemImage: "figure.2.and.child.holdinghands") {
+                    collapsibleSection(.supports, title: "Supports & Staffing", systemImage: "figure.2.and.child.holdinghands") {
                         Text("Assign classroom teachers and paras for this student’s additional supports.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        HStack(spacing: 10) {
+                            Button {
+                                quickAddSupportRole = .teacher
+                            } label: {
+                                Label("Add Teacher", systemImage: "plus.circle.fill")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.teal)
+
+                            Button {
+                                quickAddSupportRole = .para
+                            } label: {
+                                Label("Add Para", systemImage: "plus.circle.fill")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.orange)
+                        }
 
                         if availableTeacherContacts.isEmpty {
                             Text("No teachers added yet.")
@@ -200,6 +232,8 @@ struct EditStudentSupportView: View {
                 }
             }
             .navigationTitle(existing == nil ? "Add Student" : "Edit Student")
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -208,10 +242,11 @@ struct EditStudentSupportView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
+                    Button(existing == nil ? "Add" : "Save") {
                         save()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .fontWeight(.semibold)
                 }
             }
             .onAppear {
@@ -222,6 +257,21 @@ struct EditStudentSupportView: View {
             .onChange(of: selectedClassDefinitionIDs) { _, _ in
                 applySelectedClassDefinitions()
                 reconcileSupportAssignments()
+            }
+            .sheet(item: $quickAddSupportRole) { role in
+                NavigationStack {
+                    QuickSupportStaffEditorView(
+                        roleTitle: role.title,
+                        accent: role == .teacher ? .teal : .orange,
+                        onSave: { contact in
+                            appendQuickSupport(contact, role: role)
+                            quickAddSupportRole = nil
+                        },
+                        onCancel: {
+                            quickAddSupportRole = nil
+                        }
+                    )
+                }
             }
         }
     }
@@ -312,14 +362,6 @@ struct EditStudentSupportView: View {
         }
     }
 
-    private var candidateClassDefinitions: [ClassDefinitionItem] {
-        return classDefinitionCandidates(
-            name: className.trimmingCharacters(in: .whitespacesAndNewlines),
-            gradeLevel: gradeLevel,
-            in: classDefinitions
-        )
-    }
-
     private var selectedClassDefinitions: [ClassDefinitionItem] {
         classDefinitions
             .filter { selectedClassDefinitionIDs.contains($0.id) }
@@ -379,6 +421,66 @@ struct EditStudentSupportView: View {
         selectedSupportParaIDs = selectedSupportParaIDs.intersection(validParaIDs)
     }
 
+    private func appendQuickSupport(_ contact: ClassStaffContact, role: QuickAddSupportRole) {
+        let trimmedName = contact.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        switch role {
+        case .teacher:
+            teacherContacts.append(contact)
+            teacherContacts.sort { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
+            selectedSupportTeacherIDs.insert(contact.id)
+        case .para:
+            paraContacts.append(contact)
+            paraContacts.sort { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
+            selectedSupportParaIDs.insert(contact.id)
+        }
+    }
+
+    private var studentOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(existing == nil ? "Build the student profile in layers." : "Update the student profile.")
+                .font(.headline.weight(.semibold))
+
+            Text(existing == nil
+                ? "Start with the core student details here. Add classes, family, supports, and accommodations only where they belong."
+                : "Keep the core student details current, then expand only the sections that need changes.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                profileMetric(title: "Grade", value: gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Not Set" : GradeLevelOption.pillLabel(for: gradeLevel), accent: ClassTraxSemanticColor.primaryAction)
+                profileMetric(title: "Supports", value: isSped ? "On" : "Off", accent: ClassTraxSemanticColor.secondaryAction)
+                profileMetric(title: "Optional Info", value: hasOptionalDetails ? "Added" : "Basic", accent: ClassTraxSemanticColor.success)
+            }
+        }
+        .padding(14)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func profileMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.systemBackground).opacity(0.92))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(accent.opacity(0.20), lineWidth: 1)
+        )
+    }
+
     @ViewBuilder
     private func linkedClassToggleRow(_ definition: ClassDefinitionItem) -> some View {
         let isSelected = selectedClassDefinitionIDs.contains(definition.id)
@@ -413,6 +515,7 @@ struct EditStudentSupportView: View {
                 Spacer()
             }
             .contentShape(Rectangle())
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
     }
@@ -458,6 +561,7 @@ struct EditStudentSupportView: View {
                 Spacer()
             }
             .contentShape(Rectangle())
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
     }
@@ -475,8 +579,15 @@ struct EditStudentSupportView: View {
             } label: {
                 Label(title, systemImage: systemImage)
                     .font(.headline)
+                    .foregroundStyle(accent(for: section))
             }
         }
+        .listRowBackground(
+            ClassTraxCardBackground(
+                accent: accent(for: section),
+                cornerRadius: 18
+            )
+        )
     }
 
     private func expansionBinding(for section: FormSection) -> Binding<Bool> {
@@ -498,5 +609,71 @@ struct EditStudentSupportView: View {
         }
 
         return className.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func accent(for section: FormSection) -> Color {
+        switch section {
+        case .student:
+            return ClassTraxSemanticColor.primaryAction
+        case .classes:
+            return .indigo
+        case .contacts:
+            return ClassTraxSemanticColor.secondaryAction
+        case .supports:
+            return ClassTraxSemanticColor.reviewWarning
+        case .accommodations:
+            return ClassTraxSemanticColor.success
+        case .prompts:
+            return ClassTraxSemanticColor.attendance
+        }
+    }
+}
+
+private struct QuickSupportStaffEditorView: View {
+    let roleTitle: String
+    let accent: Color
+    let onSave: (ClassStaffContact) -> Void
+    let onCancel: () -> Void
+
+    @State private var name = ""
+    @State private var room = ""
+    @State private var emailAddress = ""
+    @State private var subject = ""
+
+    var body: some View {
+        Form {
+            Section("Contact") {
+                TextField("Name", text: $name)
+                TextField("Room", text: $room)
+                TextField("Role / Subject", text: $subject)
+                TextField("Email Address", text: $emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.emailAddress)
+            }
+        }
+        .navigationTitle("Add \(roleTitle)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    onCancel()
+                }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Done") {
+                    onSave(
+                        ClassStaffContact(
+                            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            room: room.trimmingCharacters(in: .whitespacesAndNewlines),
+                            emailAddress: emailAddress.trimmingCharacters(in: .whitespacesAndNewlines),
+                            subject: subject.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                    )
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .tint(accent)
+            }
+        }
     }
 }

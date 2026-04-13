@@ -59,6 +59,14 @@ final class NotificationManager {
         UserDefaults.standard.string(forKey: "pref_warning_sound_1min") ?? SoundPattern.sharpBell.rawValue
     }
 
+    private var classStartNotificationsEnabled: Bool {
+        UserDefaults.standard.object(forKey: "pref_class_start_notifications_enabled") as? Bool ?? true
+    }
+
+    private var areSoundsMuted: Bool {
+        BellFeedbackManager.areSoundsMuted
+    }
+
     // MARK: Authorization
 
     func requestAuthorization() {
@@ -197,7 +205,9 @@ final class NotificationManager {
             for (index, minutesBefore) in alarm.warningLeadTimes.enumerated() {
                 scheduleWarning(for: alarm, minutesBefore: minutesBefore, warningIndex: index)
             }
-            scheduleStartNotification(for: alarm)
+            if classStartNotificationsEnabled {
+                scheduleStartNotification(for: alarm)
+            }
             scheduleEndNotification(for: alarm)
         }
     }
@@ -207,7 +217,9 @@ final class NotificationManager {
             for (index, minutesBefore) in alarm.warningLeadTimes.enumerated() {
                 scheduleOneOffWarning(for: alarm, minutesBefore: minutesBefore, warningIndex: index, on: date)
             }
-            scheduleOneOffStartNotification(for: alarm, on: date)
+            if classStartNotificationsEnabled {
+                scheduleOneOffStartNotification(for: alarm, on: date)
+            }
             scheduleOneOffEndNotification(for: alarm, on: date)
         }
     }
@@ -498,6 +510,7 @@ final class NotificationManager {
     // MARK: Helpers
 
     private func selectedNotificationSound() -> UNNotificationSound? {
+        guard !areSoundsMuted else { return nil }
 
         let raw = UserDefaults.standard.string(forKey: "pref_sound")
             ?? SoundPattern.classicAlarm.rawValue
@@ -506,6 +519,7 @@ final class NotificationManager {
     }
 
     private func selectedWarningSound(warningIndex: Int) -> UNNotificationSound? {
+        guard !areSoundsMuted else { return nil }
         let rawValue: String
         switch warningIndex {
         case 0:

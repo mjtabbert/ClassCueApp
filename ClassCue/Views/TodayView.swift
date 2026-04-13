@@ -45,14 +45,26 @@ struct TodayView: View {
     let activeOverrideName: String?
     let overrideSchedule: [AlarmItem]?
     let ignoreDate: Date?
+    let isAttendanceEnabled: Bool
+    let isScheduleEnabled: Bool
+    let isHomeworkEnabled: Bool
+    let isBehaviorEnabled: Bool
     let onRefresh: @MainActor () -> Void
+    let onRefreshNotifications: () -> Void
     let openAttendanceTab: () -> Void
     let openScheduleTab: () -> Void
     let openScheduleBlock: (AlarmItem) -> Void
     let openStudentsTab: () -> Void
     let openTodoTab: () -> Void
+    let openTodoItem: (TodoItem) -> Void
     let openNotesTab: () -> Void
     let openSettingsTab: () -> Void
+    let behaviorLogsForStudent: (StudentSupportProfile) -> [BehaviorLogItem]
+    let behaviorSegmentsForStudent: (StudentSupportProfile) -> [BehaviorSegmentOption]
+    let preferredBehaviorSegmentID: (StudentSupportProfile) -> UUID?
+    let preferredBehaviorSegmentTitle: (StudentSupportProfile) -> String
+    let onLogBehavior: (StudentSupportProfile, BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?) -> Void
+    let onLogBehaviorWithNote: (StudentSupportProfile, BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?, String, Date) -> Void
 
     @AppStorage("notes_v1") var notesText: String = ""
     @AppStorage("personal_notes_v1") var personalNotesText: String = ""
@@ -69,6 +81,7 @@ struct TodayView: View {
     @AppStorage("today_dashboard_card_order_v1") var storedDashboardCardOrder = ""
     @AppStorage("today_dashboard_hidden_cards_v1") var storedHiddenDashboardCards = ""
     @AppStorage("teacher_workflow_mode_v1") var teacherWorkflowModeRawValue = TeacherWorkflowMode.classroom.rawValue
+    @AppStorage("classtrax_sounds_muted_v1") var soundsMuted = false
 
     @State var activeWarning: InAppWarning?
     @State var lastWarningKey: String?
@@ -111,8 +124,8 @@ struct TodayView: View {
     @State var lastRenderedActiveItemID: UUID?
     @State var lastRenderedNextItemID: UUID?
 
-    let dashboardPrimaryTint = Color(red: 0.24, green: 0.43, blue: 0.68)
-    let dashboardSecondaryTint = Color(red: 0.41, green: 0.50, blue: 0.64)
+    let dashboardPrimaryTint = ClassTraxSemanticColor.primaryAction
+    let dashboardSecondaryTint = ClassTraxSemanticColor.secondaryAction
 
     var extraTimeByItemID: [UUID: TimeInterval] {
         SessionControlStore.extraTimeByItemID()
@@ -216,6 +229,7 @@ struct TodayView: View {
                 todos: $todos,
                 suggestedContexts: suggestedTaskContexts,
                 suggestedStudents: suggestedStudents,
+                suggestedStudentGroups: classDefinitions.map(\.name),
                 preferredContext: preferredCaptureContext(for: adjustedTodaySchedule(for: Date())),
                 preferredCategory: preferredCaptureCategory(for: adjustedTodaySchedule(for: Date()), now: Date())
             )
@@ -240,15 +254,7 @@ struct TodayView: View {
             }
         }
         .sheet(item: $studentLookupSession) { session in
-            NavigationStack {
-                TodayStudentLookupView(
-                    session: session,
-                    onSelect: { profile in
-                        studentLookupSession = nil
-                        quickViewStudent = profile
-                    }
-                )
-            }
+            studentLookupSheet(for: session)
         }
         .sheet(item: $groupActionSession) { session in
             NavigationStack {
@@ -268,6 +274,10 @@ struct TodayView: View {
                     classDefinitions: classDefinitions,
                     teacherContacts: teacherContacts,
                     paraContacts: paraContacts,
+                    behaviorLogs: behaviorLogsForStudent(profile),
+                    behaviorSegments: behaviorSegmentsForStudent(latestStudentProfile(for: profile)),
+                    preferredBehaviorSegmentID: preferredBehaviorSegmentID(latestStudentProfile(for: profile)),
+                    preferredBehaviorSegmentTitle: preferredBehaviorSegmentTitle(latestStudentProfile(for: profile)),
                     onEdit: {
                         quickViewStudent = nil
                         editingStudentSupportProfile = latestStudentProfile(for: profile)
@@ -279,6 +289,9 @@ struct TodayView: View {
                     onOpenRecord: {
                         quickViewStudent = nil
                         openNotesTab()
+                    },
+                    onLogBehavior: { behavior, rating, segmentID in
+                        onLogBehavior(latestStudentProfile(for: profile), behavior, rating, segmentID)
                     }
                 )
             }
@@ -391,6 +404,25 @@ struct TodayView: View {
         }
         .task {
             await runDashboardRefreshLoop()
+        }
+    }
+
+    private func openStudentQuickView(_ profile: StudentSupportProfile) {
+        studentLookupSession = nil
+        quickViewStudent = profile
+    }
+
+    @ViewBuilder
+    private func studentLookupSheet(for session: TodayStudentLookupSession) -> some View {
+        NavigationStack {
+            TodayStudentLookupView(
+                session: session,
+                onSelect: openStudentQuickView,
+                behaviorLogsForStudent: behaviorLogsForStudent,
+                onBehaviorLog: { profile, behavior, rating, segmentID, note, timestamp in
+                    onLogBehaviorWithNote(profile, behavior, rating, segmentID, note, timestamp)
+                }
+            )
         }
     }
     // MARK: Header

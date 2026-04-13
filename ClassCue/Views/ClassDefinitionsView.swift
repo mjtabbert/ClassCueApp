@@ -1,12 +1,16 @@
 import SwiftUI
 
 struct ClassDefinitionsView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var classDefinitions: [ClassDefinitionItem]
     @Binding var profiles: [StudentSupportProfile]
+    var onCommitChanges: (([ClassDefinitionItem], [StudentSupportProfile]) -> Void)? = nil
+    var onDeleteDefinition: ((ClassDefinitionItem) -> Void)? = nil
     @AppStorage("teacher_workflow_mode_v1") private var teacherWorkflowModeRawValue = TeacherWorkflowMode.classroom.rawValue
 
     @State private var showingAdd = false
     @State private var editingDefinition: ClassDefinitionItem?
+    @State private var showingBulkEntry = false
 
     private var teacherWorkflowMode: TeacherWorkflowMode {
         TeacherWorkflowMode(rawValue: teacherWorkflowModeRawValue) ?? .classroom
@@ -52,23 +56,8 @@ struct ClassDefinitionsView: View {
             } else {
                 Section(definitionsTitle) {
                     ForEach(classDefinitions) { definition in
-                        Button {
-                            editingDefinition = definition
-                        } label: {
-                            classDefinitionRow(definition)
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(sectionCardBackground(accent: rowAccent(for: definition)))
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Edit") {
-                                editingDefinition = definition
-                            }
-                            .tint(.orange)
-
-                            Button("Delete", role: .destructive) {
-                                deleteDefinition(definition)
-                            }
-                        }
+                        classDefinitionRow(definition)
+                            .listRowBackground(sectionCardBackground(accent: rowAccent(for: definition)))
                     }
                 }
             }
@@ -85,17 +74,49 @@ struct ClassDefinitionsView: View {
                     ToolbarMenuLabel(title: addDefinitionTitle, systemImage: "plus", expanded: false)
                 }
             }
+
+            if supportsBulkEntry {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingBulkEntry = true
+                    } label: {
+                        Image(systemName: "square.grid.3x2")
+                    }
+                }
+            }
         }
         .sheet(isPresented: $showingAdd) {
-            EditClassDefinitionView(classDefinitions: $classDefinitions, studentProfiles: $profiles, existing: nil)
+            EditClassDefinitionView(
+                classDefinitions: $classDefinitions,
+                studentProfiles: $profiles,
+                existing: nil,
+                onSaveChanges: { updatedDefinitions, updatedProfiles in
+                    onCommitChanges?(updatedDefinitions, updatedProfiles)
+                }
+            )
         }
         .sheet(item: $editingDefinition) { definition in
-            EditClassDefinitionView(classDefinitions: $classDefinitions, studentProfiles: $profiles, existing: definition)
+            EditClassDefinitionView(
+                classDefinitions: $classDefinitions,
+                studentProfiles: $profiles,
+                existing: definition,
+                onSaveChanges: { updatedDefinitions, updatedProfiles in
+                    onCommitChanges?(updatedDefinitions, updatedProfiles)
+                }
+            )
+        }
+        .sheet(isPresented: $showingBulkEntry) {
+            ClassBulkEntryView(classDefinitions: $classDefinitions)
         }
     }
 
     private func deleteDefinition(_ definition: ClassDefinitionItem) {
-        profiles = profiles.map { profile in
+        if let onDeleteDefinition {
+            onDeleteDefinition(definition)
+            return
+        }
+
+        let updatedProfiles = profiles.map { profile in
             let linkedIDs = linkedClassDefinitionIDs(for: profile)
             guard linkedIDs.contains(definition.id) else { return profile }
             return updatingProfile(
@@ -104,7 +125,10 @@ struct ClassDefinitionsView: View {
                 definitions: classDefinitions.filter { $0.id != definition.id }
             )
         }
-        classDefinitions.removeAll { $0.id == definition.id }
+        let updatedDefinitions = classDefinitions.filter { $0.id != definition.id }
+        profiles = updatedProfiles
+        classDefinitions = updatedDefinitions
+        onCommitChanges?(updatedDefinitions, updatedProfiles)
     }
 
     private var linkedStudentCount: Int {
@@ -138,6 +162,7 @@ struct ClassDefinitionsView: View {
             .filter { !$0.isEmpty }
             .joined(separator: " • ")
         let linkedCount = studentsLinked(to: definition)
+        let relinkCount = relinkCandidateCount(for: definition)
 
         return HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -174,6 +199,18 @@ struct ClassDefinitionsView: View {
                             Capsule(style: .continuous)
                                 .fill(accent.opacity(0.12))
                         )
+
+                    if relinkCount > 0 {
+                        Text("\(relinkCount) to relink")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.blue.opacity(0.12))
+                            )
+                    }
                 }
 
                 if !detail.isEmpty {
@@ -184,6 +221,42 @@ struct ClassDefinitionsView: View {
             }
 
             Spacer(minLength: 0)
+
+            Button {
+                deleteDefinition(definition)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.red)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        Circle()
+                            .fill(Color.red.opacity(0.10))
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                if relinkCount > 0 {
+                    Button("Relink Students") {
+                        relinkStudents(to: definition)
+                    }
+                }
+
+                Button("Edit") {
+                    editingDefinition = definition
+                }
+
+                Button("Delete", role: .destructive) {
+                    deleteDefinition(definition)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
     }
@@ -215,6 +288,18 @@ struct ClassDefinitionsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+
+                if supportsBulkEntry {
+                    Button {
+                        showingBulkEntry = true
+                    } label: {
+                        Label("Grid Entry", systemImage: "square.grid.3x2")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(ClassTraxSemanticColor.secondaryAction)
+                }
             }
 
             HStack(spacing: 12) {
@@ -236,11 +321,37 @@ struct ClassDefinitionsView: View {
             }
         }
         .padding(16)
-        .background(sectionCardBackground(accent: .blue))
+        .background(sectionCardBackground(accent: ClassTraxSemanticColor.primaryAction))
     }
 
     private func rowAccent(for definition: ClassDefinitionItem) -> Color {
         definition.themeColor == .clear ? .blue : definition.themeColor
+    }
+
+    private func relinkCandidateCount(for definition: ClassDefinitionItem) -> Int {
+        profiles.filter {
+            !profileMatches(classDefinitionID: definition.id, profile: $0) &&
+            classNamesMatch(scheduleClassName: definition.name, profileClassName: $0.className)
+        }.count
+    }
+
+    private func relinkStudents(to definition: ClassDefinitionItem) {
+        let updatedProfiles = profiles.map { profile in
+            guard
+                !profileMatches(classDefinitionID: definition.id, profile: profile),
+                classNamesMatch(scheduleClassName: definition.name, profileClassName: profile.className)
+            else {
+                return profile
+            }
+
+            return updatingProfile(
+                profile,
+                linkedTo: linkedClassDefinitionIDs(for: profile) + [definition.id],
+                definitions: classDefinitions
+            )
+        }
+        profiles = updatedProfiles
+        onCommitChanges?(classDefinitions, updatedProfiles)
     }
 
     private func summaryPill(title: String, value: String, accent: Color) -> some View {
@@ -258,26 +369,16 @@ struct ClassDefinitionsView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(accent.opacity(0.10))
+                .fill(accent.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(accent.opacity(0.12), lineWidth: 1)
+                .stroke(accent.opacity(0.10), lineWidth: 0.9)
         )
     }
 
     private func sectionCardBackground(accent: Color) -> some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        accent.opacity(0.08),
-                        Color(.secondarySystemGroupedBackground).opacity(0.96)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+        ClassTraxCardBackground(accent: accent)
     }
 
     private var classDefinitionsBackground: some View {
@@ -292,5 +393,9 @@ struct ClassDefinitionsView: View {
             endPoint: .bottomTrailing
         )
         .ignoresSafeArea()
+    }
+
+    private var supportsBulkEntry: Bool {
+        horizontalSizeClass != .compact
     }
 }

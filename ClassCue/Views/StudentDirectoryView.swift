@@ -22,6 +22,11 @@ struct StudentDirectoryView: View {
     let onSavedTeacherContacts: (([ClassStaffContact]) -> Void)?
     let onSavedParaContacts: (([ClassStaffContact]) -> Void)?
     let onPrepareStudentEditor: (() -> Void)?
+    let behaviorLogsForStudent: ((StudentSupportProfile) -> [BehaviorLogItem])?
+    let behaviorSegmentsForStudent: ((StudentSupportProfile) -> [BehaviorSegmentOption])?
+    let preferredBehaviorSegmentID: ((StudentSupportProfile) -> UUID?)?
+    let preferredBehaviorSegmentTitle: ((StudentSupportProfile) -> String)?
+    let onLogBehavior: ((StudentSupportProfile, BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?) -> Void)?
 
     private enum GroupingMode: String, CaseIterable, Identifiable {
         case none = "All"
@@ -76,6 +81,10 @@ struct StudentDirectoryView: View {
     @State private var showingSavedClasses = false
     @State private var showingTeacherList = false
     @State private var showingParaList = false
+    @State private var showingStudentBulkEntry = false
+    @State private var showingClassBulkEntry = false
+    @State private var showingTeacherBulkEntry = false
+    @State private var showingParaBulkEntry = false
     @State private var editingProfile: StudentSupportProfile?
     @State private var showingFileImporter = false
     @State private var showingTemplateShareSheet = false
@@ -116,7 +125,12 @@ struct StudentDirectoryView: View {
         onSavedProfiles: (([StudentSupportProfile]) -> Void)? = nil,
         onSavedTeacherContacts: (([ClassStaffContact]) -> Void)? = nil,
         onSavedParaContacts: (([ClassStaffContact]) -> Void)? = nil,
-        onPrepareStudentEditor: (() -> Void)? = nil
+        onPrepareStudentEditor: (() -> Void)? = nil,
+        behaviorLogsForStudent: ((StudentSupportProfile) -> [BehaviorLogItem])? = nil,
+        behaviorSegmentsForStudent: ((StudentSupportProfile) -> [BehaviorSegmentOption])? = nil,
+        preferredBehaviorSegmentID: ((StudentSupportProfile) -> UUID?)? = nil,
+        preferredBehaviorSegmentTitle: ((StudentSupportProfile) -> String)? = nil,
+        onLogBehavior: ((StudentSupportProfile, BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?) -> Void)? = nil
     ) {
         _profiles = profiles
         _classDefinitions = classDefinitions
@@ -128,6 +142,15 @@ struct StudentDirectoryView: View {
         self.onSavedTeacherContacts = onSavedTeacherContacts
         self.onSavedParaContacts = onSavedParaContacts
         self.onPrepareStudentEditor = onPrepareStudentEditor
+        self.behaviorLogsForStudent = behaviorLogsForStudent
+        self.behaviorSegmentsForStudent = behaviorSegmentsForStudent
+        self.preferredBehaviorSegmentID = preferredBehaviorSegmentID
+        self.preferredBehaviorSegmentTitle = preferredBehaviorSegmentTitle
+        self.onLogBehavior = onLogBehavior
+    }
+
+    private var supportsBulkEntry: Bool {
+        horizontalSizeClass != .compact
     }
 
     var body: some View {
@@ -166,6 +189,26 @@ struct StudentDirectoryView: View {
 
                         Button("Paras") {
                             showingParaList = true
+                        }
+
+                        if supportsBulkEntry {
+                            Divider()
+
+                            Button("Student Grid Entry") {
+                                showingStudentBulkEntry = true
+                            }
+
+                            Button("Class Grid Entry") {
+                                showingClassBulkEntry = true
+                            }
+
+                            Button("Teacher Grid Entry") {
+                                showingTeacherBulkEntry = true
+                            }
+
+                            Button("Para Grid Entry") {
+                                showingParaBulkEntry = true
+                            }
                         }
 
                         Divider()
@@ -214,6 +257,16 @@ struct StudentDirectoryView: View {
                     ClassDefinitionsView(classDefinitions: $classDefinitions, profiles: $profiles)
                 }
             }
+            .sheet(isPresented: $showingStudentBulkEntry) {
+                StudentBulkEntryView(
+                    profiles: $profiles,
+                    classDefinitions: classDefinitions,
+                    onSaveProfiles: onSavedProfiles
+                )
+            }
+            .sheet(isPresented: $showingClassBulkEntry) {
+                ClassBulkEntryView(classDefinitions: $classDefinitions)
+            }
             .sheet(item: $editingProfile) { profile in
                 EditStudentSupportView(
                     profiles: $profiles,
@@ -231,6 +284,10 @@ struct StudentDirectoryView: View {
                         classDefinitions: classDefinitions,
                         teacherContacts: teacherContacts,
                         paraContacts: paraContacts,
+                        behaviorLogs: behaviorLogsForStudent?(latestProfile(for: profile)) ?? [],
+                        behaviorSegments: behaviorSegmentsForStudent?(latestProfile(for: profile)) ?? [],
+                        preferredBehaviorSegmentID: preferredBehaviorSegmentID?(latestProfile(for: profile)),
+                        preferredBehaviorSegmentTitle: preferredBehaviorSegmentTitle?(latestProfile(for: profile)) ?? "",
                         onEdit: {
                             quickViewProfile = nil
                             onPrepareStudentEditor?()
@@ -241,9 +298,30 @@ struct StudentDirectoryView: View {
                         },
                         onOpenRecord: {
                             quickViewProfile = nil
+                        },
+                        onLogBehavior: onLogBehavior.map { callback in
+                            { behavior, rating, segmentID in
+                                callback(latestProfile(for: profile), behavior, rating, segmentID)
+                            }
                         }
                     )
                 }
+            }
+            .sheet(isPresented: $showingTeacherBulkEntry) {
+                SupportStaffBulkEntryView(
+                    title: "Teachers",
+                    role: .teacher,
+                    contacts: $teacherContacts,
+                    onSaveContacts: onSavedTeacherContacts
+                )
+            }
+            .sheet(isPresented: $showingParaBulkEntry) {
+                SupportStaffBulkEntryView(
+                    title: "Paras",
+                    role: .para,
+                    contacts: $paraContacts,
+                    onSaveContacts: onSavedParaContacts
+                )
             }
             .sheet(isPresented: $showingTeacherList) {
                 NavigationStack {
@@ -448,12 +526,12 @@ struct StudentDirectoryView: View {
             }
 
             Section {
-                HStack(spacing: 12) {
-                    compactSelectionMenu(
-                        title: "Group",
-                        value: groupingMode.rawValue,
-                        systemImage: "square.grid.2x2"
-                    ) {
+                compactSelectionMenu(
+                    title: "View",
+                    value: viewModeLabel,
+                    systemImage: "arrow.up.arrow.down.circle"
+                ) {
+                    Section("Show") {
                         Picker("Group By", selection: $groupingMode) {
                             ForEach(GroupingMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
@@ -461,11 +539,7 @@ struct StudentDirectoryView: View {
                         }
                     }
 
-                    compactSelectionMenu(
-                        title: "Sort",
-                        value: nameSortMode.rawValue,
-                        systemImage: "arrow.up.arrow.down"
-                    ) {
+                    Section("Name Order") {
                         Picker("Sort Names", selection: $nameSortMode) {
                             ForEach(NameSortMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
@@ -597,26 +671,43 @@ struct StudentDirectoryView: View {
             }
 
             if !showsRosterDataTools {
-                HStack(spacing: 10) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 10),
+                        GridItem(.flexible(), spacing: 10)
+                    ],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
                     overviewActionPill(
-                        title: classDefinitions.isEmpty ? "Class" : "Classes",
+                        title: classDefinitions.isEmpty ? "Saved Class" : "Saved Classes",
                         systemImage: "books.vertical",
                         accent: .indigo
                     ) {
                         showingSavedClasses = true
                     }
 
-                    overviewActionPill(title: "Student", systemImage: "plus", accent: .blue) {
+                    overviewActionPill(title: "Add Student", systemImage: "plus", accent: .blue) {
                         onPrepareStudentEditor?()
                         addStudentSeed = .blank
                     }
 
-                    overviewActionPill(title: "Teacher", systemImage: "person.badge.plus", accent: .teal) {
+                    overviewActionPill(title: "Teachers", systemImage: "person.badge.plus", accent: .teal) {
                         showingTeacherList = true
                     }
 
-                    overviewActionPill(title: "Para", systemImage: "person.2.badge.plus", accent: .orange) {
+                    overviewActionPill(title: "Paras", systemImage: "person.2.badge.plus", accent: .orange) {
                         showingParaList = true
+                    }
+
+                    if supportsBulkEntry {
+                        overviewActionPill(
+                            title: "Grid Entry",
+                            systemImage: "square.grid.3x2",
+                            accent: ClassTraxSemanticColor.secondaryAction
+                        ) {
+                            showingStudentBulkEntry = true
+                        }
                     }
                 }
             }
@@ -663,7 +754,7 @@ struct StudentDirectoryView: View {
             }
         }
         .padding(16)
-        .background(sectionCardBackground(accent: .blue))
+        .background(sectionCardBackground(accent: ClassTraxSemanticColor.primaryAction))
     }
 
     private var directoryOverviewSubtitle: String {
@@ -680,6 +771,11 @@ struct StudentDirectoryView: View {
         return "Students, saved classes, and support details in one place."
     }
 
+    private var viewModeLabel: String {
+        let groupLabel = groupingMode == .none ? "All" : groupingMode.rawValue
+        return "\(groupLabel) • \(nameSortMode.rawValue)"
+    }
+
     @ViewBuilder
     private func overviewMetric(title: String, value: String, accent: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -693,10 +789,7 @@ struct StudentDirectoryView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(accent.opacity(0.10))
-        )
+        .classTraxCardChrome(accent: accent, cornerRadius: 12)
     }
 
     @ViewBuilder
@@ -739,13 +832,10 @@ struct StudentDirectoryView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(accent.opacity(0.12))
-            )
+            .background(Capsule(style: .continuous).fill(accent.opacity(0.10)))
             .overlay(
                 Capsule(style: .continuous)
-                    .stroke(accent.opacity(0.18), lineWidth: 1)
+                    .stroke(accent.opacity(0.14), lineWidth: 0.9)
             )
         }
         .buttonStyle(.plain)
@@ -758,10 +848,7 @@ struct StudentDirectoryView: View {
             .foregroundStyle(accent)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(accent.opacity(0.12))
-            )
+            .background(Capsule(style: .continuous).fill(accent.opacity(0.10)))
     }
 
     @ViewBuilder
@@ -855,6 +942,72 @@ struct StudentDirectoryView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                if let behaviorSummary = todayBehaviorSummary(for: profile) {
+                    HStack(spacing: 6) {
+                        ForEach(behaviorSummary, id: \.behavior.id) { item in
+                            HStack(spacing: 4) {
+                                Text(item.behavior.shortLabel)
+                                    .font(.caption2.weight(.black))
+                                Text(item.rating.emoji)
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(item.rating.tint)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(item.rating.tint.opacity(0.12))
+                            )
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+
+                if let weeklyBehaviorStatus = weeklyBehaviorStatus(for: profile) {
+                    HStack(spacing: 6) {
+                        Image(systemName: weeklyBehaviorStatus.symbol)
+                            .font(.caption.weight(.bold))
+                        Text(weeklyBehaviorStatus.title)
+                            .font(.caption.weight(.semibold))
+                        Text(weeklyBehaviorStatus.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(weeklyBehaviorStatus.tint)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(weeklyBehaviorStatus.tint.opacity(0.10))
+                    )
+                    .padding(.top, 2)
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        quickViewProfile = profile
+                    } label: {
+                        Label("Quick View", systemImage: "bolt.text.horizontal")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.mint)
+
+                    Button {
+                        onPrepareStudentEditor?()
+                        editingProfile = profile
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.orange)
+                }
+                .padding(.top, 4)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
@@ -863,11 +1016,6 @@ struct StudentDirectoryView: View {
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            Button("Quick View") {
-                quickViewProfile = profile
-            }
-            .tint(.mint)
-
             Button(selection.contains(profile.id) ? "Deselect" : "Select") {
                 toggleSelection(for: profile)
             }
@@ -893,6 +1041,85 @@ struct StudentDirectoryView: View {
                 deleteProfile(profile)
             }
         }
+    }
+
+    private func todayBehaviorSummary(for profile: StudentSupportProfile) -> [(behavior: BehaviorLogItem.BehaviorKind, rating: BehaviorLogItem.Rating)]? {
+        guard let behaviorLogsForStudent else { return nil }
+
+        let todaysLogs = behaviorLogsForStudent(profile)
+            .filter { Calendar.current.isDateInToday($0.timestamp) }
+
+        guard !todaysLogs.isEmpty else { return nil }
+
+        return BehaviorLogItem.BehaviorKind.allCases.compactMap { behavior in
+            guard let log = todaysLogs
+                .filter({ $0.behavior == behavior })
+                .sorted(by: { $0.timestamp > $1.timestamp })
+                .first else {
+                return nil
+            }
+            return (behavior, log.rating)
+        }
+    }
+
+    private func weeklyBehaviorStatus(for profile: StudentSupportProfile) -> (title: String, detail: String, symbol: String, tint: Color)? {
+        guard let behaviorLogsForStudent else { return nil }
+
+        let calendar = Calendar.current
+        guard let weekInterval = calendar.dateInterval(of: .weekOfYear, for: Date()) else { return nil }
+
+        let weeklyLogs = behaviorLogsForStudent(profile)
+            .filter { weekInterval.contains($0.timestamp) }
+            .sorted { $0.timestamp > $1.timestamp }
+
+        guard !weeklyLogs.isEmpty else { return nil }
+
+        let needsSupportCount = weeklyLogs.filter { $0.rating == .needsSupport }.count
+        if needsSupportCount >= 3 {
+            return (
+                title: "Alert",
+                detail: "\(needsSupportCount) needs-support ratings this week",
+                symbol: "exclamationmark.triangle.fill",
+                tint: .red
+            )
+        }
+
+        let score = weeklyLogs.prefix(4).reduce(into: 0) { partialResult, log in
+            switch log.rating {
+            case .onTask:
+                partialResult += 3
+            case .neutral:
+                partialResult += 2
+            case .needsSupport:
+                partialResult += 1
+            }
+        }
+
+        let average = Double(score) / Double(min(weeklyLogs.count, 4))
+        if average >= 2.5 {
+            return (
+                title: "Trend",
+                detail: "strong week so far",
+                symbol: "arrow.up.right",
+                tint: .green
+            )
+        }
+
+        if average <= 1.5 {
+            return (
+                title: "Trend",
+                detail: "needs close watch this week",
+                symbol: "arrow.down.right",
+                tint: .orange
+            )
+        }
+
+        return (
+            title: "Trend",
+            detail: "mixed week so far",
+            symbol: "arrow.left.and.right",
+            tint: .yellow
+        )
     }
 
     private var directoryBackground: some View {
@@ -974,21 +1201,7 @@ struct StudentDirectoryView: View {
     }
 
     private func sectionCardBackground(accent: Color) -> some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        accent.opacity(0.10),
-                        Color(.secondarySystemBackground).opacity(0.94)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(accent.opacity(0.12), lineWidth: 1)
-            )
+        ClassTraxCardBackground(accent: accent)
     }
 
     private func classSectionBinding(for title: String) -> Binding<Bool> {
@@ -1582,12 +1795,20 @@ struct StudentDirectoryView: View {
 }
 
 private struct DuplicateStudentReviewView: View {
+    private enum CompareMode: String, CaseIterable, Identifiable {
+        case stacked = "Stacked"
+        case sideBySide = "Side by Side"
+
+        var id: String { rawValue }
+    }
+
     let profiles: [StudentSupportProfile]
     let classDefinitions: [ClassDefinitionItem]
     let onMerge: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var expandedProfileIDs: Set<UUID> = []
+    @State private var compareMode: CompareMode = .stacked
 
     private var mergedPreview: StudentSupportProfile? {
         mergedStudentProfile(from: profiles)
@@ -1596,59 +1817,82 @@ private struct DuplicateStudentReviewView: View {
     var body: some View {
         List {
             Section {
-                Text("Review these student records before merging. The merged preview shows the single record that will be kept.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Review these student records before merging. The merged preview shows the single record that will be kept.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Picker("Compare", selection: $compareMode) {
+                        ForEach(CompareMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
             }
 
-            Section("Duplicate Records") {
-                ForEach(profiles) { profile in
-                    DisclosureGroup(
-                        isExpanded: expandedBinding(for: profile.id)
-                    ) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            duplicateFieldRow("Classes", value: classSummary(for: profile, in: classDefinitions))
-                            duplicateFieldRow("Graduation Year", value: profile.graduationYear)
-                            duplicateFieldRow("Parents", value: profile.parentNames)
-                            duplicateFieldRow("Parent Phones", value: profile.parentPhoneNumbers)
-                            duplicateFieldRow("Parent Emails", value: profile.parentEmails)
-                            duplicateFieldRow("Student Email", value: profile.studentEmail)
-                            duplicateFieldRow("Support Rooms", value: profile.supportRooms)
-                            duplicateFieldRow("Support Schedule", value: profile.supportScheduleNotes)
-                            duplicateFieldRow("Accommodations", value: profile.accommodations)
-                            duplicateFieldRow("Prompts", value: profile.prompts)
+            if compareMode == .stacked {
+                Section("Duplicate Records") {
+                    ForEach(profiles) { profile in
+                        DisclosureGroup(
+                            isExpanded: expandedBinding(for: profile.id)
+                        ) {
+                            duplicateDetailStack(for: profile)
+                                .padding(.top, 8)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(profile.name)
+                                        .font(.headline)
+                                    Spacer(minLength: 8)
+                                    gradePill(profile.gradeLevel)
+                                }
 
-                            if profile.isSped || !profile.supportTeacherIDs.isEmpty || !profile.supportParaIDs.isEmpty {
-                                HStack(spacing: 8) {
-                                    comparisonBadge(title: "Supports", value: profile.isSped ? "On" : "Off", accent: .green)
-                                    if !profile.supportTeacherIDs.isEmpty {
-                                        comparisonBadge(title: "Teachers", value: "\(profile.supportTeacherIDs.count)", accent: .blue)
-                                    }
-                                    if !profile.supportParaIDs.isEmpty {
-                                        comparisonBadge(title: "Paras", value: "\(profile.supportParaIDs.count)", accent: .orange)
-                                    }
+                                let summary = duplicateSummaryLine(for: profile)
+                                if !summary.isEmpty {
+                                    Text(summary)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
                                 }
                             }
+                            .padding(.vertical, 4)
                         }
-                        .padding(.top, 8)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(profile.name)
-                                    .font(.headline)
-                                Spacer(minLength: 8)
-                                gradePill(profile.gradeLevel)
+                    }
+                }
+            } else {
+                Section("Side-by-Side Compare") {
+                    ScrollView(.horizontal) {
+                        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
+                            GridRow {
+                                Text("Field")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(minWidth: 120, alignment: .leading)
+
+                                ForEach(profiles) { profile in
+                                    duplicateCompareHeader(profile)
+                                }
+
+                                if mergedPreview != nil {
+                                    duplicateCompareSummaryHeader(title: "Merged")
+                                }
                             }
 
-                            let summary = duplicateSummaryLine(for: profile)
-                            if !summary.isEmpty {
-                                Text(summary)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+                            duplicateCompareRow("Classes") { profile in
+                                classSummary(for: profile, in: classDefinitions)
                             }
+                            duplicateCompareRow("Graduation Year") { $0.graduationYear }
+                            duplicateCompareRow("Parents") { $0.parentNames }
+                            duplicateCompareRow("Parent Phones") { $0.parentPhoneNumbers }
+                            duplicateCompareRow("Parent Emails") { $0.parentEmails }
+                            duplicateCompareRow("Student Email") { $0.studentEmail }
+                            duplicateCompareRow("Support Rooms") { $0.supportRooms }
+                            duplicateCompareRow("Support Schedule") { $0.supportScheduleNotes }
+                            duplicateCompareRow("Accommodations") { $0.accommodations }
+                            duplicateCompareRow("Prompts") { $0.prompts }
                         }
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 6)
                     }
                 }
             }
@@ -1695,6 +1939,34 @@ private struct DuplicateStudentReviewView: View {
     }
 
     @ViewBuilder
+    private func duplicateDetailStack(for profile: StudentSupportProfile) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            duplicateFieldRow("Classes", value: classSummary(for: profile, in: classDefinitions))
+            duplicateFieldRow("Graduation Year", value: profile.graduationYear)
+            duplicateFieldRow("Parents", value: profile.parentNames)
+            duplicateFieldRow("Parent Phones", value: profile.parentPhoneNumbers)
+            duplicateFieldRow("Parent Emails", value: profile.parentEmails)
+            duplicateFieldRow("Student Email", value: profile.studentEmail)
+            duplicateFieldRow("Support Rooms", value: profile.supportRooms)
+            duplicateFieldRow("Support Schedule", value: profile.supportScheduleNotes)
+            duplicateFieldRow("Accommodations", value: profile.accommodations)
+            duplicateFieldRow("Prompts", value: profile.prompts)
+
+            if profile.isSped || !profile.supportTeacherIDs.isEmpty || !profile.supportParaIDs.isEmpty {
+                HStack(spacing: 8) {
+                    comparisonBadge(title: "Supports", value: profile.isSped ? "On" : "Off", accent: .green)
+                    if !profile.supportTeacherIDs.isEmpty {
+                        comparisonBadge(title: "Teachers", value: "\(profile.supportTeacherIDs.count)", accent: .blue)
+                    }
+                    if !profile.supportParaIDs.isEmpty {
+                        comparisonBadge(title: "Paras", value: "\(profile.supportParaIDs.count)", accent: .orange)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func duplicateFieldRow(_ title: String, value: String) -> some View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -1706,6 +1978,53 @@ private struct DuplicateStudentReviewView: View {
                     .font(.subheadline)
             }
         }
+    }
+
+    @ViewBuilder
+    private func duplicateCompareRow(_ title: String, value: @escaping (StudentSupportProfile) -> String) -> some View {
+        GridRow {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 120, alignment: .leading)
+
+            ForEach(profiles) { profile in
+                duplicateCompareCell(value(profile))
+            }
+
+            if let mergedPreview {
+                duplicateCompareCell(value(mergedPreview), accent: ClassTraxSemanticColor.success)
+            }
+        }
+    }
+
+    private func duplicateCompareHeader(_ profile: StudentSupportProfile) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(profile.name)
+                .font(.subheadline.weight(.semibold))
+            gradePill(profile.gradeLevel)
+        }
+        .frame(minWidth: 180, alignment: .leading)
+        .padding(10)
+        .classTraxCardChrome(accent: GradeLevelOption.color(for: profile.gradeLevel), cornerRadius: 16)
+    }
+
+    private func duplicateCompareSummaryHeader(title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .frame(minWidth: 180, alignment: .leading)
+            .padding(10)
+            .classTraxCardChrome(accent: ClassTraxSemanticColor.success, cornerRadius: 16)
+    }
+
+    private func duplicateCompareCell(_ value: String, accent: Color = ClassTraxSemanticColor.secondaryAction) -> some View {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Text(trimmed.isEmpty ? "—" : trimmed)
+            .font(.caption)
+            .foregroundStyle(trimmed.isEmpty ? .tertiary : .primary)
+            .frame(minWidth: 180, alignment: .leading)
+            .padding(10)
+            .classTraxCardChrome(accent: accent, cornerRadius: 16)
     }
 
     private func expandedBinding(for id: UUID) -> Binding<Bool> {
@@ -1773,6 +2092,8 @@ struct SupportStaffDirectoryView: View {
     @State private var draftContacts: [ClassStaffContact]
     @State private var editingContact: ClassStaffContact?
     @State private var showingAddContact = false
+    @State private var savedConfirmationMessage = ""
+    @State private var showingSavedConfirmation = false
 
     init(
         title: String,
@@ -1840,11 +2161,24 @@ struct SupportStaffDirectoryView: View {
                 Section {
                     addContactButton
                 } footer: {
-                    Text("Tap Done to save your \(role.pluralTitle.lowercased()).")
+                    Text("Tap Done to save your \(role.pluralTitle.lowercased()). Tags are optional and work well for service areas or shared responsibilities.")
                 }
             }
         }
         .navigationTitle(title)
+        .safeAreaInset(edge: .bottom) {
+            if showingSavedConfirmation {
+                Text(savedConfirmationMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .classTraxCardChrome(accent: ClassTraxSemanticColor.success, cornerRadius: 16)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Button("Cancel") {
@@ -1916,6 +2250,12 @@ struct SupportStaffDirectoryView: View {
             .sorted { $0.trimmedName.localizedCaseInsensitiveCompare($1.trimmedName) == .orderedAscending }
         contacts = committedContacts
         onCommitContacts?(committedContacts)
+        savedConfirmationMessage = committedContacts.isEmpty
+            ? "\(role.pluralTitle) cleared"
+            : "\(committedContacts.count) \(role.pluralTitle.lowercased()) saved"
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showingSavedConfirmation = true
+        }
     }
 
     private func upsertDraftContact(_ contact: ClassStaffContact) {
@@ -1946,7 +2286,8 @@ struct SupportStaffDirectoryView: View {
             cell: contact.cell.trimmingCharacters(in: .whitespacesAndNewlines),
             extensionNumber: contact.extensionNumber.trimmingCharacters(in: .whitespacesAndNewlines),
             emailAddress: contact.emailAddress.trimmingCharacters(in: .whitespacesAndNewlines),
-            subject: contact.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            subject: contact.subject.trimmingCharacters(in: .whitespacesAndNewlines),
+            tags: contact.tags.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
@@ -1954,6 +2295,7 @@ struct SupportStaffDirectoryView: View {
         [
             contact.room.trimmingCharacters(in: .whitespacesAndNewlines),
             contact.subject.trimmingCharacters(in: .whitespacesAndNewlines),
+            contact.tags.trimmingCharacters(in: .whitespacesAndNewlines),
             contact.emailAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         ]
         .filter { !$0.isEmpty }
@@ -1961,21 +2303,7 @@ struct SupportStaffDirectoryView: View {
     }
 
     private func supportStaffCardBackground(accent: Color) -> some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        accent.opacity(0.10),
-                        Color(.secondarySystemBackground).opacity(0.94)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(accent.opacity(0.12), lineWidth: 1)
-            )
+        ClassTraxCardBackground(accent: accent)
     }
 
     @ViewBuilder
@@ -2006,12 +2334,26 @@ struct SupportStaffDirectoryView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                let trimmedTags = contact.tags.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedTags.isEmpty {
+                    Text(trimmedTags)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(role == .teacher ? ClassTraxSemanticColor.secondaryAction : ClassTraxSemanticColor.reviewWarning)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill((role == .teacher ? ClassTraxSemanticColor.secondaryAction : ClassTraxSemanticColor.reviewWarning).opacity(0.12))
+                        )
+                }
             }
 
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
     }
+
 }
 
 private struct SupportStaffEditorView: View {
@@ -2026,6 +2368,7 @@ private struct SupportStaffEditorView: View {
     @State private var extensionNumber: String
     @State private var emailAddress: String
     @State private var subject: String
+    @State private var tags: String
 
     init(
         role: SupportStaffRole,
@@ -2043,6 +2386,7 @@ private struct SupportStaffEditorView: View {
         _extensionNumber = State(initialValue: initialContact.extensionNumber)
         _emailAddress = State(initialValue: initialContact.emailAddress)
         _subject = State(initialValue: initialContact.subject)
+        _tags = State(initialValue: initialContact.tags)
     }
 
     var body: some View {
@@ -2051,6 +2395,7 @@ private struct SupportStaffEditorView: View {
                 TextField("Name", text: $name)
                 TextField("Room", text: $room)
                 TextField("Subject", text: $subject)
+                TextField("Tags", text: $tags)
             }
 
             Section("Communication") {
@@ -2082,7 +2427,8 @@ private struct SupportStaffEditorView: View {
                             cell: cell,
                             extensionNumber: extensionNumber,
                             emailAddress: emailAddress,
-                            subject: subject
+                            subject: subject,
+                            tags: tags
                         )
                     )
                 }
@@ -2147,12 +2493,7 @@ private extension StudentDirectoryView {
     var classRosterSections: [ClassRosterSection] {
         var sections: [ClassRosterSection] = classDefinitions.map { definition in
             let linkedProfiles = filteredProfiles.filter { profile in
-                if profileMatches(classDefinitionID: definition.id, profile: profile) {
-                    return true
-                }
-
-                return linkedClassDefinitionIDs(for: profile).isEmpty &&
-                    classNamesMatch(scheduleClassName: definition.name, profileClassName: profile.className)
+                profileMatches(classDefinitionID: definition.id, profile: profile)
             }
 
             return ClassRosterSection(

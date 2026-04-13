@@ -19,11 +19,10 @@ struct AboutView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    
                     VStack(spacing: 10) {
                         Image(systemName: "bell.and.waves.left.and.right.fill")
                             .font(.system(size: 54))
-                            .foregroundColor(.orange)
+                            .foregroundColor(ClassTraxSemanticColor.reviewWarning)
                         
                         Text(AppInfo.appName)
                             .font(.largeTitle)
@@ -35,6 +34,9 @@ struct AboutView: View {
                             .multilineTextAlignment(.center)
                     }
                     .padding(.top, 20)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 18)
+                    .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 22)
                     
                     VStack(alignment: .leading, spacing: 14) {
                         infoRow(title: "Developer", value: AppInfo.developerName)
@@ -42,8 +44,7 @@ struct AboutView: View {
                         infoRow(title: "Support", value: AppInfo.supportEmail)
                     }
                     .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 18)
                     
                     VStack(alignment: .leading, spacing: 12) {
                         Text("What Class Trax Does")
@@ -54,8 +55,7 @@ struct AboutView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 18)
                     
                     VStack(spacing: 12) {
                         Button {
@@ -66,6 +66,7 @@ struct AboutView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(ClassTraxSemanticColor.primaryAction)
                         
                         Button {
                             showShareSheet = true
@@ -74,6 +75,7 @@ struct AboutView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
+                        .tint(ClassTraxSemanticColor.secondaryAction)
                         
                         if let supportURL = URL(string: "mailto:\(AppInfo.supportEmail)") {
                             Link(destination: supportURL) {
@@ -81,6 +83,7 @@ struct AboutView: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.bordered)
+                            .tint(ClassTraxSemanticColor.reviewWarning)
                         }
                     }
                 }
@@ -89,7 +92,7 @@ struct AboutView: View {
             .navigationTitle("About Class Trax")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }

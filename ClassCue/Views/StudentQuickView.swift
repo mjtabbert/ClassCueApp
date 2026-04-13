@@ -5,18 +5,252 @@ struct TodayStudentLookupSession: Identifiable {
     let title: String
     let subtitle: String
     let students: [StudentSupportProfile]
+    let behaviorContext: TodayBehaviorQuickLogContext?
+}
+
+struct TodayBehaviorQuickLogContext: Equatable {
+    let segmentID: UUID?
+    let segmentTitle: String
+}
+
+private struct BehaviorQuickLogDraft: Identifiable {
+    let id = UUID()
+    let profile: StudentSupportProfile
+    let behavior: BehaviorLogItem.BehaviorKind
+    let rating: BehaviorLogItem.Rating
+    let segmentID: UUID?
+    let segmentTitle: String
+    let timestamp: Date
+
+    var title: String {
+        "Behavior Note"
+    }
+
+    var resolvedSegmentTitle: String {
+        let trimmed = segmentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "General" : trimmed
+    }
+}
+
+private struct BehaviorQuickSelectRow: View {
+    let title: String
+    let options: [String]
+    @Binding var value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(options, id: \.self) { option in
+                        let isSelected = value.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(option) == .orderedSame
+                        Button {
+                            value = option
+                        } label: {
+                            Text(option)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemFill))
+                                )
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.2)
+                                )
+                                .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+}
+
+private struct BehaviorQuickLogNoteView: View {
+    private static let antecedentOptions = [
+        "Transition",
+        "Task Demand",
+        "Peer Interaction",
+        "Whole Group",
+        "Independent Work",
+        "Adult Redirection"
+    ]
+
+    private static let interventionOptions = [
+        "Redirection",
+        "Break",
+        "Prompt",
+        "Check-In",
+        "Positive Reinforcement",
+        "Seat Change"
+    ]
+
+    let draft: BehaviorQuickLogDraft
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: Field?
+    @State private var antecedentText = ""
+    @State private var interventionText = ""
+    @State private var consequenceText = ""
+    @State private var noteText = ""
+
+    private enum Field {
+        case antecedent
+        case intervention
+        case consequence
+        case notes
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(draft.profile.name)
+                        .font(.headline.weight(.semibold))
+
+                    HStack(spacing: 10) {
+                        quickSummaryPill(title: "Behavior", value: draft.behavior.title)
+                        quickSummaryPill(title: "State", value: draft.rating.colorLabel, tint: draft.rating.tint)
+                    }
+
+                    HStack(spacing: 10) {
+                        quickSummaryPill(title: "Block", value: draft.resolvedSegmentTitle)
+                        quickSummaryPill(
+                            title: "Time",
+                            value: draft.timestamp.formatted(date: .omitted, time: .shortened)
+                        )
+                    }
+                }
+            }
+
+            Section("Trigger") {
+                BehaviorQuickSelectRow(
+                    title: "Quick Pick",
+                    options: Self.antecedentOptions,
+                    value: $antecedentText
+                )
+
+                TextField("What happened right before this?", text: $antecedentText, axis: .vertical)
+                    .focused($focusedField, equals: .antecedent)
+                    .textInputAutocapitalization(.sentences)
+            }
+
+            Section("Intervention") {
+                BehaviorQuickSelectRow(
+                    title: "Quick Pick",
+                    options: Self.interventionOptions,
+                    value: $interventionText
+                )
+
+                TextField("What support or response was used?", text: $interventionText, axis: .vertical)
+                    .focused($focusedField, equals: .intervention)
+                    .textInputAutocapitalization(.sentences)
+            }
+
+            Section("Follow-Up") {
+                TextField("Consequence or immediate outcome", text: $consequenceText, axis: .vertical)
+                    .focused($focusedField, equals: .consequence)
+                    .textInputAutocapitalization(.sentences)
+            }
+
+            Section("Notes") {
+                TextEditor(text: $noteText)
+                    .focused($focusedField, equals: .notes)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.sentences)
+                    .frame(minHeight: 140)
+            }
+        }
+        .navigationTitle(draft.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(composedNote)
+                    dismiss()
+                }
+            }
+        }
+        .task {
+            try? await Task.sleep(for: .milliseconds(150))
+            focusedField = .notes
+        }
+    }
+
+    private var composedNote: String {
+        let trimmedAntecedent = antecedentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedIntervention = interventionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedConsequence = consequenceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNotes = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var lines = [
+            "Block: \(draft.resolvedSegmentTitle)",
+            "Behavior: \(draft.behavior.title)",
+            "State: \(draft.rating.colorLabel)",
+            "Time: \(draft.timestamp.formatted(date: .omitted, time: .shortened))"
+        ]
+
+        if !trimmedAntecedent.isEmpty {
+            lines.append("Trigger: \(trimmedAntecedent)")
+        }
+
+        if !trimmedIntervention.isEmpty {
+            lines.append("Intervention: \(trimmedIntervention)")
+        }
+
+        if !trimmedConsequence.isEmpty {
+            lines.append("Follow-Up: \(trimmedConsequence)")
+        }
+
+        lines.append("")
+        lines.append(trimmedNotes.isEmpty ? "Notes:" : "Notes: \(trimmedNotes)")
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func quickSummaryPill(title: String, value: String, tint: Color = Color(.secondarySystemFill)) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint == Color(.secondarySystemFill) ? .primary : tint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(tint == Color(.secondarySystemFill) ? Color(.secondarySystemFill) : tint.opacity(0.12))
+        )
+    }
 }
 
 enum TodayGroupActionKind: String {
     case rollCall
     case homework
     case students
+    case behavior
 
     var title: String {
         switch self {
         case .rollCall: return "Attendance"
         case .homework: return "Homework"
         case .students: return "Students"
+        case .behavior: return "Behavior"
         }
     }
 
@@ -25,6 +259,7 @@ enum TodayGroupActionKind: String {
         case .rollCall: return "checklist.checked"
         case .homework: return "text.book.closed"
         case .students: return "person.text.rectangle"
+        case .behavior: return "face.smiling"
         }
     }
 }
@@ -48,7 +283,7 @@ struct TodayGroupActionSession: Identifiable {
             switch action {
             case .homework:
                 return true
-            case .rollCall, .students:
+            case .rollCall, .students, .behavior:
                 return studentCount > 0
             }
         }
@@ -70,6 +305,8 @@ struct TodayGroupActionSession: Identifiable {
             return "Pick the linked group you want to edit homework for."
         case .students:
             return "Pick the linked group you want to review students for."
+        case .behavior:
+            return "Pick the linked group you want to use for behavior check-in."
         }
     }
 }
@@ -130,39 +367,16 @@ struct TodayGroupActionPickerView: View {
 struct TodayStudentLookupView: View {
     let session: TodayStudentLookupSession
     let onSelect: (StudentSupportProfile) -> Void
+    let behaviorLogsForStudent: ((StudentSupportProfile) -> [BehaviorLogItem])?
+    let onBehaviorLog: ((StudentSupportProfile, BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?, String, Date) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
+    @State private var behaviorDraft: BehaviorQuickLogDraft?
 
     var body: some View {
         List(filteredStudents) { profile in
-            Button {
-                onSelect(profile)
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(profile.name)
-                            .fontWeight(.semibold)
-
-                        if !profile.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(GradeLevelOption.pillLabel(for: profile.gradeLevel))
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(GradeLevelOption.foregroundColor(for: profile.gradeLevel))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(GradeLevelOption.color(for: profile.gradeLevel), in: Capsule(style: .continuous))
-                        }
-                    }
-
-                    Text(studentLookupSummary(for: profile))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            .buttonStyle(.plain)
+            studentRow(profile)
         }
         .listStyle(.insetGrouped)
         .navigationTitle(session.title)
@@ -179,8 +393,15 @@ struct TodayStudentLookupView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
+            }
+        }
+        .sheet(item: $behaviorDraft) { draft in
+            NavigationStack {
+                BehaviorQuickLogNoteView(draft: draft) { note in
+                    onBehaviorLog?(draft.profile, draft.behavior, draft.rating, draft.segmentID, note, draft.timestamp)
+                }
             }
         }
     }
@@ -208,18 +429,208 @@ struct TodayStudentLookupView: View {
 
         return parts.isEmpty ? "Open student quick view" : parts.joined(separator: " • ")
     }
+
+    private func todayBehaviorSummary(for profile: StudentSupportProfile) -> String? {
+        guard let behaviorLogsForStudent else { return nil }
+
+        let todaysLogs = behaviorLogsForStudent(profile)
+            .filter { Calendar.current.isDateInToday($0.timestamp) }
+
+        guard !todaysLogs.isEmpty else { return nil }
+
+        let ratings = BehaviorLogItem.BehaviorKind.allCases.compactMap { behavior in
+            todaysLogs
+                .filter { $0.behavior == behavior }
+                .sorted { $0.timestamp > $1.timestamp }
+                .first
+                .map { "\(behavior.shortLabel) \($0.rating.emoji)" }
+        }
+
+        guard !ratings.isEmpty else { return nil }
+        return "Today: " + ratings.joined(separator: "  ")
+    }
+
+    private func currentBehaviorLog(for profile: StudentSupportProfile) -> BehaviorLogItem? {
+        guard
+            let behaviorLogsForStudent,
+            let behaviorContext = session.behaviorContext
+        else {
+            return nil
+        }
+
+        let segmentKey = behaviorContext.segmentTitle
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        return behaviorLogsForStudent(profile)
+            .filter {
+                Calendar.current.isDateInToday($0.timestamp) &&
+                $0.segmentTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == segmentKey
+            }
+            .sorted { $0.timestamp > $1.timestamp }
+            .first
+    }
+
+    @ViewBuilder
+    private func studentRow(_ profile: StudentSupportProfile) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                onSelect(profile)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(profile.name)
+                            .fontWeight(.semibold)
+
+                        if !profile.gradeLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(GradeLevelOption.pillLabel(for: profile.gradeLevel))
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(GradeLevelOption.foregroundColor(for: profile.gradeLevel))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(GradeLevelOption.color(for: profile.gradeLevel), in: Capsule(style: .continuous))
+                        }
+                    }
+
+                    Text(studentLookupSummary(for: profile))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+
+                    if let behaviorSummary = todayBehaviorSummary(for: profile) {
+                        Text(behaviorSummary)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    if let currentBehaviorLog = currentBehaviorLog(for: profile) {
+                        HStack(spacing: 6) {
+                            Text("Current Block:")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(currentBehaviorLog.rating.colorLabel)
+                                .font(.caption2.weight(.semibold))
+                            if !currentBehaviorLog.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Image(systemName: "note.text")
+                                    .font(.caption2.weight(.bold))
+                            }
+                        }
+                        .foregroundStyle(currentBehaviorLog.rating.tint)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            if let behaviorContext = session.behaviorContext, onBehaviorLog != nil {
+                HStack(spacing: 10) {
+                    ForEach(BehaviorLogItem.Rating.allCases) { rating in
+                        let isSelected = currentBehaviorLog(for: profile)?.rating == rating
+                        Button {
+                            behaviorDraft = BehaviorQuickLogDraft(
+                                profile: profile,
+                                behavior: .onTask,
+                                rating: rating,
+                                segmentID: behaviorContext.segmentID,
+                                segmentTitle: behaviorContext.segmentTitle,
+                                timestamp: Date()
+                            )
+                        } label: {
+                            Text(rating.emoji)
+                                .font(.body.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(isSelected ? rating.tint.opacity(0.20) : rating.tint.opacity(0.12))
+                            )
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(isSelected ? rating.tint : rating.tint.opacity(0.35), lineWidth: isSelected ? 1.4 : 1)
+                            )
+                            .foregroundStyle(rating.tint)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .font(.subheadline)
+            }
+        }
+        .padding(.vertical, 4)
+    }
 }
 
 struct StudentQuickView: View {
+    private enum BehaviorTrend: Equatable {
+        case improving
+        case declining
+        case steady
+
+        var title: String {
+            switch self {
+            case .improving:
+                return "Improving"
+            case .declining:
+                return "Declining"
+            case .steady:
+                return "Steady"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .improving:
+                return "arrow.up.right"
+            case .declining:
+                return "arrow.down.right"
+            case .steady:
+                return "arrow.left.and.right"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .improving:
+                return ClassTraxSemanticColor.success
+            case .declining:
+                return ClassTraxSemanticColor.reviewWarning
+            case .steady:
+                return ClassTraxSemanticColor.secondaryAction
+            }
+        }
+    }
+
+    private struct BehaviorInsightAlert: Identifiable {
+        let id: String
+        let title: String
+        let detail: String
+        let tint: Color
+    }
+
+    private enum BehaviorWindow: String, CaseIterable, Identifiable {
+        case today = "Today"
+        case week = "This Week"
+
+        var id: String { rawValue }
+    }
+
     let profile: StudentSupportProfile
     let classDefinitions: [ClassDefinitionItem]
     let teacherContacts: [ClassStaffContact]
     let paraContacts: [ClassStaffContact]
+    let behaviorLogs: [BehaviorLogItem]
+    let behaviorSegments: [BehaviorSegmentOption]
+    let preferredBehaviorSegmentID: UUID?
+    let preferredBehaviorSegmentTitle: String
     let onEdit: () -> Void
     let onOpenStudents: () -> Void
     let onOpenRecord: () -> Void
+    let onLogBehavior: ((BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedBehaviorSegmentID: UUID?
+    @State private var selectedBehaviorWindow: BehaviorWindow = .today
 
     var body: some View {
         List {
@@ -254,12 +665,248 @@ struct StudentQuickView: View {
                     }
 
                     HStack(spacing: 10) {
-                        quickMetric(title: "Groups", value: "\(linkedGroupCount)", tint: .blue)
-                        quickMetric(title: "Teachers", value: "\(resolvedTeacherNames.count)", tint: .green)
-                        quickMetric(title: "Paras", value: "\(resolvedParaNames.count)", tint: .orange)
+                        quickMetric(title: "Groups", value: "\(linkedGroupCount)", tint: ClassTraxSemanticColor.primaryAction)
+                        quickMetric(title: "Teachers", value: "\(resolvedTeacherNames.count)", tint: ClassTraxSemanticColor.success)
+                        quickMetric(title: "Paras", value: "\(resolvedParaNames.count)", tint: ClassTraxSemanticColor.reviewWarning)
+                    }
+
+                    if let latestBehaviorLog {
+                        HStack(spacing: 8) {
+                            Text("Latest behavior: \(latestBehaviorLog.behavior.title) \(latestBehaviorLog.rating.colorLabel)")
+                                .font(.caption.weight(.semibold))
+                            if !latestBehaviorLog.segmentTitle.isEmpty {
+                                Text(latestBehaviorLog.segmentTitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .foregroundStyle(latestBehaviorLog.rating.tint)
+
+                        if let noteSummary = latestBehaviorLog.noteSummary {
+                            Text(noteSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(3)
+                        }
+
+                        if !latestBehaviorLog.noteContextTags.isEmpty {
+                            noteTagRow(latestBehaviorLog.noteContextTags)
+                        }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(14)
+                .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+            }
+
+            if !behaviorLogs.isEmpty {
+                Section("Daily Snapshot") {
+                    Picker("Behavior Range", selection: $selectedBehaviorWindow) {
+                        ForEach(BehaviorWindow.allCases) { window in
+                            Text(window.rawValue).tag(window)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    HStack(spacing: 10) {
+                        quickMetric(title: "Positive", value: "\(positiveBehaviorCount)", tint: ClassTraxSemanticColor.success)
+                        quickMetric(title: "Neutral", value: "\(neutralBehaviorCount)", tint: ClassTraxSemanticColor.secondaryAction)
+                        quickMetric(title: "Needs Support", value: "\(needsSupportBehaviorCount)", tint: ClassTraxSemanticColor.reviewWarning)
+                    }
+
+                    if !behaviorSegmentSnapshots.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(behaviorSegmentSnapshots, id: \.title) { snapshot in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(snapshot.title)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+
+                                        HStack(spacing: 6) {
+                                            ForEach(snapshot.ratings, id: \.behaviorTitle) { item in
+                                                VStack(spacing: 2) {
+                                                    Text(item.rating.emoji)
+                                                    Text(item.shortLabel)
+                                                        .font(.caption2.weight(.semibold))
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 124, alignment: .leading)
+                                    .padding(12)
+                                    .classTraxCardChrome(accent: snapshot.accent, cornerRadius: 16)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+
+                    if let behaviorTrend {
+                        HStack(spacing: 10) {
+                            Label(behaviorTrend.title, systemImage: behaviorTrend.symbol)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(behaviorTrend.tint)
+
+                            Spacer()
+
+                            Text(behaviorTrendDetail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .padding(12)
+                        .classTraxCardChrome(accent: behaviorTrend.tint, cornerRadius: 16)
+                    }
+
+                    if !behaviorInsightAlerts.isEmpty {
+                        VStack(spacing: 8) {
+                            ForEach(behaviorInsightAlerts) { alert in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label(alert.title, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(alert.tint)
+
+                                    Text(alert.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .classTraxCardChrome(accent: alert.tint, cornerRadius: 16)
+                            }
+                        }
+                    }
+
+                    if let hotspotSegment {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Block hotspot", systemImage: "calendar.badge.exclamationmark")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.orange)
+
+                            Text("\(hotspotSegment.title) has \(hotspotSegment.count) needs-support ratings in the current review window.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .classTraxCardChrome(accent: .orange, cornerRadius: 16)
+                    }
+
+                    if let concernBehavior {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Behavior to watch", systemImage: "eye.trianglebadge.exclamationmark")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(ClassTraxSemanticColor.reviewWarning)
+
+                            Text("\(concernBehavior.behavior.title) has \(concernBehavior.count) needs-support ratings in the current review window.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .classTraxCardChrome(accent: ClassTraxSemanticColor.reviewWarning, cornerRadius: 16)
+                    }
+                }
+            }
+
+            if !filteredBehaviorLogs.isEmpty {
+                Section(selectedBehaviorSectionTitle) {
+                    ForEach(filteredBehaviorLogs.prefix(3)) { log in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(log.rating.emoji)
+                                .font(.title3)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(log.behavior.title) • \(log.rating.colorLabel)")
+                                    .font(.subheadline.weight(.semibold))
+                                if !log.segmentTitle.isEmpty {
+                                    Text(log.segmentTitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let noteSummary = log.noteSummary {
+                                    Text(noteSummary)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(3)
+                                }
+                                if !log.noteContextTags.isEmpty {
+                                    noteTagRow(log.noteContextTags)
+                                }
+                                Text(log.timestamp.formatted(date: .omitted, time: .shortened))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            if let onLogBehavior {
+                Section("Behavior Check-In") {
+                    if !behaviorSegments.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(behaviorSegments) { segment in
+                                    Button {
+                                        selectedBehaviorSegmentID = segment.id
+                                    } label: {
+                                        Text(segment.title)
+                                            .font(.caption.weight(.semibold))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                Capsule(style: .continuous)
+                                                    .fill(isSelected(segment: segment) ? ClassTraxSemanticColor.primaryAction.opacity(0.16) : Color(.secondarySystemGroupedBackground))
+                                            )
+                                            .foregroundStyle(isSelected(segment: segment) ? ClassTraxSemanticColor.primaryAction : .primary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    } else if !preferredBehaviorSegmentTitle.isEmpty {
+                        Text(preferredBehaviorSegmentTitle)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(BehaviorLogItem.BehaviorKind.allCases) { behavior in
+                        HStack(spacing: 12) {
+                            Text(behavior.title)
+                                .font(.subheadline.weight(.semibold))
+
+                            Spacer()
+
+                            HStack(spacing: 8) {
+                                ForEach(BehaviorLogItem.Rating.allCases) { rating in
+                                    Button {
+                                        onLogBehavior(behavior, rating, selectedBehaviorSegmentID)
+                                    } label: {
+                                        Text(rating.emoji)
+                                            .font(.body.weight(.semibold))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 7)
+                                            .background(
+                                                Capsule(style: .continuous)
+                                                    .fill(isSelected(behavior: behavior, rating: rating) ? rating.tint.opacity(0.22) : rating.tint.opacity(0.12))
+                                            )
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .stroke(rating.tint.opacity(isSelected(behavior: behavior, rating: rating) ? 0.9 : 0.35), lineWidth: isSelected(behavior: behavior, rating: rating) ? 1.4 : 1)
+                                            )
+                                            .foregroundStyle(rating.tint)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
             }
 
             if !supportSummaryLines.isEmpty {
@@ -295,23 +942,31 @@ struct StudentQuickView: View {
                     dismiss()
                     onEdit()
                 }
+                .tint(ClassTraxSemanticColor.primaryAction)
 
                 Button("Open Notes") {
                     dismiss()
                     onOpenRecord()
                 }
+                .tint(ClassTraxSemanticColor.secondaryAction)
 
                 Button("Open Students & Supports") {
                     dismiss()
                     onOpenStudents()
                 }
+                .tint(ClassTraxSemanticColor.reviewWarning)
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Student Quick View")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if selectedBehaviorSegmentID == nil {
+                selectedBehaviorSegmentID = preferredBehaviorSegmentID ?? behaviorSegments.first?.id
+            }
+        }
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
             }
         }
@@ -319,6 +974,282 @@ struct StudentQuickView: View {
 
     private var linkedGroupCount: Int {
         max(linkedClassesOrGroups.count, profile.classDefinitionIDs.isEmpty ? 0 : profile.classDefinitionIDs.count)
+    }
+
+    private var latestBehaviorLog: BehaviorLogItem? {
+        filteredBehaviorLogs.sorted { $0.timestamp > $1.timestamp }.first
+    }
+
+    private func isSelected(behavior: BehaviorLogItem.BehaviorKind, rating: BehaviorLogItem.Rating) -> Bool {
+        todayBehaviorLog(for: behavior)?.rating == rating
+    }
+
+    private func todayBehaviorLog(for behavior: BehaviorLogItem.BehaviorKind) -> BehaviorLogItem? {
+        filteredBehaviorLogs.first(where: { $0.behavior == behavior })
+    }
+
+    private var filteredBehaviorLogs: [BehaviorLogItem] {
+        let title = selectedBehaviorSegmentTitle
+        guard !title.isEmpty else { return windowFilteredBehaviorLogs }
+        return windowFilteredBehaviorLogs.filter { normalizedSegmentTitle($0.segmentTitle) == normalizedSegmentTitle(title) }
+    }
+
+    private var selectedBehaviorSegmentTitle: String {
+        if let segment = behaviorSegments.first(where: { $0.id == selectedBehaviorSegmentID }) {
+            return segment.title
+        }
+        return preferredBehaviorSegmentTitle
+    }
+
+    private var selectedBehaviorSectionTitle: String {
+        let title = selectedBehaviorSegmentTitle
+        let suffix = selectedBehaviorWindow == .today ? "Today" : "This Week"
+        return title.isEmpty ? "Behavior \(suffix)" : "Behavior • \(title) \(suffix)"
+    }
+
+    private func isSelected(segment: BehaviorSegmentOption) -> Bool {
+        segment.id == selectedBehaviorSegmentID
+    }
+
+    private func normalizedSegmentTitle(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var positiveBehaviorCount: Int {
+        windowFilteredBehaviorLogs.filter { $0.rating == .onTask }.count
+    }
+
+    private var neutralBehaviorCount: Int {
+        windowFilteredBehaviorLogs.filter { $0.rating == .neutral }.count
+    }
+
+    private var needsSupportBehaviorCount: Int {
+        windowFilteredBehaviorLogs.filter { $0.rating == .needsSupport }.count
+    }
+
+    private var behaviorTrend: BehaviorTrend? {
+        let logs = windowFilteredBehaviorLogs.sorted { $0.timestamp < $1.timestamp }
+        guard logs.count >= 3 else { return nil }
+
+        let midpoint = logs.count / 2
+        guard midpoint > 0, midpoint < logs.count else { return nil }
+
+        let earlier = Array(logs.prefix(midpoint))
+        let later = Array(logs.suffix(logs.count - midpoint))
+        let delta = averageBehaviorScore(for: later) - averageBehaviorScore(for: earlier)
+
+        if delta >= 0.35 {
+            return .improving
+        }
+        if delta <= -0.35 {
+            return .declining
+        }
+        return .steady
+    }
+
+    private var behaviorTrendDetail: String {
+        let rangeLabel = selectedBehaviorWindow == .today ? "today" : "this week"
+        return "\(windowFilteredBehaviorLogs.count) entries tracked \(rangeLabel)"
+    }
+
+    private var behaviorInsightAlerts: [BehaviorInsightAlert] {
+        var alerts: [BehaviorInsightAlert] = []
+        let chronologicalLogs = windowFilteredBehaviorLogs.sorted { $0.timestamp > $1.timestamp }
+
+        if hasThreeConsecutiveNeedsSupport(in: chronologicalLogs) {
+            alerts.append(
+                BehaviorInsightAlert(
+                    id: "consecutive-needs-support",
+                    title: "Repeated support concern",
+                    detail: "There are 3 consecutive needs-support ratings in the current review window.",
+                    tint: ClassTraxSemanticColor.reviewWarning
+                )
+            )
+        }
+
+        if let repeatedSegment = repeatedNeedsSupportSegment(in: windowFilteredBehaviorLogs) {
+            alerts.append(
+                BehaviorInsightAlert(
+                    id: "repeated-segment-\(repeatedSegment.title)",
+                    title: "Repeated issue in \(repeatedSegment.title)",
+                    detail: "\(repeatedSegment.count) needs-support ratings were logged in this block during the current review window.",
+                    tint: .orange
+                )
+            )
+        }
+
+        return alerts
+    }
+
+    private var hotspotSegment: (title: String, count: Int)? {
+        repeatedNeedsSupportSegment(in: windowFilteredBehaviorLogs)
+    }
+
+    private var concernBehavior: (behavior: BehaviorLogItem.BehaviorKind, count: Int)? {
+        let grouped = Dictionary(grouping: windowFilteredBehaviorLogs.filter { $0.rating == .needsSupport }, by: \.behavior)
+
+        return grouped
+            .compactMap { behavior, logs in
+                logs.count >= 2 ? (behavior: behavior, count: logs.count) : nil
+            }
+            .sorted { lhs, rhs in
+                if lhs.count == rhs.count {
+                    return lhs.behavior.title.localizedCaseInsensitiveCompare(rhs.behavior.title) == .orderedAscending
+                }
+                return lhs.count > rhs.count
+            }
+            .first
+    }
+
+    private var behaviorSegmentSnapshots: [BehaviorSegmentSnapshot] {
+        let groupedLogs = Dictionary(grouping: windowFilteredBehaviorLogs) { normalizedSegmentTitle($0.segmentTitle) }
+        var snapshots: [BehaviorSegmentSnapshot] = []
+
+        for logs in groupedLogs.values {
+            guard let firstLog = logs.first else { continue }
+
+            let ratings: [BehaviorSnapshotRating] = BehaviorLogItem.BehaviorKind.allCases.compactMap { behavior in
+                guard let matchingLog = logs.first(where: { $0.behavior == behavior }) else { return nil }
+                return BehaviorSnapshotRating(
+                    behaviorTitle: behavior.title,
+                    shortLabel: shortBehaviorLabel(for: behavior),
+                    rating: matchingLog.rating
+                )
+            }
+
+            guard !ratings.isEmpty else { continue }
+
+            snapshots.append(
+                BehaviorSegmentSnapshot(
+                    title: firstLog.segmentTitle.isEmpty ? "General" : firstLog.segmentTitle,
+                    ratings: ratings,
+                    accent: accentColor(for: logs)
+                )
+            )
+        }
+
+        return snapshots.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    private var windowFilteredBehaviorLogs: [BehaviorLogItem] {
+        switch selectedBehaviorWindow {
+        case .today:
+            return behaviorLogs.filter { Calendar.current.isDateInToday($0.timestamp) }
+        case .week:
+            let calendar = Calendar.current
+            guard let weekInterval = calendar.dateInterval(of: .weekOfYear, for: Date()) else {
+                return behaviorLogs
+            }
+            return behaviorLogs.filter { weekInterval.contains($0.timestamp) }
+        }
+    }
+
+    private func shortBehaviorLabel(for behavior: BehaviorLogItem.BehaviorKind) -> String {
+        switch behavior {
+        case .onTask:
+            return "OT"
+        case .respectful:
+            return "R"
+        case .safeBody:
+            return "SB"
+        }
+    }
+
+    private func accentColor(for logs: [BehaviorLogItem]) -> Color {
+        if logs.contains(where: { $0.rating == .needsSupport }) {
+            return ClassTraxSemanticColor.reviewWarning
+        }
+        if logs.contains(where: { $0.rating == .neutral }) {
+            return ClassTraxSemanticColor.secondaryAction
+        }
+        return ClassTraxSemanticColor.success
+    }
+
+    private func averageBehaviorScore(for logs: [BehaviorLogItem]) -> Double {
+        guard !logs.isEmpty else { return 0 }
+        let total = logs.reduce(into: 0) { partialResult, log in
+            partialResult += behaviorScore(for: log.rating)
+        }
+        return Double(total) / Double(logs.count)
+    }
+
+    private func behaviorScore(for rating: BehaviorLogItem.Rating) -> Int {
+        switch rating {
+        case .onTask:
+            return 3
+        case .neutral:
+            return 2
+        case .needsSupport:
+            return 1
+        }
+    }
+
+    private func hasThreeConsecutiveNeedsSupport(in logs: [BehaviorLogItem]) -> Bool {
+        var streak = 0
+
+        for log in logs {
+            if log.rating == .needsSupport {
+                streak += 1
+                if streak >= 3 {
+                    return true
+                }
+            } else {
+                streak = 0
+            }
+        }
+
+        return false
+    }
+
+    private func repeatedNeedsSupportSegment(in logs: [BehaviorLogItem]) -> (title: String, count: Int)? {
+        let grouped = Dictionary(grouping: logs.filter { $0.rating == .needsSupport }) { log in
+            let trimmed = log.segmentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "General" : trimmed
+        }
+
+        return grouped
+            .compactMap { key, value in
+                value.count >= 2 ? (title: key, count: value.count) : nil
+            }
+            .sorted { lhs, rhs in
+                if lhs.count == rhs.count {
+                    return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                }
+                return lhs.count > rhs.count
+            }
+            .first
+    }
+
+    private struct BehaviorSegmentSnapshot {
+        let title: String
+        let ratings: [BehaviorSnapshotRating]
+        let accent: Color
+    }
+
+    private struct BehaviorSnapshotRating {
+        let behaviorTitle: String
+        let shortLabel: String
+        let rating: BehaviorLogItem.Rating
+    }
+
+    @ViewBuilder
+    private func noteTagRow(_ tags: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color(.secondarySystemFill))
+                        )
+                }
+            }
+            .padding(.vertical, 1)
+        }
     }
 
     private var primaryClassOrGroupLabel: String {

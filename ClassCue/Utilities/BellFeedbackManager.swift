@@ -14,6 +14,7 @@ import AudioToolbox
 
 final class BellFeedbackManager {
     static let shared = BellFeedbackManager()
+    static let mutePreferenceKey = "classtrax_sounds_muted_v1"
 
     private init() { }
 
@@ -21,7 +22,12 @@ final class BellFeedbackManager {
     private let impactGenerator = UIImpactFeedbackGenerator(style: .heavy)
     private var audioPlayer: AVAudioPlayer?
 
+    static var areSoundsMuted: Bool {
+        UserDefaults.standard.bool(forKey: mutePreferenceKey)
+    }
+
     func playSelectedBellFeedback() {
+        guard !Self.areSoundsMuted else { return }
         let defaults = UserDefaults.standard
 
         let hapticRaw = defaults.string(forKey: "pref_haptic") ?? HapticPattern.doubleThump.rawValue
@@ -34,6 +40,7 @@ final class BellFeedbackManager {
     }
 
     func play(haptic: HapticPattern, bellSound: BellSound) {
+        guard !Self.areSoundsMuted else { return }
         configureAudioSession()
         playSound(bellSound)
         playHaptic(haptic)

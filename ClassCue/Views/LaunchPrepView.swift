@@ -20,6 +20,13 @@ struct LaunchPrepView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    launchOverviewCard
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+
                 Section("Release Snapshot") {
                     launchInfoRow(title: "App", value: AppInfo.appName)
                     launchInfoRow(title: "Display Name", value: AppInfo.displayName)
@@ -55,18 +62,20 @@ struct LaunchPrepView: View {
                     } label: {
                         Label("Copy Checklist", systemImage: "doc.on.doc")
                     }
+                    .tint(ClassTraxSemanticColor.primaryAction)
                     
                     Button {
                         showShareSheet = true
                     } label: {
                         Label("Share Checklist", systemImage: "square.and.arrow.up")
                     }
+                    .tint(ClassTraxSemanticColor.secondaryAction)
                 }
             }
             .navigationTitle("Launch Readiness")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
@@ -81,6 +90,43 @@ struct LaunchPrepView: View {
                 ShareSheet(activityItems: [AppInfo.checklistExportText])
             }
         }
+    }
+
+    private var launchOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Package the release with confidence.")
+                .font(.headline.weight(.semibold))
+
+            Text("Use this checklist to confirm the release snapshot, knock out launch tasks, and share the handoff summary before shipping.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                launchMetric(title: "Checked", value: "\(completedItems.count)/\(AppInfo.launchChecklist.count)", accent: ClassTraxSemanticColor.success)
+                launchMetric(title: "Version", value: AppInfo.versionLabel, accent: ClassTraxSemanticColor.primaryAction)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func launchMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
     
     private func toggleItem(_ index: Int) {

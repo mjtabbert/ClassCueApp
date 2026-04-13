@@ -526,6 +526,7 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
     var blockEndTime: Date?
     var statusRawValue: String = AttendanceRecord.Status.present.rawValue
     var absentHomework: String = ""
+    var assignedHomework: String = ""
 
     init(from item: AttendanceRecord) {
         update(from: item)
@@ -544,6 +545,7 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
         self.blockEndTime = item.blockEndTime
         self.statusRawValue = item.status.rawValue
         self.absentHomework = item.absentHomework
+        self.assignedHomework = item.assignedHomework
     }
 
     func asAttendanceRecord() -> AttendanceRecord {
@@ -559,7 +561,8 @@ final class PersistedAttendanceRecord: PersistedUUIDModel {
             blockStartTime: blockStartTime,
             blockEndTime: blockEndTime,
             status: AttendanceRecord.Status(rawValue: statusRawValue) ?? .present,
-            absentHomework: absentHomework
+            absentHomework: absentHomework,
+            assignedHomework: assignedHomework
         )
     }
 }

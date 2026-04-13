@@ -20,7 +20,6 @@ enum AppTab: Hashable {
     case schedule
     case students
     case todo
-    case notes
     case settings
     case manage
 }
@@ -28,6 +27,20 @@ enum AppTab: Hashable {
 // MARK: - Root Tab View
 
 struct RootTabView: View {
+
+    private enum PlannerWorkspaceTab: String, Hashable, CaseIterable {
+        case tasks
+        case notes
+
+        var title: String {
+            switch self {
+            case .tasks:
+                return "Tasks"
+            case .notes:
+                return "Notes"
+            }
+        }
+    }
 
     private enum ManageDestination: Hashable {
         case rollCall
@@ -55,8 +68,10 @@ struct RootTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab: AppTab = .today
+    @State private var plannerWorkspaceTab: PlannerWorkspaceTab = .tasks
     @State private var selectedScheduleDay: WeekdayTab = .today
     @State private var focusedScheduleItemID: UUID?
+    @State private var focusedTodoID: UUID?
     @State private var managePath = NavigationPath()
     @State private var requestedManageDestination: ManageDestination?
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
@@ -67,6 +82,7 @@ struct RootTabView: View {
     @AppStorage("teacher_contacts_v1_data") private var savedTeacherContacts: Data = Data()
     @AppStorage("para_contacts_v1_data") private var savedParaContacts: Data = Data()
     @AppStorage("attendance_v1_data") private var savedAttendance: Data = Data()
+    @AppStorage("behavior_logs_v1_data") private var savedBehaviorLogs: Data = Data()
     @AppStorage("sub_plans_v1_data") private var savedSubPlans: Data = Data()
     @AppStorage("daily_sub_plans_v1_data") private var savedDailySubPlans: Data = Data()
     @AppStorage("follow_up_notes_v1_data") private var savedFollowUpNotes: Data = Data()
@@ -74,6 +90,12 @@ struct RootTabView: View {
     @AppStorage("day_overrides_v1_data") private var savedOverrides: Data = Data()
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
     @AppStorage("live_activities_enabled") private var liveActivitiesEnabled = true
+    @AppStorage("pref_class_start_notifications_enabled") private var classStartNotificationsEnabled = true
+    @AppStorage("classtrax_sounds_muted_v1") private var soundsMuted = false
+    @AppStorage("feature_attendance_enabled") private var featureAttendanceEnabled = true
+    @AppStorage("feature_schedule_enabled") private var featureScheduleEnabled = true
+    @AppStorage("feature_homework_enabled") private var featureHomeworkEnabled = true
+    @AppStorage("feature_behavior_enabled") private var featureBehaviorEnabled = true
     @AppStorage("cloud_sync_last_local_mutation_at") private var storedLastLocalMutationAt: Double = 0
     @AppStorage("cloud_sync_last_refresh_at") private var storedLastCloudRefreshAt: Double = 0
     @AppStorage("cloudkit_last_event_summary_v1") private var lastCloudKitEventSummary: String = "No CloudKit sync events observed yet."
@@ -87,6 +109,7 @@ struct RootTabView: View {
     @State private var teacherContacts: [ClassStaffContact] = []
     @State private var paraContacts: [ClassStaffContact] = []
     @State private var attendanceRecords: [AttendanceRecord] = []
+    @State private var behaviorLogs: [BehaviorLogItem] = []
     @State private var subPlans: [SubPlanItem] = []
     @State private var dailySubPlans: [DailySubPlanItem] = []
     @State private var profiles: [ScheduleProfile] = []
@@ -118,6 +141,10 @@ struct RootTabView: View {
     }
 
     private var suggestedTaskContexts: [String] {
+        let savedContexts = classDefinitions
+            .map(\.name)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
         let classContexts = alarms
             .map(\.className)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -126,18 +153,33 @@ struct RootTabView: View {
             .map(\.title)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-        return Array(Set((classContexts + commitmentContexts).filter { !$0.isEmpty }))
+        return Array(Set((savedContexts + classContexts + commitmentContexts).filter { !$0.isEmpty }))
             .sorted()
     }
 
     private var suggestedStudents: [String] {
         let taskStudents = todos
-            .flatMap { [$0.effectiveStudentLink, $0.effectiveStudentGroupLink, $0.effectiveStudentOrGroup] }
+            .map(\.effectiveStudentLink)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
         let profileStudents = studentProfiles.map(\.name)
         return normalizedStudentDirectory(profileStudents + taskStudents)
+    }
+
+    private var suggestedStudentGroups: [String] {
+        let savedGroups = classDefinitions
+            .map(\.name)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let taskGroups = todos
+            .map(\.effectiveStudentGroupLink)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return Array(Set(savedGroups + taskGroups))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     private var studentSupportsByName: [String: StudentSupportProfile] {
@@ -149,9 +191,10 @@ struct RootTabView: View {
     private var baseTabView: some View {
         TabView(selection: $selectedTab) {
             todayTab
-            scheduleTab
+            if featureScheduleEnabled {
+                scheduleTab
+            }
             todoTab
-            notesTab
             manageTab
         }
     }
@@ -280,6 +323,17 @@ struct RootTabView: View {
                         flushPendingPersistenceSaves()
                         syncLiveActivity(now: Date())
                     }
+                }
+                .onChange(of: featureScheduleEnabled) { _, isEnabled in
+                    if !isEnabled, selectedTab == .schedule {
+                        selectedTab = .today
+                    }
+                }
+                .onChange(of: classStartNotificationsEnabled) { _, _ in
+                    refreshNotifications(immediate: true)
+                }
+                .onChange(of: soundsMuted) { _, _ in
+                    refreshNotifications(immediate: true)
                 }
                 .onAppear {
                     syncLiveActivity(now: Date())
@@ -531,8 +585,15 @@ struct RootTabView: View {
                 activeOverrideName: activeDayOverride?.displayName,
                 overrideSchedule: activeDayOverride?.alarms,
                 ignoreDate: ignoreDate,
+                isAttendanceEnabled: featureAttendanceEnabled,
+                isScheduleEnabled: featureScheduleEnabled,
+                isHomeworkEnabled: featureHomeworkEnabled,
+                isBehaviorEnabled: featureBehaviorEnabled,
                 onRefresh: {
                     manuallyRefreshSyncedData()
+                },
+                onRefreshNotifications: {
+                    refreshNotifications(immediate: true)
                 },
                 openAttendanceTab: {
                     managePath = NavigationPath()
@@ -552,14 +613,47 @@ struct RootTabView: View {
                     requestedManageDestination = .students
                     selectedTab = .manage
                 }, openTodoTab: {
+                    plannerWorkspaceTab = .tasks
+                    selectedTab = .todo
+                }, openTodoItem: { item in
+                    plannerWorkspaceTab = .tasks
+                    focusedTodoID = item.id
                     selectedTab = .todo
                 }, openNotesTab: {
-                    selectedTab = .notes
+                    plannerWorkspaceTab = .notes
+                    selectedTab = .todo
                 }, openSettingsTab: {
                     managePath = NavigationPath()
                     requestedManageDestination = .settings
                     selectedTab = .manage
-                })
+                },
+                behaviorLogsForStudent: { profile in
+                    behaviorLogsForStudent(profile)
+                },
+                behaviorSegmentsForStudent: { profile in
+                    behaviorSegments(for: profile)
+                },
+                preferredBehaviorSegmentID: { profile in
+                    preferredBehaviorSegment(for: profile, now: Date())?.id
+                },
+                preferredBehaviorSegmentTitle: { profile in
+                    preferredBehaviorSegmentTitle(for: profile)
+                },
+                onLogBehavior: { profile, behavior, rating, segmentID in
+                    logBehavior(for: profile, behavior: behavior, rating: rating, segmentID: segmentID)
+                },
+                onLogBehaviorWithNote: { profile, behavior, rating, segmentID, note, timestamp in
+                    logBehavior(
+                        for: profile,
+                        behavior: behavior,
+                        rating: rating,
+                        segmentID: segmentID,
+                        note: note,
+                        now: timestamp,
+                        shouldToggleOffMatching: false
+                    )
+                }
+            )
             .toolbar(.hidden, for: .tabBar)
         }
         .tabItem {
@@ -588,9 +682,16 @@ struct RootTabView: View {
                 manuallyRefreshSyncedData()
             },
             openTodayTab: { selectedTab = .today },
-            openTodoTab: { selectedTab = .todo },
-            openNotesTab: { selectedTab = .notes }
+            openTodoTab: {
+                plannerWorkspaceTab = .tasks
+                selectedTab = .todo
+            },
+            openNotesTab: {
+                plannerWorkspaceTab = .notes
+                selectedTab = .todo
+            }
         )
+        .toolbar(.hidden, for: .tabBar)
         .tabItem {
             tabLabel(title: "Schedule", systemImage: "calendar")
         }
@@ -641,8 +742,29 @@ struct RootTabView: View {
                     paraContacts: updatedContacts
                 )
             },
+            onSavedClassDefinitions: { updatedDefinitions, updatedProfiles in
+                persistClassDefinitionsImmediately(updatedDefinitions, profiles: updatedProfiles)
+            },
+            onDeleteClassDefinition: { definition in
+                deleteClassDefinitionImmediately(definition)
+            },
             onPrepareStudentEditor: {
                 flushPendingPersistenceSaves()
+            },
+            behaviorLogsForStudent: { profile in
+                behaviorLogsForStudent(profile)
+            },
+            behaviorSegmentsForStudent: { profile in
+                behaviorSegments(for: profile)
+            },
+            preferredBehaviorSegmentID: { profile in
+                preferredBehaviorSegment(for: profile, now: Date())?.id
+            },
+            preferredBehaviorSegmentTitle: { profile in
+                preferredBehaviorSegmentTitle(for: profile)
+            },
+            onLogBehavior: { profile, behavior, rating, segmentID in
+                logBehavior(for: profile, behavior: behavior, rating: rating, segmentID: segmentID)
             }
         )
         .toolbar {
@@ -658,49 +780,57 @@ struct RootTabView: View {
     }
 
     private var todoTab: some View {
-        NavigationStack {
-            TodoListView(
-                todos: $todos,
-                studentProfiles: $studentProfiles,
-                classDefinitions: $classDefinitions,
-                teacherContacts: $teacherContacts,
-                paraContacts: $paraContacts,
-                suggestedContexts: suggestedTaskContexts,
-                suggestedStudents: suggestedStudents,
-                studentSupportsByName: studentSupportsByName,
-                onRefresh: {
-                    manuallyRefreshSyncedData()
-                },
-                openTodayTab: { selectedTab = .today }
-            )
+        VStack(spacing: 0) {
+            Picker("Planner Workspace", selection: $plannerWorkspaceTab) {
+                ForEach(PlannerWorkspaceTab.allCases, id: \.self) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+
+            Group {
+                switch plannerWorkspaceTab {
+                case .tasks:
+                    TodoListView(
+                        todos: $todos,
+                        studentProfiles: $studentProfiles,
+                        classDefinitions: $classDefinitions,
+                        teacherContacts: $teacherContacts,
+                        paraContacts: $paraContacts,
+                        focusedTodoID: $focusedTodoID,
+                        suggestedContexts: suggestedTaskContexts,
+                        suggestedStudents: suggestedStudents,
+                        suggestedStudentGroups: suggestedStudentGroups,
+                        studentSupportsByName: studentSupportsByName,
+                        onRefresh: {
+                            manuallyRefreshSyncedData()
+                        },
+                        openTodayTab: { selectedTab = .today }
+                    )
+                case .notes:
+                    NotesView(
+                        studentProfiles: $studentProfiles,
+                        classDefinitions: $classDefinitions,
+                        teacherContacts: $teacherContacts,
+                        paraContacts: $paraContacts,
+                        suggestedContexts: suggestedTaskContexts,
+                        suggestedStudents: suggestedStudents,
+                        onRefresh: {
+                            manuallyRefreshSyncedData()
+                        },
+                        openTodayTab: { selectedTab = .today }
+                    )
+                }
+            }
         }
         .tabItem {
             tabLabel(title: "Planner", systemImage: "calendar.badge.checkmark")
         }
         .accessibilityLabel("Planner")
         .tag(AppTab.todo)
-    }
-
-    private var notesTab: some View {
-        NavigationStack {
-            NotesView(
-                studentProfiles: $studentProfiles,
-                classDefinitions: $classDefinitions,
-                teacherContacts: $teacherContacts,
-                paraContacts: $paraContacts,
-                suggestedContexts: suggestedTaskContexts,
-                suggestedStudents: suggestedStudents,
-                onRefresh: {
-                    manuallyRefreshSyncedData()
-                },
-                openTodayTab: { selectedTab = .today }
-            )
-        }
-        .tabItem {
-            tabLabel(title: "Notes", systemImage: "square.and.pencil")
-        }
-        .accessibilityLabel("Notes")
-        .tag(AppTab.notes)
     }
 
     private var settingsWorkspace: some View {
@@ -726,13 +856,53 @@ struct RootTabView: View {
     private var manageTab: some View {
         NavigationStack(path: $managePath) {
             List {
+                Section {
+                    manageOverviewCard
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+
+                Section("Jump Back In") {
+                    hubSwitchRow(
+                        title: "Today",
+                        detail: "Go back to the live classroom dashboard.",
+                        systemImage: "house",
+                        accent: ClassTraxSemanticColor.primaryAction
+                    ) {
+                        selectedTab = .today
+                    }
+
+                    hubSwitchRow(
+                        title: "Planner",
+                        detail: "Open tasks, notes, and student-linked planning in one workspace.",
+                        systemImage: "calendar.badge.checkmark",
+                        accent: ClassTraxSemanticColor.reviewWarning
+                    ) {
+                        plannerWorkspaceTab = .tasks
+                        selectedTab = .todo
+                    }
+
+                    hubSwitchRow(
+                        title: "Notes",
+                        detail: "Jump into school log, class notes, and student notes inside Planner.",
+                        systemImage: "square.and.pencil",
+                        accent: ClassTraxSemanticColor.secondaryAction
+                    ) {
+                        plannerWorkspaceTab = .notes
+                        selectedTab = .todo
+                    }
+                }
+
                 Section("Daily Tools") {
-                    NavigationLink(value: ManageDestination.rollCall) {
-                        manageRow(
-                            title: "Attendance",
-                            detail: "Open the dedicated attendance workspace and catch up any missed blocks.",
-                            systemImage: "checklist.checked"
-                        )
+                    if featureAttendanceEnabled {
+                        NavigationLink(value: ManageDestination.rollCall) {
+                            manageRow(
+                                title: "Attendance",
+                                detail: "Open the dedicated attendance workspace and catch up any missed blocks.",
+                                systemImage: "checklist.checked"
+                            )
+                        }
                     }
                 }
 
@@ -754,7 +924,20 @@ struct RootTabView: View {
                     }
                 }
             }
-            .navigationTitle("More")
+            .scrollContentBackground(.hidden)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(.systemBackground),
+                        ClassTraxSemanticColor.primaryAction.opacity(0.04),
+                        Color(.systemGroupedBackground)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+            )
+            .navigationTitle("Hub")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -784,9 +967,9 @@ struct RootTabView: View {
             requestedManageDestination = nil
         }
         .tabItem {
-            tabLabel(title: "More", systemImage: "ellipsis.circle")
+            tabLabel(title: "Hub", systemImage: "square.grid.2x2")
         }
-        .accessibilityLabel("More")
+        .accessibilityLabel("Hub")
         .tag(AppTab.manage)
     }
 
@@ -806,6 +989,90 @@ struct RootTabView: View {
         .padding(.vertical, 2)
     }
 
+    private var manageOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Overview")
+                    .font(.title3.weight(.bold))
+
+                Text("Keep setup, attendance recovery, supports, and settings together while Today, Planner, and Notes stay focused on live work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+
+            HStack(spacing: 8) {
+                hubMetric(title: "Students", value: "\(studentProfiles.count)", accent: .blue) {
+                    managePath = NavigationPath()
+                    managePath.append(ManageDestination.students)
+                }
+                hubMetric(title: "Classes", value: "\(classDefinitions.count)", accent: .indigo) {
+                    managePath = NavigationPath()
+                    managePath.append(ManageDestination.students)
+                }
+                hubMetric(title: "Teachers", value: "\(teacherContacts.count)", accent: .teal) {
+                    managePath = NavigationPath()
+                    managePath.append(ManageDestination.students)
+                }
+                hubMetric(title: "Paras", value: "\(paraContacts.count)", accent: .orange) {
+                    managePath = NavigationPath()
+                    managePath.append(ManageDestination.students)
+                }
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 22)
+    }
+
+    private func hubMetric(title: String, value: String, accent: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .classTraxCardChrome(accent: accent, cornerRadius: 14)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func hubSwitchRow(title: String, detail: String, systemImage: String, accent: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(accent.opacity(0.12))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Image(systemName: systemImage)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(accent)
+                    }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Data Loading
 
     private func loadSavedData() {
@@ -818,6 +1085,7 @@ struct RootTabView: View {
         let legacySubPlans = decodeLegacySubPlans()
         let legacyDailySubPlans = decodeLegacyDailySubPlans()
         let legacyAttendanceRecords = decodeLegacyAttendanceRecords()
+        let legacyBehaviorLogs = decodeLegacyBehaviorLogs()
         let legacyProfiles = decodeLegacyProfiles()
         let legacyOverrides = decodeLegacyOverrides()
 
@@ -845,6 +1113,7 @@ struct RootTabView: View {
         }
 
         refreshFromPersistence()
+        behaviorLogs = legacyBehaviorLogs
     }
 
     @MainActor
@@ -962,6 +1231,7 @@ struct RootTabView: View {
         savedFollowUpNotes = (try? JSONEncoder().encode(secondSliceSnapshot.followUpNotes)) ?? Data()
         reconcileClassDefinitionLinks()
         attendanceRecords = AttendanceRecord.pruneToCurrentWeek(thirdSliceSnapshot.attendanceRecords)
+        behaviorLogs = decodeLegacyBehaviorLogs()
         subPlans = secondSliceSnapshot.subPlans
         dailySubPlans = secondSliceSnapshot.dailySubPlans
         profiles = thirdSliceSnapshot.profiles
@@ -1119,6 +1389,40 @@ struct RootTabView: View {
         ClassTraxPersistence.saveFirstSliceStudentProfiles(profiles, into: modelContext)
     }
 
+    private func persistClassDefinitionsImmediately(
+        _ definitions: [ClassDefinitionItem],
+        profiles: [StudentSupportProfile]
+    ) {
+        recordLocalMutation()
+        classDefinitions = definitions.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        studentProfiles = profiles.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        savedClassDefinitions = (try? JSONEncoder().encode(classDefinitions)) ?? Data()
+        savedStudentProfiles = (try? JSONEncoder().encode(studentProfiles)) ?? Data()
+        ClassTraxPersistence.saveFirstSliceClassDefinitions(classDefinitions, into: modelContext)
+        ClassTraxPersistence.saveFirstSliceStudentProfiles(studentProfiles, into: modelContext)
+    }
+
+    private func deleteClassDefinitionImmediately(_ definition: ClassDefinitionItem) {
+        let updatedDefinitions = classDefinitions.filter { $0.id != definition.id }
+        let updatedProfiles = studentProfiles.map { profile in
+            let linkedIDs = linkedClassDefinitionIDs(for: profile)
+            guard linkedIDs.contains(definition.id) else { return profile }
+            return updatingProfile(
+                profile,
+                linkedTo: linkedIDs.filter { $0 != definition.id },
+                definitions: updatedDefinitions
+            )
+        }
+
+        persistClassDefinitionsImmediately(updatedDefinitions, profiles: updatedProfiles)
+        reconcileClassDefinitionLinks()
+        syncSharedSnapshot()
+    }
+
     private func persistSupportStaffImmediately(
         teacherContacts: [ClassStaffContact],
         paraContacts: [ClassStaffContact]
@@ -1147,6 +1451,151 @@ struct RootTabView: View {
             profiles: profiles,
             overrides: overrides
         )
+    }
+
+    private func saveBehaviorLogs(_ logs: [BehaviorLogItem]) {
+        let normalizedLogs = logs.sorted { $0.timestamp > $1.timestamp }
+        savedBehaviorLogs = (try? JSONEncoder().encode(normalizedLogs)) ?? Data()
+        behaviorLogs = normalizedLogs
+    }
+
+    private func decodeLegacyBehaviorLogs() -> [BehaviorLogItem] {
+        guard !savedBehaviorLogs.isEmpty,
+              let decodedLogs = try? JSONDecoder().decode([BehaviorLogItem].self, from: savedBehaviorLogs) else {
+            return []
+        }
+
+        return decodedLogs.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    private func behaviorLogsForStudent(_ profile: StudentSupportProfile) -> [BehaviorLogItem] {
+        behaviorLogs
+            .filter { $0.studentID == profile.id }
+            .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    private func logBehavior(
+        for profile: StudentSupportProfile,
+        behavior: BehaviorLogItem.BehaviorKind,
+        rating: BehaviorLogItem.Rating,
+        segmentID: UUID? = nil,
+        note: String = "",
+        now: Date = Date(),
+        shouldToggleOffMatching: Bool = true
+    ) {
+        let currentSegment = resolvedBehaviorSegment(for: profile, segmentID: segmentID, now: now)
+        let segmentTitle = currentSegment?.className ?? profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchingIndex = behaviorLogs.firstIndex(where: { log in
+            log.studentID == profile.id &&
+            log.behavior == behavior &&
+            Calendar.current.isDate(log.timestamp, inSameDayAs: now) &&
+            normalizedSegmentTitle(log.segmentTitle) == normalizedSegmentTitle(segmentTitle)
+        })
+
+        var updatedLogs = behaviorLogs
+        if let matchingIndex {
+            if updatedLogs[matchingIndex].rating == rating && shouldToggleOffMatching && trimmedNote.isEmpty {
+                updatedLogs.remove(at: matchingIndex)
+            } else {
+                updatedLogs[matchingIndex] = BehaviorLogItem(
+                    id: updatedLogs[matchingIndex].id,
+                    studentID: profile.id,
+                    studentName: profile.name,
+                    timestamp: now,
+                    behavior: behavior,
+                    rating: rating,
+                    blockID: currentSegment?.id,
+                    classDefinitionID: currentSegment?.classDefinitionID ?? profile.classDefinitionID,
+                    segmentTitle: segmentTitle,
+                    note: trimmedNote.isEmpty ? updatedLogs[matchingIndex].note : note
+                )
+            }
+        } else {
+            updatedLogs.insert(
+                BehaviorLogItem(
+                    studentID: profile.id,
+                    studentName: profile.name,
+                    timestamp: now,
+                    behavior: behavior,
+                    rating: rating,
+                    blockID: currentSegment?.id,
+                    classDefinitionID: currentSegment?.classDefinitionID ?? profile.classDefinitionID,
+                    segmentTitle: segmentTitle,
+                    note: note
+                ),
+                at: 0
+            )
+        }
+
+        recordLocalMutation()
+        saveBehaviorLogs(updatedLogs)
+    }
+
+    private func preferredBehaviorSegment(for profile: StudentSupportProfile, now: Date) -> AlarmItem? {
+        let schedule = adjustedTodaySchedule(for: now)
+
+        if let activeMatch = schedule.first(where: {
+            now >= startDateToday(for: $0, now: now) &&
+            now <= endDateToday(for: $0, now: now) &&
+            alarm($0, matches: profile)
+        }) {
+            return activeMatch
+        }
+
+        if let nextMatch = schedule.first(where: {
+            startDateToday(for: $0, now: now) > now && alarm($0, matches: profile)
+        }) {
+            return nextMatch
+        }
+
+        return schedule.first(where: { alarm($0, matches: profile) })
+    }
+
+    private func behaviorSegments(for profile: StudentSupportProfile, now: Date = Date()) -> [BehaviorSegmentOption] {
+        adjustedTodaySchedule(for: now)
+            .filter { alarm($0, matches: profile) }
+            .map {
+                BehaviorSegmentOption(
+                    id: $0.id,
+                    title: $0.className.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+    }
+
+    private func resolvedBehaviorSegment(for profile: StudentSupportProfile, segmentID: UUID?, now: Date) -> AlarmItem? {
+        let matchingSchedule = adjustedTodaySchedule(for: now).filter { alarm($0, matches: profile) }
+
+        if let segmentID,
+           let selectedSegment = matchingSchedule.first(where: { $0.id == segmentID }) {
+            return selectedSegment
+        }
+
+        return preferredBehaviorSegment(for: profile, now: now)
+    }
+
+    private func alarm(_ alarm: AlarmItem, matches profile: StudentSupportProfile) -> Bool {
+        if alarm.linkedStudentIDs.contains(profile.id) {
+            return true
+        }
+
+        if let classDefinitionID = alarm.classDefinitionID,
+           profile.classDefinitionIDs.contains(classDefinitionID) || profile.classDefinitionID == classDefinitionID {
+            return true
+        }
+
+        let profileClassName = profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        let alarmClassName = alarm.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !profileClassName.isEmpty && profileClassName.localizedCaseInsensitiveCompare(alarmClassName) == .orderedSame
+    }
+
+    private func preferredBehaviorSegmentTitle(for profile: StudentSupportProfile) -> String {
+        preferredBehaviorSegment(for: profile, now: Date())?.className.trimmingCharacters(in: .whitespacesAndNewlines)
+        ?? profile.className.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedSegmentTitle(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func saveSubPlans(_ plans: [SubPlanItem]) {
@@ -1289,13 +1738,6 @@ struct RootTabView: View {
                !validDefinitionIDs.contains(classDefinitionID) {
                 updated.classDefinitionID = nil
             }
-            if updated.classDefinitionID == nil {
-                updated.classDefinitionID = exactClassDefinitionMatch(
-                    name: updated.className,
-                    gradeLevel: updated.gradeLevel,
-                    in: classDefinitions
-                )?.id
-            }
             if let classDefinitionID = updated.classDefinitionID,
                let definition = classDefinitions.first(where: { $0.id == classDefinitionID }) {
                 let trimmedName = updated.className.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1327,18 +1769,6 @@ struct RootTabView: View {
                 definitions: classDefinitions
             )
 
-            if filteredLinkedIDs.isEmpty,
-               let matchedID = exactClassDefinitionMatch(
-                    name: updated.className,
-                    gradeLevel: updated.gradeLevel,
-                    in: classDefinitions
-                )?.id {
-                updated = updatingProfile(
-                    updated,
-                    linkedTo: [matchedID],
-                    definitions: classDefinitions
-                )
-            }
             updated.className = classSummary(for: updated, in: classDefinitions)
             return updated
         }
@@ -1360,7 +1790,9 @@ struct RootTabView: View {
             activeOverride: activeDayOverride,
             overrides: overrides,
             profiles: profiles,
-            ignoreUntil: ignoreUntil
+            ignoreUntil: ignoreUntil,
+            classStartNotificationsEnabled: classStartNotificationsEnabled,
+            soundsMuted: soundsMuted
         )
 
         guard signature != lastNotificationRefreshSignature else { return }
@@ -1504,7 +1936,7 @@ struct RootTabView: View {
         switch selectedTab {
         case .today, .schedule:
             return true
-        case .attendance, .students, .todo, .notes, .settings, .manage:
+        case .attendance, .students, .todo, .settings, .manage:
             return false
         }
     }
@@ -2014,15 +2446,21 @@ private struct NotificationRefreshSignature: Equatable {
     let overrides: [OverrideSignature]
     let profiles: [ProfileSignature]
     let ignoreUntil: Double
+    let classStartNotificationsEnabled: Bool
+    let soundsMuted: Bool
 
     init(
         alarms: [AlarmItem],
         activeOverride: ActiveDayOverride?,
         overrides: [DayOverride],
         profiles: [ScheduleProfile],
-        ignoreUntil: Double
+        ignoreUntil: Double,
+        classStartNotificationsEnabled: Bool,
+        soundsMuted: Bool
     ) {
         self.ignoreUntil = ignoreUntil
+        self.classStartNotificationsEnabled = classStartNotificationsEnabled
+        self.soundsMuted = soundsMuted
         self.alarms = alarms
             .map {
                 AlarmSignature(
@@ -2096,7 +2534,14 @@ private struct StudentsHubView: View {
     let onSavedProfiles: ([StudentSupportProfile]) -> Void
     let onSavedTeacherContacts: ([ClassStaffContact]) -> Void
     let onSavedParaContacts: ([ClassStaffContact]) -> Void
+    let onSavedClassDefinitions: ([ClassDefinitionItem], [StudentSupportProfile]) -> Void
+    let onDeleteClassDefinition: (ClassDefinitionItem) -> Void
     let onPrepareStudentEditor: () -> Void
+    let behaviorLogsForStudent: (StudentSupportProfile) -> [BehaviorLogItem]
+    let behaviorSegmentsForStudent: (StudentSupportProfile) -> [BehaviorSegmentOption]
+    let preferredBehaviorSegmentID: (StudentSupportProfile) -> UUID?
+    let preferredBehaviorSegmentTitle: (StudentSupportProfile) -> String
+    let onLogBehavior: (StudentSupportProfile, BehaviorLogItem.BehaviorKind, BehaviorLogItem.Rating, UUID?) -> Void
     @State private var mode: Mode = .students
 
     private enum Mode: String, CaseIterable, Identifiable {
@@ -2138,10 +2583,24 @@ private struct StudentsHubView: View {
                         },
                         onPrepareStudentEditor: {
                             onPrepareStudentEditor()
-                        }
+                        },
+                        behaviorLogsForStudent: behaviorLogsForStudent,
+                        behaviorSegmentsForStudent: behaviorSegmentsForStudent,
+                        preferredBehaviorSegmentID: preferredBehaviorSegmentID,
+                        preferredBehaviorSegmentTitle: preferredBehaviorSegmentTitle,
+                        onLogBehavior: onLogBehavior
                     )
                 case .classes:
-                    ClassDefinitionsView(classDefinitions: $classDefinitions, profiles: $profiles)
+                    ClassDefinitionsView(
+                        classDefinitions: $classDefinitions,
+                        profiles: $profiles,
+                        onCommitChanges: { updatedDefinitions, updatedProfiles in
+                            onSavedClassDefinitions(updatedDefinitions, updatedProfiles)
+                        },
+                        onDeleteDefinition: { definition in
+                            onDeleteClassDefinition(definition)
+                        }
+                    )
                 }
             }
         }

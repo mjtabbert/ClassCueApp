@@ -32,10 +32,12 @@ final class BellCountdownEngine {
     }
 
     private func playTick() {
+        guard !BellFeedbackManager.areSoundsMuted else { return }
         AudioServicesPlaySystemSound(1104)
     }
 
     private func playBell() {
+        guard !BellFeedbackManager.areSoundsMuted else { return }
         AudioServicesPlaySystemSound(1005)
 
 #if !targetEnvironment(macCatalyst)

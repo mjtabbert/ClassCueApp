@@ -19,7 +19,7 @@ struct SettingsView: View {
         case boundaries = "After Hours"
         case todayLayout = "Today Layout"
         case classroomSetup = "Core Setup"
-        case subPlans = "Prep & Handoff"
+        case subPlans = "Sub Plans"
         case integrations = "Integrations"
         case cloudSync = "Cloud Sync"
         case liveActivities = "Live Activities"
@@ -157,6 +157,7 @@ struct SettingsView: View {
     @AppStorage("pref_warning_sound_5min") private var warningFiveSoundRawValue: String = SoundPattern.softChime.rawValue
     @AppStorage("pref_warning_sound_2min") private var warningTwoSoundRawValue: String = SoundPattern.systemGlass.rawValue
     @AppStorage("pref_warning_sound_1min") private var warningOneSoundRawValue: String = SoundPattern.sharpBell.rawValue
+    @AppStorage("pref_class_start_notifications_enabled") private var classStartNotificationsEnabled = true
     @AppStorage("ignore_until_v1") private var ignoreUntil: Double = 0
     @AppStorage("timer_v6_data") private var savedAlarms: Data = Data()
     @AppStorage("commitments_v1_data") private var savedCommitments: Data = Data()
@@ -186,6 +187,10 @@ struct SettingsView: View {
     @AppStorage("today_dashboard_hidden_cards_v1") private var storedHiddenDashboardCards = ""
     @AppStorage("teacher_workflow_mode_v1") private var teacherWorkflowModeRawValue = TeacherWorkflowMode.classroom.rawValue
     @AppStorage("guided_setup_autolaunch_seen_v2") private var hasSeenGuidedSetupAutolaunch = false
+    @AppStorage("feature_attendance_enabled") private var featureAttendanceEnabled = true
+    @AppStorage("feature_schedule_enabled") private var featureScheduleEnabled = true
+    @AppStorage("feature_homework_enabled") private var featureHomeworkEnabled = true
+    @AppStorage("feature_behavior_enabled") private var featureBehaviorEnabled = true
 
     @State private var holidayModeEnabled = false
     @State private var holidayResumeDate = Date().addingTimeInterval(60 * 60 * 24)
@@ -219,6 +224,7 @@ struct SettingsView: View {
     @State private var showingQuickAddStudent = false
     @State private var showingTeacherDirectory = false
     @State private var showingParaDirectory = false
+    @State private var isQuickStartExpanded = true
 
     private let diagnosticsToolsEnabled = true
 
@@ -342,27 +348,29 @@ struct SettingsView: View {
                     .listRowSeparator(.hidden)
             }
 
-            Section("Start Here") {
-                Button {
-                    showingWorkspaceSetupWizard = true
-                } label: {
-                    settingsRowLabel(
-                        title: "Guided Setup",
-                        systemImage: "wand.and.stars",
-                        detail: "Best first stop for new teachers: mode, classes or groups, students, Today defaults, and alerts"
-                    )
-                }
+            Section {
+                DisclosureGroup("Quick Start Guides", isExpanded: $isQuickStartExpanded) {
+                    Button {
+                        showingWorkspaceSetupWizard = true
+                    } label: {
+                        settingsRowLabel(
+                            title: "Guided Setup",
+                            systemImage: "wand.and.stars",
+                            detail: "Best first stop for new teachers: mode, classes or groups, students, Today defaults, and alerts"
+                        )
+                    }
 
-                NavigationLink(value: SettingsDestination.classroomSetup) {
-                    settingsRowLabel(.classroomSetup, detail: "Use after Guided Setup for saved classes or groups, roster tools, and staff setup")
-                }
+                    NavigationLink(value: SettingsDestination.classroomSetup) {
+                        settingsRowLabel(.classroomSetup, detail: "Use after Guided Setup for saved classes or groups, roster tools, and staff setup")
+                    }
 
-                NavigationLink(value: SettingsDestination.todayLayout) {
-                    settingsRowLabel(.todayLayout, detail: "Set the default Today workflow before fine-tuning anything else")
-                }
+                    NavigationLink(value: SettingsDestination.todayLayout) {
+                        settingsRowLabel(.todayLayout, detail: "Set the default Today workflow before fine-tuning anything else")
+                    }
 
-                NavigationLink(value: SettingsDestination.alerts) {
-                    settingsRowLabel(.alerts, detail: "Finish setup with bell sounds, warning cues, and haptics")
+                    NavigationLink(value: SettingsDestination.alerts) {
+                        settingsRowLabel(.alerts, detail: "Finish setup with bell sounds, warning cues, and haptics")
+                    }
                 }
             }
 
@@ -434,29 +442,17 @@ struct SettingsView: View {
             }
 
             HStack(spacing: 12) {
-                settingsMetric(title: teacherWorkflowMode == .classroom ? "Classes" : "Groups", value: "\(classDefinitions.count)", accent: .blue)
-                settingsMetric(title: "Students", value: "\(studentProfiles.count)", accent: .green)
-                settingsMetric(title: "Mode", value: teacherWorkflowMode.shortLabel, accent: .orange)
+                settingsMetric(title: teacherWorkflowMode == .classroom ? "Classes" : "Groups", value: "\(classDefinitions.count)", accent: ClassTraxSemanticColor.primaryAction)
+                settingsMetric(title: "Students", value: "\(studentProfiles.count)", accent: ClassTraxSemanticColor.success)
+                settingsMetric(title: "Mode", value: teacherWorkflowMode.shortLabel, accent: ClassTraxSemanticColor.reviewWarning)
             }
 
-                Text("Best first run: Guided Setup, then Schedule, then Alerts.")
+            Text("Best first run: Guided Setup, then Schedule, then Alerts.")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.blue.opacity(0.08),
-                            Color(.secondarySystemGroupedBackground).opacity(0.96)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 22)
     }
 
     @ViewBuilder
@@ -471,10 +467,7 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(accent.opacity(0.10))
-        )
+        .classTraxCardChrome(accent: accent, cornerRadius: 12)
     }
 
     @ViewBuilder
@@ -490,12 +483,12 @@ struct SettingsView: View {
     private func settingsRowLabel(title: String, systemImage: String, detail: String) -> some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.accentColor.opacity(0.10))
+                .fill(ClassTraxSemanticColor.primaryAction.opacity(0.10))
                 .frame(width: 36, height: 36)
                 .overlay {
                     Image(systemName: systemImage)
                         .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(ClassTraxSemanticColor.primaryAction)
                 }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -882,6 +875,10 @@ struct SettingsView: View {
             guard destination == .alerts else { return }
             refreshNotifications()
         }
+        .onChange(of: classStartNotificationsEnabled) { _, _ in
+            guard destination == .alerts else { return }
+            refreshNotifications()
+        }
         .onChange(of: schoolQuietHoursEnabled) { _, _ in
             guard destination == .boundaries else { return }
             syncSchoolQuietStart()
@@ -1025,6 +1022,8 @@ struct SettingsView: View {
 
     private var alertsSection: some View {
         Section("Alerts") {
+            Toggle("Class Start Alerts", isOn: $classStartNotificationsEnabled)
+
             Picker("Haptic Pattern", selection: $selectedHapticRawValue) {
                 ForEach(HapticPattern.SourceGroup.allCases, id: \.self) { group in
                     Section(group.rawValue) {
@@ -1087,6 +1086,10 @@ struct SettingsView: View {
             } label: {
                 Label("Test Bell", systemImage: "bell.fill")
             }
+
+            Text("Turn this off if the warning bells already give you enough notice. End-of-class and advance warnings stay active.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
         }
     }
 
@@ -1360,6 +1363,8 @@ struct SettingsView: View {
                 .font(.footnote)
                 .foregroundColor(.secondary)
 
+            featureVisibilityControls
+
             Button {
                 showingWorkspaceSetupWizard = true
             } label: {
@@ -1454,6 +1459,23 @@ struct SettingsView: View {
             }
 
             Text(workspaceSetupSummary)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var featureVisibilityControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Module Visibility")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Toggle("Attendance", isOn: $featureAttendanceEnabled)
+            Toggle("Schedule", isOn: $featureScheduleEnabled)
+            Toggle("Homework / Missing Work", isOn: $featureHomeworkEnabled)
+            Toggle("Behavior", isOn: $featureBehaviorEnabled)
+
+            Text("Turn classroom modules on or off without deleting any saved data. Hidden modules stay stored and can be re-enabled later.")
                 .font(.footnote)
                 .foregroundColor(.secondary)
         }
@@ -1615,8 +1637,8 @@ struct SettingsView: View {
     }
 
     private var scheduleToolsSection: some View {
-        Section("Prep & Handoff") {
-            NavigationLink("Prep & Handoff Profile") {
+        Section("Sub Plans") {
+            NavigationLink("Sub Plan Profile") {
                 SubPlanProfileSettingsView()
             }
 
@@ -2903,7 +2925,7 @@ struct SubPlanProfileSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Prep & Handoff Profile")
+        .navigationTitle("Sub Plan Profile")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

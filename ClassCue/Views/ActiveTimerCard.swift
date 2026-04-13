@@ -88,6 +88,13 @@ struct ActiveTimerCard: View {
         remaining > 0 && remaining <= 10
     }
 
+    private var isTwoMinuteWarning: Bool {
+        if case .configured(let minutes, _) = warningStage {
+            return minutes == 2
+        }
+        return false
+    }
+
     private var warningStage: WarningStage? {
         guard remaining > 10 else { return nil }
         return WarningStage(minutesRemaining: Int(remaining), configuredMinutes: item.warningLeadTimes)
@@ -104,14 +111,14 @@ struct ActiveTimerCard: View {
             if landscape {
 
                 VStack(spacing: 14) {
-                    Text(timeRemaining)
-                        .font(.system(size: landscapeTimerSize(for: geo), weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .foregroundStyle(isCriticalCountdown ? .red : .primary)
-                        .scaleEffect(isCriticalCountdown && pulse ? 1.04 : 0.98)
-                        .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true), value: pulse)
+                        Text(timeRemaining)
+                            .font(.system(size: landscapeTimerSize(for: geo), weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.55)
+                            .foregroundStyle(isCriticalCountdown ? .red : (isTwoMinuteWarning ? .orange : .primary))
+                            .scaleEffect((isCriticalCountdown || isTwoMinuteWarning) && pulse ? 1.05 : 0.98)
+                            .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true), value: pulse)
                 }
                 .padding(.horizontal, 20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -127,8 +134,8 @@ struct ActiveTimerCard: View {
                             .monospacedDigit()
                             .lineLimit(1)
                             .minimumScaleFactor(0.64)
-                            .foregroundStyle(isCriticalCountdown ? .red : .primary)
-                            .scaleEffect(isCriticalCountdown && pulse ? 1.03 : 0.99)
+                            .foregroundStyle(isCriticalCountdown ? .red : (isTwoMinuteWarning ? .orange : .primary))
+                            .scaleEffect((isCriticalCountdown || isTwoMinuteWarning) && pulse ? 1.05 : 0.99)
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .padding(.horizontal, 16)
@@ -277,7 +284,7 @@ struct ActiveTimerCard: View {
                 LinearGradient(
                     colors: [
                         ringPrimaryColor.opacity(isCriticalCountdown ? 0.18 : 0.14),
-                        Color(.secondarySystemBackground).opacity(0.96)
+                        (isTwoMinuteWarning ? Color.orange : Color(.secondarySystemBackground)).opacity(isTwoMinuteWarning ? 0.24 : 0.96)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -286,7 +293,8 @@ struct ActiveTimerCard: View {
     }
 
     private var currentBlockBorderColor: Color {
-        (isCriticalCountdown ? Color.red : ringPrimaryColor).opacity(isCriticalCountdown ? 0.32 : 0.18)
+        (isCriticalCountdown ? Color.red : (isTwoMinuteWarning ? Color.orange : ringPrimaryColor))
+            .opacity(isCriticalCountdown ? 0.56 : (isTwoMinuteWarning ? 0.48 : 0.18))
     }
 
     private var warningBackdropColor: Color {

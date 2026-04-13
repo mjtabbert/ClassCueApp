@@ -4,6 +4,7 @@ struct EditClassDefinitionView: View {
     @Binding var classDefinitions: [ClassDefinitionItem]
     @Binding var studentProfiles: [StudentSupportProfile]
     let existing: ClassDefinitionItem?
+    let onSaveChanges: (([ClassDefinitionItem], [StudentSupportProfile]) -> Void)?
     @AppStorage("teacher_workflow_mode_v1") private var teacherWorkflowModeRawValue = TeacherWorkflowMode.classroom.rawValue
 
     @Environment(\.dismiss) private var dismiss
@@ -15,12 +16,24 @@ struct EditClassDefinitionView: View {
     @State private var selectedStudentIDs = Set<UUID>()
     @State private var showLinkedStudents = false
 
+    init(
+        classDefinitions: Binding<[ClassDefinitionItem]>,
+        studentProfiles: Binding<[StudentSupportProfile]>,
+        existing: ClassDefinitionItem?,
+        onSaveChanges: (([ClassDefinitionItem], [StudentSupportProfile]) -> Void)? = nil
+    ) {
+        _classDefinitions = classDefinitions
+        _studentProfiles = studentProfiles
+        self.existing = existing
+        self.onSaveChanges = onSaveChanges
+    }
+
     private var teacherWorkflowMode: TeacherWorkflowMode {
         TeacherWorkflowMode(rawValue: teacherWorkflowModeRawValue) ?? .classroom
     }
 
     private var detailsSectionTitle: String {
-        teacherWorkflowMode == .classroom ? "Class Details" : "Group Details"
+        teacherWorkflowMode == .classroom ? "Class Setup" : "Group Setup"
     }
 
     private var namePlaceholder: String {
@@ -38,11 +51,7 @@ struct EditClassDefinitionView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text(existing == nil
-                         ? "Start with the basics. You can save now and link students later."
-                         : "Update the basics here. Student links are optional and can be changed anytime.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    editorOverviewCard
                 }
 
                 Section(detailsSectionTitle) {
@@ -63,7 +72,7 @@ struct EditClassDefinitionView: View {
 
                     TextField("Default Room / Location", text: $defaultLocation)
                 }
-                Section {
+                Section("Student Links") {
                     DisclosureGroup(isExpanded: $showLinkedStudents) {
                         if sortedStudentProfiles.isEmpty {
                             Text("No students saved yet. Add students in Class List, then link them here.")
@@ -91,10 +100,11 @@ struct EditClassDefinitionView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
+                    Button(existing == nil ? "Add" : "Save") {
                         save()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .fontWeight(.semibold)
                 }
             }
             .onAppear {
@@ -111,6 +121,53 @@ struct EditClassDefinitionView: View {
                 )
             }
         }
+    }
+
+    private var editorOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(existing == nil ? "Create a reusable class or group." : "Update this saved class or group.")
+                .font(.headline.weight(.semibold))
+
+            Text(existing == nil
+                ? "Save the basics first, then connect students when you are ready."
+                : "Student links are optional and can be changed anytime without rebuilding your schedule.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                editorMetric(
+                    title: teacherWorkflowMode == .classroom ? "Mode" : "Workflow",
+                    value: teacherWorkflowMode.shortLabel,
+                    accent: ClassTraxSemanticColor.primaryAction
+                )
+                editorMetric(
+                    title: "Linked",
+                    value: "\(selectedStudentIDs.count)",
+                    accent: ClassTraxSemanticColor.success
+                )
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func editorMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
 
     private func save() {
@@ -130,6 +187,7 @@ struct EditClassDefinitionView: View {
 
         classDefinitions.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         syncLinkedStudents(for: item)
+        onSaveChanges?(classDefinitions, studentProfiles)
         dismiss()
     }
 

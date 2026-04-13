@@ -36,6 +36,7 @@ struct AddEditView: View {
     @State private var end = Date().addingTimeInterval(60 * 30)
     @State private var linkedStudentIDs: Set<UUID> = []
     @State private var selectedDays: Set<Int> = []
+    @State private var blockSupportNote = ""
     @State private var warningLeadTimes: [Int] = [5, 2, 1]
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var showingSuggestedRosterGroups = true
@@ -58,6 +59,7 @@ struct AddEditView: View {
         var end: Date
         var linkedStudentIDs: [UUID]
         var selectedDays: [Int]
+        var blockSupportNote: String
         var warningLeadTimes: [Int]
 
         private enum CodingKeys: String, CodingKey {
@@ -72,6 +74,7 @@ struct AddEditView: View {
             case end
             case linkedStudentIDs
             case selectedDays
+            case blockSupportNote
             case warningLeadTimes
             case firstWarningMinutes
             case secondWarningMinutes
@@ -90,6 +93,7 @@ struct AddEditView: View {
             end: Date,
             linkedStudentIDs: [UUID],
             selectedDays: [Int],
+            blockSupportNote: String,
             warningLeadTimes: [Int]
         ) {
             self.existingID = existingID
@@ -103,6 +107,7 @@ struct AddEditView: View {
             self.end = end
             self.linkedStudentIDs = linkedStudentIDs
             self.selectedDays = selectedDays
+            self.blockSupportNote = blockSupportNote
             self.warningLeadTimes = warningLeadTimes
         }
 
@@ -119,6 +124,7 @@ struct AddEditView: View {
             end = try container.decode(Date.self, forKey: .end)
             linkedStudentIDs = try container.decode([UUID].self, forKey: .linkedStudentIDs)
             selectedDays = try container.decode([Int].self, forKey: .selectedDays)
+            blockSupportNote = try container.decodeIfPresent(String.self, forKey: .blockSupportNote) ?? ""
 
             if let values = try container.decodeIfPresent([Int].self, forKey: .warningLeadTimes) {
                 warningLeadTimes = values
@@ -145,6 +151,7 @@ struct AddEditView: View {
             try container.encode(end, forKey: .end)
             try container.encode(linkedStudentIDs, forKey: .linkedStudentIDs)
             try container.encode(selectedDays, forKey: .selectedDays)
+            try container.encode(blockSupportNote, forKey: .blockSupportNote)
             try container.encode(warningLeadTimes, forKey: .warningLeadTimes)
         }
     }
@@ -170,7 +177,7 @@ struct AddEditView: View {
     }
 
     private var saveButtonTitle: String {
-        isEditing ? "Save Changes" : "Save Block"
+        isEditing ? "Save Block" : "Add Block"
     }
 
     private var teacherWorkflowMode: TeacherWorkflowMode {
@@ -190,6 +197,7 @@ struct AddEditView: View {
             classDefinitionID: selectedClassDefinitionID,
             classDefinitionIDs: selectedClassDefinitionIDs,
             linkedStudentIDs: Array(linkedStudentIDs),
+            supportNote: blockSupportNote,
             warningLeadTimes: currentWarningLeadTimes
         )
     }
@@ -197,11 +205,11 @@ struct AddEditView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Preview") {
+                Section("Block Preview") {
                     PreviewCard(item: previewItem)
                 }
 
-                Section("Class Details") {
+                Section("Block Setup") {
                     Picker("Class Roster", selection: $selectedClassDefinitionID) {
                         Text("None").tag(Optional<UUID>.none)
                         ForEach(availableClassDefinitions) { definition in
@@ -249,7 +257,7 @@ struct AddEditView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Timing") {
+                Section("Time & Bells") {
                     DatePicker(
                         "Start Time",
                         selection: $start,
@@ -277,7 +285,7 @@ struct AddEditView: View {
                     }
                 }
 
-                Section("Alerts") {
+                Section("Warning Bells") {
                     if warningLeadTimes.isEmpty {
                         Text("No warning alarms for this block.")
                             .font(.footnote)
@@ -315,7 +323,9 @@ struct AddEditView: View {
                 }
 
                 if !sortedStudentProfiles.isEmpty {
-                    Section("Linked Roster") {
+                    Section("Roster & Supports") {
+                        TextField("Whole-block support note for routines, staffing, or class reminders", text: $blockSupportNote, axis: .vertical)
+
                         if !linkedRosterSummaryText.isEmpty {
                             Text(linkedRosterSummaryText)
                                 .font(.caption)
@@ -365,7 +375,7 @@ struct AddEditView: View {
                 }
 
                 if isEditing {
-                    Section("More Actions") {
+                    Section("Block Actions") {
                         Button {
                             duplicateCurrentBlock()
                         } label: {
@@ -457,16 +467,13 @@ struct AddEditView: View {
             grade = GradeLevelOption.normalized(existing.gradeLevel)
             type = existing.type
             let existingDefinitionIDs = existing.linkedClassDefinitionIDs
-            selectedClassDefinitionID = existingDefinitionIDs.first ?? existing.classDefinitionID ?? exactClassDefinitionMatch(
-                name: existing.className,
-                gradeLevel: existing.gradeLevel,
-                in: availableClassDefinitions
-            )?.id
+            selectedClassDefinitionID = existingDefinitionIDs.first ?? existing.classDefinitionID
             selectedAdditionalClassDefinitionIDs = Set(existingDefinitionIDs.dropFirst())
             start = existing.startTime
             end = existing.endTime
             linkedStudentIDs = Set(existing.linkedStudentIDs)
             selectedDays = [existing.dayOfWeek]
+            blockSupportNote = existing.blockSupportNote
             applyWarningLeadTimes(existing.warningLeadTimes)
         } else {
             let roundedStart = roundedDate(from: Date())
@@ -476,6 +483,7 @@ struct AddEditView: View {
             end = defaultEnd
             selectedDays = [day]
             selectedAdditionalClassDefinitionIDs = []
+            blockSupportNote = ""
             applyWarningLeadTimes([5, 2, 1])
         }
     }
@@ -484,6 +492,7 @@ struct AddEditView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedRoom = room.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedGrade = GradeLevelOption.normalized(grade)
+        let trimmedSupportNote = blockSupportNote.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedName.isEmpty else {
             validationMessage = "Please enter a class name before saving."
@@ -498,7 +507,7 @@ struct AddEditView: View {
         }
 
         let warningLeadTimes = currentWarningLeadTimes
-        let matchedClassDefinitionIDs = resolvedClassDefinitionIDs(trimmedName: trimmedName, trimmedGrade: trimmedGrade)
+        let matchedClassDefinitionIDs = resolvedClassDefinitionIDs()
         let matchedClassDefinitionID = matchedClassDefinitionIDs.first
 
         guard !selectedDays.isEmpty || isEditing else {
@@ -521,6 +530,7 @@ struct AddEditView: View {
                 classDefinitionID: matchedClassDefinitionID,
                 classDefinitionIDs: matchedClassDefinitionIDs,
                 linkedStudentIDs: Array(linkedStudentIDs),
+                supportNote: trimmedSupportNote,
                 warningLeadTimes: warningLeadTimes
             )
             alarms = sortedAlarms(alarms)
@@ -538,6 +548,7 @@ struct AddEditView: View {
                     classDefinitionID: matchedClassDefinitionID,
                     classDefinitionIDs: matchedClassDefinitionIDs,
                     linkedStudentIDs: Array(linkedStudentIDs),
+                    supportNote: trimmedSupportNote,
                     warningLeadTimes: warningLeadTimes
                 )
             }
@@ -573,6 +584,7 @@ struct AddEditView: View {
             classDefinitionID: existing.classDefinitionID,
             classDefinitionIDs: existing.linkedClassDefinitionIDs,
             linkedStudentIDs: existing.linkedStudentIDs,
+            supportNote: existing.blockSupportNote,
             warningLeadTimes: existing.warningLeadTimes
         )
 
@@ -594,6 +606,7 @@ struct AddEditView: View {
             end: end,
             linkedStudentIDs: Array(linkedStudentIDs).sorted { $0.uuidString < $1.uuidString },
             selectedDays: Array(selectedDays).sorted(),
+            blockSupportNote: blockSupportNote,
             warningLeadTimes: normalizedWarningLeadTimes(warningLeadTimes)
         )
     }
@@ -612,6 +625,7 @@ struct AddEditView: View {
         end = draft.end
         linkedStudentIDs = Set(draft.linkedStudentIDs)
         selectedDays = Set(draft.selectedDays)
+        blockSupportNote = draft.blockSupportNote
         applyWarningLeadTimes(draft.warningLeadTimes)
     }
 
@@ -940,7 +954,9 @@ struct AddEditView: View {
         selectedAdditionalClassDefinitionIDs.remove(id ?? UUID())
         guard let id, let definition = availableClassDefinitions.first(where: { $0.id == id }) else { return }
 
-        grade = GradeLevelOption.normalized(definition.gradeLevel)
+        if grade.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            grade = GradeLevelOption.normalized(definition.gradeLevel)
+        }
         if room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             room = definition.defaultLocation
         }
@@ -951,17 +967,9 @@ struct AddEditView: View {
         return name.isEmpty ? "Untitled Class" : name
     }
 
-    private func resolvedClassDefinitionIDs(trimmedName: String, trimmedGrade: String) -> [UUID] {
+    private func resolvedClassDefinitionIDs() -> [UUID] {
         if !selectedClassDefinitionIDs.isEmpty {
             return selectedClassDefinitionIDs
-        }
-
-        if let exactMatch = exactClassDefinitionMatch(
-            name: trimmedName,
-            gradeLevel: trimmedGrade,
-            in: availableClassDefinitions
-        )?.id {
-            return [exactMatch]
         }
 
         return []
@@ -1051,7 +1059,8 @@ private struct PreviewCard: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(18)
+        .classTraxCardChrome(accent: item.accentColor, cornerRadius: 20)
     }
 
     private func compactTimeRange(start: Date, end: Date) -> String {

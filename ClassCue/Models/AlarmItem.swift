@@ -23,6 +23,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         case classDefinitionID
         case classDefinitionIDs
         case linkedStudentIDs
+        case supportNoteValue
         case warningLeadTimesValue
     }
 
@@ -191,6 +192,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
     var classDefinitionID: UUID? = nil
     var classDefinitionIDs: [UUID] = []
     var linkedStudentIDs: [UUID] = []
+    var supportNoteValue: String = ""
     var warningLeadTimesValue: [Int] = [5, 2, 1]
 
     init(
@@ -205,6 +207,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         classDefinitionID: UUID? = nil,
         classDefinitionIDs: [UUID] = [],
         linkedStudentIDs: [UUID] = [],
+        supportNote: String = "",
         warningLeadTimes: [Int] = [5, 2, 1]
     ) {
         self.id = id
@@ -219,6 +222,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         self.classDefinitionID = normalizedDefinitionIDs.first
         self.classDefinitionIDs = normalizedDefinitionIDs
         self.linkedStudentIDs = linkedStudentIDs
+        self.supportNoteValue = supportNote.trimmingCharacters(in: .whitespacesAndNewlines)
         self.warningLeadTimesValue = AlarmItem.normalizedWarningLeadTimes(warningLeadTimes)
     }
 
@@ -234,6 +238,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         classDefinitionID: UUID? = nil,
         classDefinitionIDs: [UUID] = [],
         linkedStudentIDs: [UUID] = [],
+        supportNote: String = "",
         warningLeadTimes: [Int] = [5, 2, 1]
     ) {
         self.init(
@@ -248,6 +253,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
             classDefinitionID: classDefinitionID,
             classDefinitionIDs: classDefinitionIDs,
             linkedStudentIDs: linkedStudentIDs,
+            supportNote: supportNote,
             warningLeadTimes: warningLeadTimes
         )
     }
@@ -299,6 +305,10 @@ struct AlarmItem: Identifiable, Codable, Hashable {
 
     var warningLeadTimes: [Int] {
         AlarmItem.normalizedWarningLeadTimes(warningLeadTimesValue)
+    }
+
+    var blockSupportNote: String {
+        supportNoteValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var linkedClassDefinitionIDs: [UUID] {
@@ -392,6 +402,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         classDefinitionIDs = normalizedDefinitionIDs
 
         linkedStudentIDs = try container.decodeIfPresent([UUID].self, forKey: .linkedStudentIDs) ?? []
+        supportNoteValue = try container.decodeIfPresent(String.self, forKey: .supportNoteValue) ?? ""
         warningLeadTimesValue = AlarmItem.normalizedWarningLeadTimes(
             try container.decodeIfPresent([Int].self, forKey: .warningLeadTimesValue) ?? [5, 2, 1]
         )
@@ -410,6 +421,7 @@ struct AlarmItem: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(classDefinitionID, forKey: .classDefinitionID)
         try container.encode(linkedClassDefinitionIDs, forKey: .classDefinitionIDs)
         try container.encode(linkedStudentIDs, forKey: .linkedStudentIDs)
+        try container.encode(supportNoteValue, forKey: .supportNoteValue)
         try container.encode(warningLeadTimes, forKey: .warningLeadTimesValue)
     }
 

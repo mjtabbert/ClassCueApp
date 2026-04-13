@@ -11,8 +11,11 @@ import SwiftUI
 import SwiftData
 
 struct ScheduleView: View {
+    private enum PlanningJumpTarget: Hashable {
+        case blocks
+    }
+
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Binding var selectedDay: WeekdayTab
     @Binding var focusedItemID: UUID?
@@ -89,7 +92,7 @@ struct ScheduleView: View {
 
             ScrollViewReader { scrollProxy in
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    scheduleScrollContent(now: context.date)
+                    scheduleScrollContent(now: context.date, scrollProxy: scrollProxy)
                         .refreshable {
                             onRefresh()
                         }
@@ -105,102 +108,7 @@ struct ScheduleView: View {
                     scrollToFocusedItem(using: scrollProxy)
                 }
             }
-            .navigationTitle("Schedule")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        openTodayTab()
-                    } label: {
-                        Image(systemName: "house")
-                    }
-                    .accessibilityLabel("Today")
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingAddSheet = true
-                    } label: {
-                        ToolbarMenuLabel(
-                            title: "Add",
-                            systemImage: "plus",
-                            expanded: prefersExpandedToolbar
-                        )
-                    }
-                    .disabled(isViewingActiveOverride)
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("New Block", systemImage: "plus") {
-                            showingAddSheet = true
-                        }
-                        .disabled(isViewingActiveOverride)
-
-                        Divider()
-
-                        Button("Copy Whole Day", systemImage: "doc.on.doc") {
-                            showingCopyWholeDaySheet = true
-                        }
-                        .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
-
-                        Button("Save Day as Profile", systemImage: "square.and.arrow.down") {
-                            profileName = defaultDayProfileName
-                            showingSaveDayProfileAlert = true
-                        }
-                        .disabled(filteredSchedule.isEmpty)
-
-                        Button("Save Week as Profile", systemImage: "tray.and.arrow.down") {
-                            profileName = defaultWeekProfileName
-                            showingSaveWeekProfileAlert = true
-                        }
-                        .disabled(alarms.isEmpty)
-
-                        Divider()
-
-                        Button("Day Overrides", systemImage: "calendar.badge.clock") {
-                            showingOverridesSheet = true
-                        }
-
-                        Button("Export Schedule CSV", systemImage: "square.and.arrow.up") {
-                            showingExportSheet = true
-                        }
-                        .disabled(alarms.isEmpty)
-
-                        Button("Import Schedule CSV", systemImage: "square.and.arrow.down") {
-                            showingImportSheet = true
-                        }
-
-                        Divider()
-
-                        Button("Students", systemImage: "person.3") {
-                            showingStudentDirectory = true
-                        }
-
-                        Button("Refresh", systemImage: "arrow.clockwise") {
-                            onRefresh()
-                        }
-
-                        Button("Prep & Handoff", systemImage: "doc.text") {
-                            selectedDay = .today
-                            openTodayTab()
-                        }
-
-                        Divider()
-
-                        Button("Erase Day", systemImage: "trash", role: .destructive) {
-                            showingEraseDayDialog = true
-                        }
-                        .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
-                    } label: {
-                        ToolbarMenuLabel(
-                            title: "More",
-                            systemImage: "ellipsis",
-                            expanded: prefersExpandedToolbar
-                        )
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 loadProfiles()
                 loadOverrides()
@@ -306,14 +214,15 @@ struct ScheduleView: View {
         }
     }
 
-    private func scheduleScrollContent(now: Date) -> some View {
+    private func scheduleScrollContent(now: Date, scrollProxy: ScrollViewProxy) -> some View {
         ScrollView {
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
 
                 VStack(alignment: .leading, spacing: 16) {
+                    scheduleHeader
                     dayPicker
-                    planningOverviewCard(now: now)
+                    planningOverviewCard(now: now, scrollProxy: scrollProxy)
 
                     if let activeOverrideName, isViewingActiveOverride {
                         overrideBanner(name: activeOverrideName)
@@ -335,6 +244,152 @@ struct ScheduleView: View {
         }
     }
 
+    private var scheduleHeader: some View {
+        HStack(spacing: 16) {
+            Button {
+                openTodayTab()
+            } label: {
+                Image(systemName: "house")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(ClassTraxSemanticColor.primaryAction)
+                    .frame(width: 52, height: 52)
+                    .background(
+                        Circle()
+                            .fill(Color(.systemBackground))
+                    )
+                    .overlay(
+                        Circle()
+                            .stroke(ClassTraxSemanticColor.primaryAction.opacity(0.16), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Home")
+
+            HStack(spacing: 6) {
+                scheduleNavButton(title: "Today", isSelected: false, action: openTodayTab)
+                scheduleNavButton(title: "Schedule", isSelected: true, action: { })
+                scheduleNavButton(title: "Planner", isSelected: false, action: openTodoTab)
+            }
+            .frame(maxWidth: 420)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(.systemBackground))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.black.opacity(0.05), lineWidth: 1)
+            )
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                Button {
+                    showingAddSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(ClassTraxSemanticColor.primaryAction)
+                        .frame(width: 52, height: 52)
+                        .background(
+                            Circle()
+                                .fill(ClassTraxSemanticColor.primaryAction.opacity(0.14))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(isViewingActiveOverride)
+
+                Menu {
+                    Button("New Block", systemImage: "plus") {
+                        showingAddSheet = true
+                    }
+                    .disabled(isViewingActiveOverride)
+
+                    Divider()
+
+                    Button("Copy Whole Day", systemImage: "doc.on.doc") {
+                        showingCopyWholeDaySheet = true
+                    }
+                    .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
+
+                    Button("Save Day as Profile", systemImage: "square.and.arrow.down") {
+                        profileName = defaultDayProfileName
+                        showingSaveDayProfileAlert = true
+                    }
+                    .disabled(filteredSchedule.isEmpty)
+
+                    Button("Save Week as Profile", systemImage: "tray.and.arrow.down") {
+                        profileName = defaultWeekProfileName
+                        showingSaveWeekProfileAlert = true
+                    }
+                    .disabled(alarms.isEmpty)
+
+                    Divider()
+
+                    Button("Day Overrides", systemImage: "calendar.badge.clock") {
+                        showingOverridesSheet = true
+                    }
+
+                    Button("Export Schedule CSV", systemImage: "square.and.arrow.up") {
+                        showingExportSheet = true
+                    }
+                    .disabled(alarms.isEmpty)
+
+                    Button("Import Schedule CSV", systemImage: "square.and.arrow.down") {
+                        showingImportSheet = true
+                    }
+
+                    Divider()
+
+                    Button("Class List", systemImage: "person.3") {
+                        showingStudentDirectory = true
+                    }
+
+                    Button("Refresh", systemImage: "arrow.clockwise") {
+                        onRefresh()
+                    }
+
+                    Button("Open Today / Sub Plans", systemImage: "doc.text") {
+                        selectedDay = .today
+                        openTodayTab()
+                    }
+
+                    Divider()
+
+                    Button("Erase Day", systemImage: "trash", role: .destructive) {
+                        showingEraseDayDialog = true
+                    }
+                    .disabled(filteredSchedule.isEmpty || isViewingActiveOverride)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 52, height: 52)
+                        .background(
+                            Circle()
+                                .fill(Color(.systemBackground))
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(Color.black.opacity(0.05), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(.systemBackground))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.black.opacity(0.05), lineWidth: 1)
+            )
+        }
+    }
+
     private var dayPicker: some View {
 
         ScrollView(.horizontal, showsIndicators: false) {
@@ -347,12 +402,12 @@ struct ScheduleView: View {
                     } label: {
                         Text(day.shortTitle)
                             .font(.subheadline.weight(.semibold))
-                            .foregroundColor(selectedDay == day ? .white : .primary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            .foregroundColor(selectedDay == day ? .white : .primary.opacity(0.82))
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 12)
                             .background(
                                 Capsule()
-                                    .fill(selectedDay == day ? Color.blue : Color(.secondarySystemBackground))
+                                    .fill(selectedDay == day ? ClassTraxSemanticColor.primaryAction : Color(.secondarySystemBackground))
                             )
                     }
                     .buttonStyle(.plain)
@@ -361,8 +416,23 @@ struct ScheduleView: View {
         }
     }
 
-    private var prefersExpandedToolbar: Bool {
-        horizontalSizeClass != .compact
+    private func scheduleNavButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .foregroundStyle(isSelected ? ClassTraxSemanticColor.primaryAction : .primary)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(isSelected ? ClassTraxSemanticColor.primaryAction.opacity(0.14) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isSelected)
     }
 
     private var scheduleBackground: some View {
@@ -454,7 +524,7 @@ struct ScheduleView: View {
         }
     }
 
-    private func planningOverviewCard(now: Date) -> some View {
+    private func planningOverviewCard(now: Date, scrollProxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -470,30 +540,41 @@ struct ScheduleView: View {
 
                 Text(isViewingActiveOverride ? "Override" : "Base Plan")
                     .font(.caption2.weight(.black))
-                    .foregroundStyle(isViewingActiveOverride ? .blue : .secondary)
+                    .foregroundStyle(isViewingActiveOverride ? ClassTraxSemanticColor.primaryAction : .secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
                         Capsule(style: .continuous)
-                            .fill((isViewingActiveOverride ? Color.blue : Color.secondary).opacity(0.12))
+                            .fill((isViewingActiveOverride ? ClassTraxSemanticColor.primaryAction : Color.secondary).opacity(0.12))
                     )
             }
 
             HStack(spacing: 10) {
-                planningStatPill(title: "Blocks", value: "\(filteredSchedule.count)", accent: .blue)
-                planningStatPill(title: "Tasks", value: "\(linkedTaskCount)", accent: .orange)
-                planningStatPill(title: "Plans", value: "\(selectedDayPlanCount)", accent: .indigo)
-                planningStatPill(title: "Meetings", value: "\(selectedDayCommitmentCount)", accent: .green)
+                planningStatPill(title: "Blocks", value: "\(filteredSchedule.count)", accent: ClassTraxSemanticColor.primaryAction) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                        scrollProxy.scrollTo(PlanningJumpTarget.blocks, anchor: .top)
+                    }
+                }
+                planningStatPill(title: "Tasks", value: "\(linkedTaskCount)", accent: ClassTraxSemanticColor.reviewWarning) {
+                    openTodoTab()
+                }
+                planningStatPill(title: "Plans", value: "\(selectedDayPlanCount)", accent: .indigo) {
+                    openTodayTab()
+                }
+                planningStatPill(title: "Meetings", value: "\(selectedDayCommitmentCount)", accent: ClassTraxSemanticColor.success) {
+                    openTodoTab()
+                }
             }
 
             VStack(spacing: 10) {
                 Button {
                     openTodayTab()
                 } label: {
-                    Label("Prep & Handoff", systemImage: "doc.text")
+                    Label("Today / Sub Plans", systemImage: "doc.text")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(ClassTraxSemanticColor.primaryAction)
 
                 HStack(spacing: 10) {
                     Button {
@@ -505,9 +586,9 @@ struct ScheduleView: View {
                     .buttonStyle(.bordered)
 
                     Button {
-                        openNotesTab()
+                        openTodoTab()
                     } label: {
-                        Label("Notes", systemImage: "square.and.pencil")
+                        Label("Planner Notes", systemImage: "square.and.pencil")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -515,24 +596,7 @@ struct ScheduleView: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.blue.opacity(0.12),
-                            Color.indigo.opacity(0.06),
-                            Color(.secondarySystemBackground)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.blue.opacity(0.14), lineWidth: 1)
-        )
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
     }
 
     private func todayScheduleLayout(now: Date) -> some View {
@@ -563,6 +627,7 @@ struct ScheduleView: View {
                         scheduleRow(for: item)
                     }
                 }
+                .id(PlanningJumpTarget.blocks)
                 .padding(.bottom, pastItems.isEmpty ? 0 : 6)
             }
 
@@ -660,26 +725,29 @@ struct ScheduleView: View {
         )
     }
 
-    private func planningStatPill(title: String, value: String, accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(.primary)
+    private func planningStatPill(title: String, value: String, accent: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(accent.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(accent.opacity(0.14), lineWidth: 1)
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(accent.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(accent.opacity(0.14), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

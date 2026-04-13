@@ -30,6 +30,10 @@ struct DayOverridesView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    overridesOverviewCard
+                }
+
                 if let todayOverride {
                     Section("Today's Override") {
                         VStack(alignment: .leading, spacing: 6) {
@@ -44,6 +48,7 @@ struct DayOverridesView: View {
                         Button("Load Into Editor") {
                             loadOverride(todayOverride)
                         }
+                        .tint(ClassTraxSemanticColor.primaryAction)
 
                         Button("Clear Today's Override", role: .destructive) {
                             overrides.removeAll { $0.id == todayOverride.id }
@@ -51,7 +56,7 @@ struct DayOverridesView: View {
                     }
                 }
 
-                Section("Add Day Override") {
+                Section("Override Setup") {
                     DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
 
                     if !presetKinds.isEmpty {
@@ -62,7 +67,7 @@ struct DayOverridesView: View {
                                         selectedKind = kind
                                     }
                                     .buttonStyle(.borderedProminent)
-                                    .tint(selectedKind == kind ? .accentColor : .secondary.opacity(0.3))
+                                    .tint(selectedKind == kind ? ClassTraxSemanticColor.primaryAction : .secondary.opacity(0.3))
                                 }
                             }
                             .padding(.vertical, 4)
@@ -102,6 +107,8 @@ struct DayOverridesView: View {
                     Button("Save Override") {
                         saveOverride()
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ClassTraxSemanticColor.primaryAction)
                     .disabled(selectedProfileID == nil || profiles.isEmpty)
                 }
 
@@ -146,6 +153,11 @@ struct DayOverridesView: View {
                                     }
                                     .buttonStyle(.bordered)
 
+                                    Button("Copy +1 Week") {
+                                        duplicateOverrideToNextWeek(override)
+                                    }
+                                    .buttonStyle(.bordered)
+
                                     Button("Delete", role: .destructive) {
                                         overrideToDelete = override
                                     }
@@ -159,7 +171,7 @@ struct DayOverridesView: View {
             }
             .navigationTitle("Day Overrides")
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
@@ -183,6 +195,43 @@ struct DayOverridesView: View {
                 Text("Delete override for \(formattedDate(item.date))?")
             }
         }
+    }
+
+    private var overridesOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Adjust a single day without rebuilding the week.")
+                .font(.headline.weight(.semibold))
+
+            Text("Use overrides for assemblies, testing, late starts, field trips, or any one-day schedule shift that should temporarily replace the normal plan.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                overridesMetric(title: "Saved", value: "\(overrides.count)", accent: ClassTraxSemanticColor.primaryAction)
+                overridesMetric(title: "Profiles", value: "\(profiles.count)", accent: ClassTraxSemanticColor.secondaryAction)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func overridesMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
     
     private var sortedOverrides: [DayOverride] {
@@ -236,6 +285,33 @@ struct DayOverridesView: View {
 
     private func loadOverride(_ override: DayOverride) {
         selectedDate = override.date
+        selectedKind = override.kind
+        selectedProfileID = override.profileID
+    }
+
+    private func duplicateOverrideToNextWeek(_ override: DayOverride) {
+        guard let nextWeekDate = Calendar.current.date(byAdding: .day, value: 7, to: Calendar.current.startOfDay(for: override.date)) else {
+            return
+        }
+
+        if let existingIndex = overrides.firstIndex(where: {
+            Calendar.current.isDate($0.date, inSameDayAs: nextWeekDate)
+        }) {
+            overrides[existingIndex].profileID = override.profileID
+            overrides[existingIndex].kind = override.kind
+            feedbackMessage = "\(override.kind.displayName) replaced the override on \(formattedDate(nextWeekDate))."
+        } else {
+            overrides.append(
+                DayOverride(
+                    date: nextWeekDate,
+                    profileID: override.profileID,
+                    kind: override.kind
+                )
+            )
+            feedbackMessage = "\(override.kind.displayName) copied to \(formattedDate(nextWeekDate))."
+        }
+
+        selectedDate = nextWeekDate
         selectedKind = override.kind
         selectedProfileID = override.profileID
     }

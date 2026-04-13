@@ -13,6 +13,7 @@ struct AddTodoView: View {
     @Binding var todos: [TodoItem]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
+    let suggestedStudentGroups: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
     
     var existing: TodoItem? = nil
@@ -58,12 +59,14 @@ struct AddTodoView: View {
         todos: Binding<[TodoItem]>,
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
+        suggestedStudentGroups: [String] = [],
         studentSupportsByName: [String: StudentSupportProfile] = [:],
         existing: TodoItem? = nil
     ) {
         _todos = todos
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
+        self.suggestedStudentGroups = suggestedStudentGroups
         self.studentSupportsByName = studentSupportsByName
         self.existing = existing
         let usePersonalDefault = AddTodoView.shouldDefaultToPersonalCapture(
@@ -79,6 +82,10 @@ struct AddTodoView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    taskOverviewCard
+                }
+
                 Section("Workspace") {
                     Picker("Workspace", selection: $workspace) {
                         ForEach(TodoItem.Workspace.allCases, id: \.self) { workspace in
@@ -88,7 +95,7 @@ struct AddTodoView: View {
                     }
                 }
 
-                Section("Task Details") {
+                Section("Task Setup") {
                     TextField("Task Name", text: $task)
 
                     Picker("When", selection: $bucket) {
@@ -111,7 +118,7 @@ struct AddTodoView: View {
                     }
                 }
 
-                Section("Links") {
+                Section("Links & Context") {
                     Picker("Class Link", selection: $classLink) {
                         Text("None").tag("")
                         ForEach(suggestedContexts, id: \.self) { context in
@@ -122,8 +129,8 @@ struct AddTodoView: View {
 
                     Picker("Student Group Link", selection: $studentGroupLink) {
                         Text("None").tag("")
-                        ForEach(suggestedStudents, id: \.self) { student in
-                            Text(student).tag(student)
+                        ForEach(suggestedStudentGroups, id: \.self) { group in
+                            Text(group).tag(group)
                         }
                     }
                     .pickerStyle(.menu)
@@ -136,8 +143,8 @@ struct AddTodoView: View {
                     }
                     .pickerStyle(.menu)
 
-                    if suggestedStudents.isEmpty {
-                        Text("Add names in Settings > Student Directory to use a prefilled student picker here.")
+                    if suggestedStudents.isEmpty && suggestedStudentGroups.isEmpty {
+                        Text("Add students or saved classes/groups to reuse them in planner links here.")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
@@ -181,10 +188,11 @@ struct AddTodoView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
+                    Button(existing == nil ? "Add" : "Save") {
                         saveTodo()
                     }
                     .disabled(task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .fontWeight(.semibold)
                 }
             }
             .onAppear {
@@ -223,6 +231,45 @@ struct AddTodoView: View {
         }
     }
 
+    private var taskOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(existing == nil ? "Capture the task clearly." : "Refine the task.")
+                .font(.headline.weight(.semibold))
+
+            Text("Set the workspace, timing, and links once so the planner stays actionable without extra cleanup later.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                taskMetric(title: "Workspace", value: workspace.displayName, accent: ClassTraxSemanticColor.primaryAction)
+                taskMetric(title: "Bucket", value: bucket.displayName, accent: ClassTraxSemanticColor.secondaryAction)
+                taskMetric(title: "Category", value: category.displayName, accent: ClassTraxSemanticColor.reviewWarning)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func taskMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
+    }
+
     private var studentSupport: StudentSupportProfile? {
         studentSupportsByName[studentLink.trimmingCharacters(in: .whitespacesAndNewlines)]
     }
@@ -259,6 +306,8 @@ struct AddTodoView: View {
                     .lineLimit(2)
             }
         }
+        .padding(12)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 16)
     }
     
     private func saveTodo() {

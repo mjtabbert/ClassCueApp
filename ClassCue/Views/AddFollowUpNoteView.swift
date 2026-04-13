@@ -59,7 +59,11 @@ struct AddFollowUpNoteView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Note") {
+                Section {
+                    noteOverviewCard
+                }
+
+                Section("Note Setup") {
                     if preferredKind == nil {
                         Picker("Type", selection: $kind) {
                             ForEach(FollowUpNoteItem.Kind.allCases, id: \.self) { kind in
@@ -117,10 +121,11 @@ struct AddFollowUpNoteView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
+                    Button(existing == nil ? "Add" : "Save") {
                         save()
                     }
                     .disabled(!canSave)
+                    .fontWeight(.semibold)
                 }
             }
             .onAppear {
@@ -161,6 +166,53 @@ struct AddFollowUpNoteView: View {
                 }
             }
         }
+    }
+
+    private var noteOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(existing == nil ? "Capture the follow-up while it is fresh." : "Refine the follow-up note.")
+                .font(.headline.weight(.semibold))
+
+            Text("Use these notes for class follow-up, student concerns, family communication, and general reminders that should not get lost in the planner.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                noteMetric(title: "Type", value: kind.title, accent: ClassTraxSemanticColor.primaryAction)
+                noteMetric(title: "Linked", value: linkedSummary, accent: ClassTraxSemanticColor.secondaryAction)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private var linkedSummary: String {
+        if !studentOrGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Student"
+        }
+        if !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Context"
+        }
+        return "Standalone"
+    }
+
+    private func noteMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
 
     private var canSave: Bool {

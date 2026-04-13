@@ -29,6 +29,7 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
     var blockEndTime: Date?
     var status: Status
     var absentHomework: String = ""
+    var assignedHomework: String = ""
     var isHomeworkAssignmentOnly: Bool = false
 
     var isClassHomeworkNote: Bool {
@@ -52,6 +53,7 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
         blockEndTime: Date?,
         status: Status,
         absentHomework: String = "",
+        assignedHomework: String = "",
         isHomeworkAssignmentOnly: Bool = false
     ) {
         self.id = id
@@ -66,6 +68,7 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
         self.blockEndTime = blockEndTime
         self.status = status
         self.absentHomework = absentHomework
+        self.assignedHomework = assignedHomework
         self.isHomeworkAssignmentOnly = isHomeworkAssignmentOnly
     }
 
@@ -82,6 +85,7 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
         case blockEndTime
         case status
         case absentHomework
+        case assignedHomework
         case isHomeworkAssignmentOnly
     }
 
@@ -99,7 +103,13 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
         blockEndTime = try container.decodeIfPresent(Date.self, forKey: .blockEndTime)
         status = try container.decode(Status.self, forKey: .status)
         absentHomework = try container.decodeIfPresent(String.self, forKey: .absentHomework) ?? ""
+        assignedHomework = try container.decodeIfPresent(String.self, forKey: .assignedHomework) ?? ""
         isHomeworkAssignmentOnly = try container.decodeIfPresent(Bool.self, forKey: .isHomeworkAssignmentOnly) ?? false
+        if assignedHomework.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           studentID == nil,
+           studentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            assignedHomework = absentHomework
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -116,6 +126,7 @@ struct AttendanceRecord: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(blockEndTime, forKey: .blockEndTime)
         try container.encode(status, forKey: .status)
         try container.encode(absentHomework, forKey: .absentHomework)
+        try container.encode(assignedHomework, forKey: .assignedHomework)
         try container.encode(isHomeworkAssignmentOnly, forKey: .isHomeworkAssignmentOnly)
     }
 

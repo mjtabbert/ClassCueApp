@@ -17,8 +17,10 @@ struct TodoListView: View {
     @Binding var classDefinitions: [ClassDefinitionItem]
     @Binding var teacherContacts: [ClassStaffContact]
     @Binding var paraContacts: [ClassStaffContact]
+    @Binding var focusedTodoID: UUID?
     let suggestedContexts: [String]
     let suggestedStudents: [String]
+    let suggestedStudentGroups: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
     let onRefresh: @MainActor () -> Void
     let openTodayTab: () -> Void
@@ -122,6 +124,7 @@ struct TodoListView: View {
     @State private var showOnlyFollowUp = false
     @State private var showOnlyStudentContext = false
     @State private var studentFilter = ""
+    @State private var studentGroupFilter = ""
     @State private var linkedContextFilter = ""
     @State private var showingStudentDirectory = false
 
@@ -131,8 +134,10 @@ struct TodoListView: View {
         classDefinitions: Binding<[ClassDefinitionItem]>,
         teacherContacts: Binding<[ClassStaffContact]>,
         paraContacts: Binding<[ClassStaffContact]>,
+        focusedTodoID: Binding<UUID?> = .constant(nil),
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
+        suggestedStudentGroups: [String] = [],
         studentSupportsByName: [String: StudentSupportProfile] = [:],
         onRefresh: @escaping @MainActor () -> Void,
         openTodayTab: @escaping () -> Void
@@ -142,8 +147,10 @@ struct TodoListView: View {
         _classDefinitions = classDefinitions
         _teacherContacts = teacherContacts
         _paraContacts = paraContacts
+        _focusedTodoID = focusedTodoID
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
+        self.suggestedStudentGroups = suggestedStudentGroups
         self.studentSupportsByName = studentSupportsByName
         self.onRefresh = onRefresh
         self.openTodayTab = openTodayTab
@@ -234,6 +241,12 @@ struct TodoListView: View {
                     clearAllWorkspaceFilters()
                 }
             }
+            .onAppear {
+                openFocusedTodoIfNeeded()
+            }
+            .onChange(of: focusedTodoID) { _, _ in
+                openFocusedTodoIfNeeded()
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     HStack {
@@ -264,7 +277,7 @@ struct TodoListView: View {
                                 onRefresh()
                             }
 
-                            Button("Prep & Handoff", systemImage: "doc.text") {
+                            Button("Sub Plans", systemImage: "doc.text") {
                                 openTodayTab()
                             }
 
@@ -303,10 +316,21 @@ struct TodoListView: View {
                                 if !suggestedStudents.isEmpty {
                                     Divider()
 
-                                    Picker("Student / Group", selection: $studentFilter) {
+                                    Picker("Student Link", selection: $studentFilter) {
                                         Text("All Students").tag("")
                                         ForEach(suggestedStudents, id: \.self) { student in
                                             Text(student).tag(student)
+                                        }
+                                    }
+                                }
+
+                                if !suggestedStudentGroups.isEmpty {
+                                    Divider()
+
+                                    Picker("Group Link", selection: $studentGroupFilter) {
+                                        Text("All Groups").tag("")
+                                        ForEach(suggestedStudentGroups, id: \.self) { group in
+                                            Text(group).tag(group)
                                         }
                                     }
                                 }
@@ -356,6 +380,7 @@ struct TodoListView: View {
                     todos: $todos,
                     suggestedContexts: suggestedContexts,
                     suggestedStudents: suggestedStudents,
+                    suggestedStudentGroups: suggestedStudentGroups,
                     studentSupportsByName: studentSupportsByName
                 )
             }
@@ -364,6 +389,7 @@ struct TodoListView: View {
                     todos: $todos,
                     suggestedContexts: suggestedContexts,
                     suggestedStudents: suggestedStudents,
+                    suggestedStudentGroups: suggestedStudentGroups,
                     studentSupportsByName: studentSupportsByName
                 )
             }
@@ -372,6 +398,7 @@ struct TodoListView: View {
                     todos: $todos,
                     suggestedContexts: suggestedContexts,
                     suggestedStudents: suggestedStudents,
+                    suggestedStudentGroups: suggestedStudentGroups,
                     studentSupportsByName: studentSupportsByName,
                     existing: todo
                 )
@@ -426,6 +453,7 @@ struct TodoListView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .tint(ClassTraxSemanticColor.primaryAction)
             }
 
             HStack(spacing: 8) {
@@ -454,19 +482,7 @@ struct TodoListView: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.orange.opacity(0.09),
-                            Color(.secondarySystemGroupedBackground).opacity(0.96)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.reviewWarning, cornerRadius: 22)
     }
 
     private var todoHeaderSummary: String {
@@ -485,13 +501,10 @@ struct TodoListView: View {
     private func toolbarCapsuleLabel(title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.caption.weight(.bold))
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(ClassTraxSemanticColor.primaryAction)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
-            )
+            .background(Capsule(style: .continuous).fill(ClassTraxSemanticColor.primaryAction.opacity(0.10)))
     }
 
     @ViewBuilder
@@ -501,12 +514,12 @@ struct TodoListView: View {
         } else {
             ZStack {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.10))
+                    .fill(ClassTraxSemanticColor.primaryAction.opacity(0.10))
                     .frame(width: 30, height: 30)
 
                 Image(systemName: systemImage)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(ClassTraxSemanticColor.primaryAction)
             }
         }
     }
@@ -514,12 +527,12 @@ struct TodoListView: View {
     private func toolbarMenuButton(systemImage: String) -> some View {
         ZStack {
             Circle()
-                .fill(Color.accentColor.opacity(0.10))
+                .fill(ClassTraxSemanticColor.primaryAction.opacity(0.10))
                 .frame(width: 30, height: 30)
 
             Image(systemName: systemImage)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(ClassTraxSemanticColor.primaryAction)
         }
     }
 
@@ -541,7 +554,8 @@ struct TodoListView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 16)
     }
 
     private func items(for bucket: TodoItem.Bucket) -> [TodoItem] {
@@ -575,7 +589,11 @@ struct TodoListView: View {
                 return false
             }
 
-            if !studentFilter.isEmpty, item.effectiveStudentOrGroup != studentFilter {
+            if !studentFilter.isEmpty, item.effectiveStudentLink != studentFilter {
+                return false
+            }
+
+            if !studentGroupFilter.isEmpty, item.effectiveStudentGroupLink != studentGroupFilter {
                 return false
             }
 
@@ -809,6 +827,13 @@ struct TodoListView: View {
         todos[index].studentLink = ""
     }
 
+    private func openFocusedTodoIfNeeded() {
+        guard let focusedTodoID,
+              let item = todos.first(where: { $0.id == focusedTodoID }) else { return }
+        editingTodo = item
+        self.focusedTodoID = nil
+    }
+
     private func dueDateText(for item: TodoItem) -> String {
         if let due = item.dueDate {
             return "Due: \(due.formatted(date: .abbreviated, time: .omitted))"
@@ -886,6 +911,7 @@ struct TodoListView: View {
         if showOnlyFollowUp { count += 1 }
         if showOnlyStudentContext { count += 1 }
         if !studentFilter.isEmpty { count += 1 }
+        if !studentGroupFilter.isEmpty { count += 1 }
         if !linkedContextFilter.isEmpty { count += 1 }
         return count
     }
@@ -944,6 +970,7 @@ struct TodoListView: View {
         showOnlyFollowUp = false
         showOnlyStudentContext = false
         studentFilter = ""
+        studentGroupFilter = ""
         linkedContextFilter = ""
     }
 

@@ -82,6 +82,7 @@ struct QuickCaptureView: View {
     @Binding var todos: [TodoItem]
     let suggestedContexts: [String]
     let suggestedStudents: [String]
+    let suggestedStudentGroups: [String]
     let studentSupportsByName: [String: StudentSupportProfile]
     let preferredContext: String?
     let preferredCategory: TodoItem.Category?
@@ -123,6 +124,7 @@ struct QuickCaptureView: View {
         todos: Binding<[TodoItem]>,
         suggestedContexts: [String] = [],
         suggestedStudents: [String] = [],
+        suggestedStudentGroups: [String] = [],
         studentSupportsByName: [String: StudentSupportProfile] = [:],
         preferredContext: String? = nil,
         preferredCategory: TodoItem.Category? = nil
@@ -130,6 +132,7 @@ struct QuickCaptureView: View {
         _todos = todos
         self.suggestedContexts = suggestedContexts
         self.suggestedStudents = suggestedStudents
+        self.suggestedStudentGroups = suggestedStudentGroups
         self.studentSupportsByName = studentSupportsByName
         self.preferredContext = preferredContext
         self.preferredCategory = preferredCategory
@@ -150,6 +153,10 @@ struct QuickCaptureView: View {
         NavigationStack {
             Form {
                 Section {
+                    captureOverviewCard
+                }
+
+                Section {
                     Picker("Capture", selection: $target) {
                         ForEach(CaptureTarget.allCases, id: \.self) { target in
                             Text(target.title).tag(target)
@@ -158,7 +165,7 @@ struct QuickCaptureView: View {
                     .pickerStyle(.segmented)
                 }
 
-                Section("Start With") {
+                Section("Quick Start") {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(CapturePreset.allCases) { preset in
@@ -182,7 +189,7 @@ struct QuickCaptureView: View {
                     }
                 }
 
-                Section(target == .task ? "Planner Item" : "Note") {
+                Section(target == .task ? "Capture Details" : "Note Details") {
                     TextField(
                         target == .task ? "What needs to happen?" : "Quick note",
                         text: $text,
@@ -191,7 +198,7 @@ struct QuickCaptureView: View {
                     .lineLimit(3...6)
                 }
 
-                Section {
+                Section("Current Routing") {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: workspace.systemImage)
                             .font(.headline)
@@ -207,7 +214,8 @@ struct QuickCaptureView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(14)
+                    .classTraxCardChrome(accent: workspace == .school ? ClassTraxSemanticColor.primaryAction : ClassTraxSemanticColor.secondaryAction, cornerRadius: 16)
                 }
 
                 if target == .task {
@@ -242,11 +250,14 @@ struct QuickCaptureView: View {
                                 .foregroundColor(.secondary)
                         }
 
-                        if !suggestedStudents.isEmpty {
+                        if !suggestedStudents.isEmpty || !suggestedStudentGroups.isEmpty {
                             Picker("Student / Group Link", selection: $studentOrGroup) {
                                 Text("None").tag("")
                                 ForEach(suggestedStudents, id: \.self) { student in
                                     Text(student).tag(student)
+                                }
+                                ForEach(suggestedStudentGroups, id: \.self) { group in
+                                    Text(group).tag(group)
                                 }
                             }
                         } else {
@@ -276,22 +287,28 @@ struct QuickCaptureView: View {
                         Button(workspace == .school ? "Use During School" : "Do Today") {
                             saveTask(bucket: .today, reminder: reminder)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(ClassTraxSemanticColor.primaryAction)
 
                         Button(workspace == .school ? "After School Reset" : "Tonight") {
                             saveTask(bucket: .today, reminder: .afterSchool)
                         }
+                        .tint(ClassTraxSemanticColor.secondaryAction)
 
                         Button("Tomorrow Morning") {
                             saveTask(bucket: .tomorrow, reminder: .tomorrowMorning)
                         }
+                        .tint(ClassTraxSemanticColor.reviewWarning)
 
                         Button("This Week") {
                             saveTask(bucket: .thisWeek, reminder: reminder)
                         }
+                        .tint(ClassTraxSemanticColor.success)
 
                         Button("Later") {
                             saveTask(bucket: .later, reminder: reminder)
                         }
+                        .tint(.secondary)
                     }
                 } else {
                     Section("Route Note") {
@@ -326,6 +343,8 @@ struct QuickCaptureView: View {
                         Button("Add Note") {
                             saveNote()
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(ClassTraxSemanticColor.primaryAction)
                     }
                 }
             }
@@ -357,6 +376,45 @@ struct QuickCaptureView: View {
                 }
             }
         }
+    }
+
+    private var captureOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Capture now, sort later.")
+                .font(.headline.weight(.semibold))
+
+            Text("Use this screen to drop in planner items, missing work, family contacts, and quick notes without breaking your flow.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                captureMetric(title: "Mode", value: target.title, accent: ClassTraxSemanticColor.primaryAction)
+                captureMetric(title: "Workspace", value: workspace.displayName, accent: ClassTraxSemanticColor.secondaryAction)
+                captureMetric(title: "Route", value: target == .task ? category.displayName : noteDestination.title, accent: ClassTraxSemanticColor.reviewWarning)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func captureMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
 
     private func saveTask(bucket: TodoItem.Bucket, reminder: TodoItem.Reminder) {
@@ -554,6 +612,8 @@ struct QuickCaptureView: View {
                     .lineLimit(2)
             }
         }
+        .padding(12)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 16)
     }
 
     private var currentDraft: Draft {

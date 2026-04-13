@@ -26,19 +26,22 @@ struct ProfilesView: View {
     var body: some View {
         NavigationStack {
             Form {
-                
+                Section {
+                    profilesOverviewCard
+                }
+
                 Section("Save Current Schedule") {
-                    
                     TextField("Profile Name", text: $newProfileName)
-                    
+
                     Button("Save Profile") {
                         saveProfile()
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ClassTraxSemanticColor.primaryAction)
                     .disabled(newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || alarms.isEmpty)
                 }
-                
+
                 Section("Saved Profiles") {
-                    
                     if profiles.isEmpty {
                         Text("No saved profiles yet.")
                             .foregroundColor(.secondary)
@@ -61,17 +64,20 @@ struct ProfilesView: View {
                                         profileToLoad = profile
                                     }
                                     .buttonStyle(.borderedProminent)
+                                    .tint(ClassTraxSemanticColor.primaryAction)
                                     
                                     Button("Duplicate") {
                                         duplicateProfile(profile)
                                     }
                                     .buttonStyle(.bordered)
+                                    .tint(ClassTraxSemanticColor.secondaryAction)
                                     
                                     Button("Rename") {
                                         profileToRename = profile
                                         renameText = profile.name
                                     }
                                     .buttonStyle(.bordered)
+                                    .tint(ClassTraxSemanticColor.reviewWarning)
                                     
                                     Button("Delete", role: .destructive) {
                                         profileToDelete = profile
@@ -86,7 +92,7 @@ struct ProfilesView: View {
             }
             .navigationTitle("Profiles")
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
@@ -138,6 +144,43 @@ struct ProfilesView: View {
                 
             }
         }
+    }
+
+    private var profilesOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Save complete schedule setups.")
+                .font(.headline.weight(.semibold))
+
+            Text("Profiles let you keep reusable versions of a full day so you can switch quickly between regular, delayed, testing, and event schedules.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                profileMetric(title: "Profiles", value: "\(profiles.count)", accent: ClassTraxSemanticColor.primaryAction)
+                profileMetric(title: "Current Blocks", value: "\(alarms.count)", accent: ClassTraxSemanticColor.secondaryAction)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func profileMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
     
     private func saveProfile() {

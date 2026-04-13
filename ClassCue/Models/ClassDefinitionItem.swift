@@ -101,6 +101,7 @@ struct ClassStaffContact: Identifiable, Codable, Equatable, Hashable {
     var extensionNumber: String = ""
     var emailAddress: String = ""
     var subject: String = ""
+    var tags: String = ""
 
     var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)

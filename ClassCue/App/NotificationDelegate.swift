@@ -20,6 +20,9 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         BellFeedbackManager.shared.playSelectedBellFeedback()
+        if BellFeedbackManager.areSoundsMuted {
+            return [.banner, .list, .badge]
+        }
         return [.banner, .list, .sound, .badge]
     }
 

@@ -160,7 +160,7 @@ struct NotesView: View {
                             onRefresh()
                         }
 
-                        Button("Prep & Handoff", systemImage: "doc.text") {
+                        Button("Sub Plans", systemImage: "doc.text") {
                             openTodayTab()
                         }
                     } label: {
@@ -263,13 +263,10 @@ struct NotesView: View {
     private var notesModeBadge: some View {
         Text(notesMode.title.uppercased())
             .font(.caption2.weight(.black))
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(ClassTraxSemanticColor.secondaryAction)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.accentColor.opacity(0.12))
-            )
+            .background(Capsule(style: .continuous).fill(ClassTraxSemanticColor.secondaryAction.opacity(0.12)))
     }
 
     private var notesOverviewCard: some View {
@@ -299,19 +296,7 @@ struct NotesView: View {
             compactNotesModeMenu
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.teal.opacity(0.10),
-                            Color(.secondarySystemGroupedBackground).opacity(0.96)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 22)
     }
 
     private var notesHeaderBackground: some View {
@@ -366,10 +351,7 @@ struct NotesView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.55))
-            )
+            .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 14)
         }
         .buttonStyle(.plain)
     }
@@ -377,13 +359,10 @@ struct NotesView: View {
     private func toolbarCapsuleLabel(title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.caption.weight(.bold))
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(ClassTraxSemanticColor.secondaryAction)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
-            )
+            .background(Capsule(style: .continuous).fill(ClassTraxSemanticColor.secondaryAction.opacity(0.10)))
     }
 
     @ViewBuilder
@@ -393,12 +372,12 @@ struct NotesView: View {
         } else {
             ZStack {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.10))
+                    .fill(ClassTraxSemanticColor.secondaryAction.opacity(0.10))
                     .frame(width: 30, height: 30)
 
                 Image(systemName: systemImage)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(ClassTraxSemanticColor.secondaryAction)
             }
         }
     }
@@ -645,7 +624,7 @@ struct NotesView: View {
                     openTodayTab()
                 } label: {
                     quickActionRow(
-                        title: "Open Prep & Handoff",
+                        title: "Open Sub Plans",
                         detail: "Jump back to Today and continue building the substitute packet",
                         systemImage: "doc.text"
                     )

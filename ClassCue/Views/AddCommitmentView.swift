@@ -46,7 +46,11 @@ struct AddCommitmentView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Commitment") {
+                Section {
+                    commitmentOverviewCard
+                }
+
+                Section("Commitment Setup") {
                     TextField("Title", text: $title)
 
                     Picker("Type", selection: $kind) {
@@ -58,7 +62,7 @@ struct AddCommitmentView: View {
 
                 }
 
-                Section("Schedule") {
+                Section("When") {
                     Picker("Repeats", selection: $recurrence) {
                         ForEach(CommitmentItem.Recurrence.allCases, id: \.self) { option in
                             Text(option.displayName).tag(option)
@@ -76,12 +80,12 @@ struct AddCommitmentView: View {
                     }
                 }
 
-                Section("Time") {
+                Section("Time Window") {
                     DatePicker("Start", selection: $start, displayedComponents: .hourAndMinute)
                     DatePicker("End", selection: $end, displayedComponents: .hourAndMinute)
                 }
 
-                Section("Details") {
+                Section("Details & Notes") {
                     TextField("Location", text: $location)
                     TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(3...6)
@@ -105,10 +109,11 @@ struct AddCommitmentView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
+                    Button(existing == nil ? "Add" : "Save") {
                         saveCommitment()
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .fontWeight(.semibold)
                 }
             }
             .confirmationDialog(
@@ -135,6 +140,44 @@ struct AddCommitmentView: View {
                 }
             }
         }
+    }
+
+    private var commitmentOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(existing == nil ? "Plan a commitment once." : "Refine this commitment.")
+                .font(.headline.weight(.semibold))
+
+            Text("Use recurring commitments for weekly routines, meetings, and reminders that should stay visible alongside your classroom blocks.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                commitmentMetric(title: "Type", value: kind.displayName, accent: ClassTraxSemanticColor.primaryAction)
+                commitmentMetric(title: "Pattern", value: recurrence.displayName, accent: ClassTraxSemanticColor.secondaryAction)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func commitmentMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
     }
 
     private func loadExisting() {

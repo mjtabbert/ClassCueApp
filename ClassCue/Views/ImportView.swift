@@ -25,19 +25,13 @@ struct ImportView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-
-                Text("Import Schedule")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-
-                Text("Import a CSV file or retrieve a fillable template that you can open in Google Sheets, edit, and bring back into Class Trax.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                importOverviewCard
 
                 actionCard(
                     title: "Import CSV File",
                     subtitle: "Choose a CSV from Files, Downloads, Drive, or another document provider.",
-                    systemImage: "square.and.arrow.down"
+                    systemImage: "square.and.arrow.down",
+                    accent: ClassTraxSemanticColor.primaryAction
                 ) {
                     showingFileImporter = true
                 }
@@ -45,7 +39,8 @@ struct ImportView: View {
                 actionCard(
                     title: "Paste CSV Text",
                     subtitle: "Copy CSV rows from Google Sheets, Excel, or another source and paste them directly into Class Trax.",
-                    systemImage: "doc.on.clipboard"
+                    systemImage: "doc.on.clipboard",
+                    accent: ClassTraxSemanticColor.secondaryAction
                 ) {
                     showingPasteImporter = true
                 }
@@ -53,7 +48,8 @@ struct ImportView: View {
                 actionCard(
                     title: "Get Google Sheets Template",
                     subtitle: "Exports a fillable Class Trax CSV template you can open in Google Sheets and complete.",
-                    systemImage: "doc.text.magnifyingglass"
+                    systemImage: "doc.text.magnifyingglass",
+                    accent: ClassTraxSemanticColor.reviewWarning
                 ) {
                     showingTemplateShareSheet = true
                 }
@@ -108,6 +104,43 @@ struct ImportView: View {
         }
     }
 
+    private var importOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Bring your schedule in cleanly.")
+                .font(.headline.weight(.semibold))
+
+            Text("Import from a CSV file, paste rows directly, or start from a template when you are building a schedule outside the app.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                importMetric(title: "Sources", value: "Files, Paste, Template", accent: ClassTraxSemanticColor.primaryAction)
+                importMetric(title: "Modes", value: "Replace or Merge", accent: ClassTraxSemanticColor.secondaryAction)
+            }
+        }
+        .padding(16)
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.primaryAction, cornerRadius: 20)
+    }
+
+    private func importMetric(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.10))
+        )
+    }
+
     private var templateGuide: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Template Format")
@@ -127,10 +160,7 @@ struct ImportView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 18)
     }
 
     private var pasteImportView: some View {
@@ -139,9 +169,11 @@ struct ImportView: View {
                 Text("Paste the CSV header and rows here. This works well with copied data from Google Sheets or Excel.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                    .padding(10)
+                    .classTraxCardChrome(accent: ClassTraxSemanticColor.secondaryAction, cornerRadius: 16)
             }
 
-            Section("CSV Text") {
+            Section("CSV Input") {
                 TextEditor(text: $pastedCSVText)
                     .font(.body.monospaced())
                     .focused($isPasteEditorFocused)
@@ -156,6 +188,7 @@ struct ImportView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(ClassTraxSemanticColor.primaryAction)
                 .disabled(pastedCSVText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -163,9 +196,11 @@ struct ImportView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                if isPasteEditorFocused {
-                    Button("Done") {
+                Button(isPasteEditorFocused ? "Hide Keyboard" : "Close") {
+                    if isPasteEditorFocused {
                         isPasteEditorFocused = false
+                    } else {
+                        dismiss()
                     }
                 }
             }
@@ -180,7 +215,7 @@ struct ImportView: View {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
 
-                Button("Done") {
+                Button("Hide Keyboard") {
                     isPasteEditorFocused = false
                 }
             }
@@ -191,6 +226,7 @@ struct ImportView: View {
         title: String,
         subtitle: String,
         systemImage: String,
+        accent: Color,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -198,8 +234,9 @@ struct ImportView: View {
                 Image(systemName: systemImage)
                     .font(.title3.weight(.bold))
                     .frame(width: 36, height: 36)
-                    .background(Color.blue.opacity(0.12))
+                    .background(accent.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .foregroundStyle(accent)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
@@ -215,10 +252,7 @@ struct ImportView: View {
                 Spacer()
             }
             .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color(.secondarySystemBackground))
-            )
+            .classTraxCardChrome(accent: accent, cornerRadius: 18)
         }
         .buttonStyle(.plain)
     }
